@@ -12,9 +12,12 @@ import { regionRefreshIntervalMs } from '../crawlers/crawl-cadence'
 import { matchAlerts } from '../utils/alert-matching'
 import { recordObservations } from '../utils/history'
 import { archiveAuction } from '../utils/raw-archive'
-import { regionListCacheAgeMs, writeListCache } from '../utils/list-cache'
+import { ensureAuctionIdentity } from '../utils/current-auctions'
+import { writeAuctionCrawlFetchState } from '../utils/auction-fetch-state'
+import { recordCrawlScope, regionCrawlAgeMs } from '../utils/crawl-state'
 import { drainOutbox } from '../utils/storage-uploader'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
 
 export default defineTask({
   meta: {
@@ -22,6 +25,10 @@ export default defineTask({
     description: 'Crawl all registered regions and persist results to the list cache.',
   },
   async run() {
+    if (!await isAutomaticCrawlingEnabled()) {
+      console.log('[refresh] automatic crawling disabled — skipping scheduled/boot run')
+      return {}
+    }
     return await runExclusiveTask('refresh', runRefresh)
   },
 })
@@ -49,7 +56,7 @@ async function runRefresh(signal: AbortSignal) {
       // its portal's interval (rate-limit / IP-ban protection). A cold region
       // (age === null) or one past its interval is crawled. The hourly cron
       // thus keeps robust portals current while sparing sensitive ones.
-      const age = await regionListCacheAgeMs(r.country, r.code)
+      const age = await regionCrawlAgeMs(r.country, r.code, r.platforms.map((p) => p.id))
       if (age !== null && age < regionRefreshIntervalMs(r.platforms.map((p) => p.id))) {
         skipped++
         continue
@@ -62,7 +69,13 @@ async function runRefresh(signal: AbortSignal) {
           enrichDetails: false,
         })
         throwIfTaskAborted(signal)
-        await writeListCache(r.country, r.code, result)
+        // Must precede archiveAuction below: artifact_captures/artifact_versions
+        // carry an FK on (platform, external_id) -> auctions, so the identity
+        // has to exist before the first archive write for this auction.
+        await ensureAuctionIdentity(result.auctions)
+        // Only after the identities exist can they be stamped as still-offered.
+        await recordCrawlScope(r.country, r.code, result, capturedAt)
+        await writeAuctionCrawlFetchState(result.auctions)
         // History and raw-archive writes are part of a successful crawl: their
         // failures propagate into this region's visible failure result.
         // Alert delivery remains independently fault-tolerant.
@@ -88,8 +101,10 @@ async function runRefresh(signal: AbortSignal) {
   // (best-effort, never throws) — this is the single scheduled trigger
   // point for the uploader (see server/utils/storage-uploader.ts).
   const upload = await drainOutbox()
-  if (upload.uploaded > 0 || upload.failed > 0) {
-    console.log(`[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed`)
+  if (upload.uploaded > 0 || upload.failed > 0 || upload.missing > 0) {
+    console.log(
+      `[refresh] archive upload: ${upload.uploaded} ok, ${upload.failed} failed, ${upload.missing} missing local`,
+    )
   }
   if (upload.failed > 0) {
     failureMessages.push(`${upload.failed} Roharchiv-Upload(s) fehlgeschlagen`)

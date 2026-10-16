@@ -5,15 +5,24 @@
 // Relay-only, no direct contact: the lawyer's email is never exposed to the
 // client (see server/api/lawyers.get.ts) — this route is the only path that
 // reaches it, and only server-side, via server/utils/mailer.ts. That's also
-// why a failed send is a hard error (502) here, unlike the alert matcher's
-// best-effort mail (server/utils/alert-matching.ts): the whole point of this
-// action is that the mail arrives, so a swallowed failure would leave the
-// user believing they'd contacted the lawyer when they hadn't.
+// A successful response means the commission-bearing inquiry and its mail
+// intent were atomically persisted. It deliberately does not claim that SMTP
+// has completed: server/tasks/outbound-delivery.ts retries that at-least-once
+// transport independently.
 
 import { getServiceClient } from '../../utils/supabase'
-import { sendMail } from '../../utils/mailer'
-import { readAuctionSnapshot } from '../../utils/auction-snapshot'
-import { cacheKey } from '../../utils/verkehrswert-cache'
+import { readAuctionRecord } from '../../utils/auction-record'
+import { publicError } from '../../utils/public-error'
+import { isUuidSegment } from '../../utils/path-segment'
+import {
+  canonicalAppOrigin,
+  createLawyerInquiryWithDelivery,
+  findLawyerInquiryReplay,
+  LawyerInquiryIdempotencyConflictError,
+  LawyerInquiryRateLimitError,
+  MAX_LAWYER_INQUIRY_MESSAGE_LENGTH,
+  validateIdempotencyKey,
+} from '../../utils/outbound-delivery'
 
 export interface LawyerInquiry {
   id: string
@@ -23,7 +32,18 @@ export interface LawyerInquiry {
   message: string
   commissionCents: number | null
   commissionStatus: string
+  deliveryStatus: string
   createdAt: string
+}
+
+function inquiryError(err: unknown): never {
+  if (err instanceof LawyerInquiryRateLimitError) {
+    throw createError({ statusCode: 429, statusMessage: err.message })
+  }
+  if (err instanceof LawyerInquiryIdempotencyConflictError) {
+    throw createError({ statusCode: 422, statusMessage: err.message })
+  }
+  throw publicError('POST /api/lawyer-inquiries', 500, 'Anfrage konnte nicht gespeichert werden.', err)
 }
 
 export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
@@ -32,7 +52,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     platform?: unknown
     externalId?: unknown
     message?: unknown
-  }>(event).catch(() => ({}) as Record<string, unknown>)
+  }>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const lawyerId = typeof body.lawyerId === 'string' ? body.lawyerId.trim() : ''
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
   const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''
@@ -40,25 +60,44 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
   if (!lawyerId || !platform || !externalId || !message) {
     throw createError({ statusCode: 400, statusMessage: 'lawyerId, platform, externalId und message sind erforderlich.' })
   }
+  if (message.length > MAX_LAWYER_INQUIRY_MESSAGE_LENGTH) {
+    throw createError({ statusCode: 413, statusMessage: `Die Nachricht darf höchstens ${MAX_LAWYER_INQUIRY_MESSAGE_LENGTH} Zeichen enthalten.` })
+  }
+  const idempotencyKey = getRequestHeader(event, 'idempotency-key')?.trim() ?? ''
+  if (!validateIdempotencyKey(idempotencyKey)) {
+    throw createError({ statusCode: 400, statusMessage: 'Ein gültiger Idempotency-Key ist erforderlich.' })
+  }
+  const userId = event.context.user!.id
+  // Replay before the business checks below: the original request may already
+  // be committed (and its mail queued) even if the lawyer was deactivated or
+  // the auction disappeared since, so a retry must still see that result.
+  const replay = await findLawyerInquiryReplay({ userId, idempotencyKey, lawyerId, platform, externalId, message })
+    .catch(inquiryError)
+  if (replay) return replay
 
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[cacheKey(platform, externalId)]
-  if (!auction) {
+  const record = await readAuctionRecord(platform, externalId)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'Auktion nicht gefunden.' })
   }
+  const auction = record.auction
 
   const supabase = getServiceClient()
   if (!supabase) {
     throw createError({ statusCode: 503, statusMessage: 'Supabase ist nicht konfiguriert.' })
   }
 
+  // Lawyer ids are uuids; anything else would only surface as a Postgres
+  // type error, so it is simply an unknown lawyer.
+  if (!isUuidSegment(lawyerId)) {
+    throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })
+  }
   const { data: lawyer, error: lawyerError } = await supabase
     .from('lawyers')
     .select('id, email, name, active, countries, commission_cents')
     .eq('id', lawyerId)
     .maybeSingle()
   if (lawyerError) {
-    throw createError({ statusCode: 500, statusMessage: lawyerError.message })
+    throw publicError('POST /api/lawyer-inquiries', 500, 'Anwalt konnte nicht geladen werden.', lawyerError)
   }
   if (!lawyer || !lawyer.active) {
     throw createError({ statusCode: 404, statusMessage: 'Anwalt nicht gefunden oder nicht aktiv.' })
@@ -68,37 +107,33 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
     throw createError({ statusCode: 400, statusMessage: 'Dieser Anwalt deckt das Land der Auktion nicht ab.' })
   }
 
-  const userId = event.context.user!.id
   const userEmail = event.context.user!.email ?? undefined
   // Snapshot the commission now — later tariff changes to lawyers.commission_cents
   // must not rewrite this historical billing record.
   const commissionCents = (lawyer.commission_cents as number | null) ?? null
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('lawyer_inquiries')
-    .insert({
-      user_id: userId,
-      lawyer_id: lawyerId,
-      platform,
-      external_id: externalId,
-      message,
-      commission_cents: commissionCents,
-    })
-    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, created_at')
-    .single()
-  if (insertError || !inserted) {
-    throw createError({ statusCode: 500, statusMessage: insertError?.message ?? 'Anfrage konnte nicht gespeichert werden.' })
-  }
-
   const auctionLabel = `${auction.authority} · ${auction.caseNumber}`
-  const origin = getRequestURL(event).origin
+  let origin: string
+  try {
+    origin = canonicalAppOrigin()
+  } catch (err) {
+    throw createError({ statusCode: 503, statusMessage: (err as Error).message })
+  }
   const auctionLink = `${origin}/objekt/${encodeURIComponent(platform)}/${encodeURIComponent(externalId)}`
   try {
-    await sendMail({
-      to: lawyer.email as string,
-      replyTo: userEmail,
-      subject: `Neue Anfrage über zvg-immo: ${auctionLabel}`,
-      text: [
+    return await createLawyerInquiryWithDelivery({
+      userId,
+      lawyerId,
+      platform,
+      externalId,
+      message,
+      commissionCents,
+      idempotencyKey,
+      mail: {
+        to: lawyer.email as string,
+        replyTo: userEmail,
+        subject: `Neue Anfrage über zvg-immo: ${auctionLabel}`,
+        text: [
         `Sie haben über zvg-immo eine Anfrage zu folgender Zwangsversteigerung erhalten:`,
         auctionLabel,
         auctionLink,
@@ -108,19 +143,9 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry> => {
         '',
         userEmail ? `Antworten Sie direkt auf diese E-Mail, um ${userEmail} zu erreichen.` : '',
       ].filter(Boolean).join('\n'),
+      },
     })
   } catch (err) {
-    throw createError({ statusCode: 502, statusMessage: `Mail-Versand fehlgeschlagen: ${(err as Error).message}` })
-  }
-
-  return {
-    id: inserted.id as string,
-    lawyerId: inserted.lawyer_id as string,
-    platform: inserted.platform as string | null,
-    externalId: inserted.external_id as string | null,
-    message: inserted.message as string,
-    commissionCents: inserted.commission_cents as number | null,
-    commissionStatus: inserted.commission_status as string,
-    createdAt: inserted.created_at as string,
+    inquiryError(err)
   }
 })

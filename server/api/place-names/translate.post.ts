@@ -9,10 +9,11 @@
 
 import type { Pool } from 'pg'
 import { getPool } from '~/server/utils/db'
-import { isLlmProviderUnavailable } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable } from '~/server/utils/extract/llm-errors'
 import { callPlaceNameTranslationLlm } from '~/server/utils/extract/text-llm'
 import { resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
 import { readPlaceNameTranslations, writePlaceNameTranslations } from '~/server/utils/place-name-translation'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
 import type { ContentTargetLang } from '~/lib/content-language'
 import {
   checkInMemoryRateLimit,
@@ -20,6 +21,9 @@ import {
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
 import { requestClientIp } from '~/server/utils/request-client-ip'
+import { isSafePathSegment } from '~/server/utils/path-segment'
+import { readLocationEnrichment } from '~/server/utils/external-data/location-enrichment'
+import { translatablePlaceNames } from '~/lib/content-language'
 
 const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
 const MAX_NAMES_PER_REQUEST = 40
@@ -31,6 +35,8 @@ const rateLimitState = createInMemoryRateLimitState()
 interface RequestBody {
   names?: unknown
   lang?: unknown
+  platform?: unknown
+  externalId?: unknown
 }
 
 async function translateMissing(db: Pool, names: string[], lang: ContentTargetLang): Promise<Map<string, string>> {
@@ -38,7 +44,19 @@ async function translateMissing(db: Pool, names: string[], lang: ContentTargetLa
   const languageName = LANGUAGE_DISPLAY_NAMES.of(lang) ?? lang
   for (const config of configs) {
     try {
-      const translated = await callPlaceNameTranslationLlm(names, languageName, config)
+      const translated = await callPlaceNameTranslationLlm(names, languageName, config, (usage) => {
+        void recordLlmUsage({
+          task: 'place-name-translation',
+          executionMode: 'sync',
+          source: null,
+          provider: config.provider ?? 'openai-compatible',
+          model: config.model,
+          profileId: config.profileId ?? null,
+          platform: null,
+          externalId: null,
+          usage,
+        })
+      })
       if (!translated) continue
       const entries = names.map((name, i) => ({ name, translated: translated[i]! }))
       await writePlaceNameTranslations(db, lang, entries)
@@ -60,20 +78,34 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'invalid or missing lang' })
   }
   const targetLang = lang as ContentTargetLang
+  const platform = String(body?.platform ?? '')
+  const externalId = String(body?.externalId ?? '')
+  if (!isSafePathSegment(platform) || !isSafePathSegment(externalId)) {
+    throw createError({ statusCode: 400, statusMessage: 'invalid or missing platform/externalId' })
+  }
 
   const rawNames = Array.isArray(body?.names) ? body.names : []
-  const names = [...new Set(
+  const requested = [...new Set(
     rawNames
       .filter((name): name is string => typeof name === 'string')
       .map((name) => name.trim())
       .filter((name) => name.length > 0 && name.length <= MAX_NAME_LENGTH),
   )].slice(0, MAX_NAMES_PER_REQUEST)
-  if (names.length === 0) return { translations: {} }
+  if (requested.length === 0) return { translations: {} }
 
   const db = getPool()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'translation cache not configured' })
   }
+
+  // Only names from this auction's own OSM enrichment reach the LLM and the
+  // shared cache: free-form input would let an anonymous caller inject
+  // instructions into a batch and persist the poisoned output for every
+  // visitor (entries are immutable), or simply spend LLM budget.
+  const enrichment = await readLocationEnrichment(platform, externalId)
+  const known = new Set(translatablePlaceNames(enrichment?.locationContext).map((name) => name.trim()))
+  const names = requested.filter((name) => known.has(name))
+  if (names.length === 0) return { translations: {} }
 
   const cached = await readPlaceNameTranslations(db, names, targetLang)
   const missing = names.filter((name) => !cached.has(name))

@@ -5,7 +5,7 @@ import {
   normalizeLvAddress,
   normalizeSeAddress,
   normalizeBgAddress,
-} from './geocode'
+} from './geocode-normalizers'
 
 // eaukcionai.lt serves addresses as a chain of genitive administrative units
 // plus a street. Nominatim only resolves the reduced "<street>, <city>" form,
@@ -228,6 +228,15 @@ describe('normalizeBgAddress', () => {
 
   it('falls back to the raw address when it has no recognisable structure', () => {
     expect(normalizeBgAddress('Bulgarien')).toEqual(['Bulgarien'])
+  })
+
+  it('tries the raw line before the province centre when no гр./с. settlement marker is present', () => {
+    // alo.bg writes settlements without a marker; matching only "област София"
+    // would pin Банкя (~17 km out) on the centre of Sofia.
+    expect(normalizeBgAddress('Банкя, област София, Bulgarien')).toEqual([
+      'Банкя, област София, Bulgarien',
+      'София',
+    ])
   })
 })
 

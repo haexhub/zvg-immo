@@ -1,0 +1,237 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785852280922,
+      "tag": "0000_enable_extensions",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785876119306,
+      "tag": "0001_pale_jocasta",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785876157716,
+      "tag": "0002_auth_users_fk_and_fetch_state_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785878928132,
+      "tag": "0003_burly_rocket_raccoon",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785915431845,
+      "tag": "0004_nappy_vengeance",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785931403841,
+      "tag": "0005_osm_local_elements_pk_country",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785967106648,
+      "tag": "0006_wp5_geo_features_epochs",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786049111259,
+      "tag": "0007_closed_victor_mancha",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786175815326,
+      "tag": "0008_salty_boomer",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786181529744,
+      "tag": "0009_tense_wolverine",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786212765423,
+      "tag": "0010_quiet_darwin",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786305504398,
+      "tag": "0011_third_katie_power",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786307688239,
+      "tag": "0012_busy_fenris",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1786362265311,
+      "tag": "0013_ambitious_kylun",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1786421299997,
+      "tag": "0014_calm_spitfire",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1786429543254,
+      "tag": "0015_concerned_tombstone",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786435484809,
+      "tag": "0016_gigantic_kate_bishop",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786454584710,
+      "tag": "0017_calm_polaris",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1786456854350,
+      "tag": "0018_messy_fixer",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1786518721656,
+      "tag": "0019_tiny_cobalt_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1786538947863,
+      "tag": "0020_dusty_archangel",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1786786316805,
+      "tag": "0021_freezing_wind_dancer",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1786895872718,
+      "tag": "0022_woozy_beast",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1787174648652,
+      "tag": "0023_melodic_silver_centurion",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1787174666248,
+      "tag": "0024_complete_winter_soldier",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1787253882587,
+      "tag": "0025_add_ski_downhill_nordic_metrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1787402627150,
+      "tag": "0026_romantic_slipstream",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1787412918263,
+      "tag": "0027_nasty_anita_blake",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1787460838678,
+      "tag": "0028_fix_ski_downhill_false_positives",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1787516400000,
+      "tag": "0029_restrict_downhill_ski_to_mountains",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1787513793417,
+      "tag": "0030_closed_the_initiative",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1791921841792,
+      "tag": "0031_restrict_own_rows_policies_to_select",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792145498055,
+      "tag": "0032_mushy_natasha_romanoff",
+      "breakpoints": true
+    }
+  ]
+}

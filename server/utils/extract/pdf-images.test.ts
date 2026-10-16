@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   dedupByHash,
+  execErrorMessage,
   filterImages,
   findFragmentedImageClusters,
   parseImageLayoutXml,
@@ -168,5 +169,18 @@ describe('dedupByHash', () => {
 
   it('returns an empty array unchanged', () => {
     expect(dedupByHash([])).toEqual([])
+  })
+})
+
+describe('execErrorMessage', () => {
+  it('passes short messages through unchanged', () => {
+    expect(execErrorMessage(new Error('boom'))).toBe('boom')
+  })
+
+  it('truncates messages beyond the length cap', () => {
+    const message = 'x'.repeat(2000)
+    const result = execErrorMessage(new Error(message))
+    expect(result.length).toBeLessThanOrEqual(1000)
+    expect(result).toContain('2000 chars total, truncated')
   })
 })

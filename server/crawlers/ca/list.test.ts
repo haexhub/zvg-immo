@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { mapProperty, parsePropertyPage, type Property } from './list'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { INDEX_URL } from './constants'
+import { fetchAllListings, mapProperty, parsePropertyPage, type Property } from './list'
 
 /** Markup mirrors the live /property/ pages (Divi + Toolset blocks). */
 function fact(label: string, value: string): string {
@@ -135,5 +136,31 @@ describe('mapProperty', () => {
     expect(a.startingBid).toBe(12500)
     expect(a.marketValue).toBeNull()
     expect(a.currency).toBe('CAD')
+  })
+})
+
+describe('fetchAllListings', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  function stubIndex(indexHtml: string): void {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      url === INDEX_URL ? new Response(indexHtml) : new Response('', { status: 503 }),
+    ))
+  }
+
+  it('throws when the index yields no sale pages instead of reporting an empty catalog', async () => {
+    stubIndex('<a href="/tax-sale/fort-erie-2026-07-15/">Fort Erie</a>')
+    await expect(fetchAllListings('ca-ontario')).rejects.toThrow(/no sale pages/)
+  })
+
+  it('marks the run incomplete when a sale page fails to load', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    stubIndex('<a href="/tax-sales/fort-erie-2026-07-15/">Fort Erie</a>')
+    const result = await fetchAllListings('ca-ontario')
+    expect(result.auctions).toEqual([])
+    expect(result.complete).toBe(false)
   })
 })

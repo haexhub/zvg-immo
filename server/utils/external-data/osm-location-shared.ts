@@ -3,6 +3,7 @@ import type {
   LocationAmenityKind,
   NearbyPlaceKind,
 } from '~/types/auction'
+import { minOf } from '~/lib/array-math'
 import { distanceMeters, type Point } from './geo'
 
 export interface OverpassResponse {
@@ -89,7 +90,7 @@ export function locateElement(origin: Point, element: OsmElement): LocatedElemen
 
 export function nearestDistance(elements: LocatedElement[]): number | null {
   if (elements.length === 0) return null
-  return Math.min(...elements.map((element) => element.distanceMeters))
+  return minOf(elements.map((element) => element.distanceMeters))
 }
 
 export function uniqueLocated(elements: LocatedElement[]): LocatedElement[] {

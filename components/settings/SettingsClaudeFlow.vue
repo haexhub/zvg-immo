@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ExternalLink, Loader2 } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
 import type { ClaudeSetupStatus } from '~/server/api/settings/claude/status.get'
 
 const { t } = useI18n()
@@ -13,7 +14,6 @@ const claudeError = ref<string | null>(null)
 const isActiveFlow = computed(() =>
   !!status.value && ['awaiting-url', 'awaiting-code', 'finishing'].includes(status.value.state),
 )
-let pollTimer: ReturnType<typeof setInterval> | null = null
 
 async function refreshStatus(): Promise<void> {
   try {
@@ -83,23 +83,11 @@ async function claudeLogout(): Promise<void> {
   }
 }
 
-function startPolling(): void {
-  if (pollTimer) return
-  pollTimer = setInterval(() => {
-    if (!isActiveFlow.value) {
-      stopPolling()
-      return
-    }
-    void refreshStatus()
-  }, 2000)
-}
-
-function stopPolling(): void {
-  if (pollTimer) {
-    clearInterval(pollTimer)
-    pollTimer = null
-  }
-}
+const { start: startPolling, stop: stopPolling } = usePollWhileActive(
+  () => isActiveFlow.value,
+  refreshStatus,
+  { intervalMs: 2000 },
+)
 
 watch(isActiveFlow, (active) => {
   if (active) startPolling()
@@ -107,7 +95,6 @@ watch(isActiveFlow, (active) => {
 })
 
 onMounted(refreshStatus)
-onBeforeUnmount(stopPolling)
 </script>
 
 <template>
@@ -122,7 +109,13 @@ onBeforeUnmount(stopPolling)
       {{ $t('settings.claude.description') }}
     </p>
 
-    <p v-if="!status" class="text-sm text-muted-foreground">{{ $t('settings.claude.loadingStatus') }}</p>
+    <p v-if="!status && !claudeError" class="text-sm text-muted-foreground">{{ $t('settings.claude.loadingStatus') }}</p>
+
+    <!-- Status could not be loaded: the error is shown below, so don't keep
+         claiming to load — offer a retry instead. -->
+    <Button v-else-if="!status" type="button" variant="outline" size="sm" @click="refreshStatus">
+      {{ $t('settings.claude.retry') }}
+    </Button>
 
     <template v-else>
       <div v-if="status.state === 'idle' && !status.credentialsExist" class="space-y-3">
@@ -134,6 +127,10 @@ onBeforeUnmount(stopPolling)
 
       <div v-else-if="status.state === 'idle' && status.credentialsExist" class="space-y-3">
         <p class="text-sm text-emerald-600 dark:text-emerald-500">{{ $t('settings.claude.connected') }}</p>
+        <p v-if="status.accountInfo?.emailAddress" class="text-sm text-muted-foreground">
+          {{ $t('settings.claude.accountLabel') }} <span class="font-medium">{{ status.accountInfo.emailAddress }}</span>
+        </p>
+        <p v-else class="text-sm text-muted-foreground">{{ $t('settings.claude.accountUnknown') }}</p>
         <div class="flex flex-wrap gap-2">
           <Button type="button" variant="outline" :disabled="actionPending" @click="startLogin">{{ $t('settings.claude.reconnect') }}</Button>
         </div>

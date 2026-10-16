@@ -6,7 +6,7 @@ import { parseLawyerInput } from '../../../utils/lawyer-input'
 import { toAdminLawyer, type AdminLawyer } from './index.get'
 
 export default defineEventHandler(async (event): Promise<AdminLawyer> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}))
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const input = parseLawyerInput(body)
 
   const supabase = getServiceClient()
@@ -30,7 +30,8 @@ export default defineEventHandler(async (event): Promise<AdminLawyer> => {
     .select('id, name, firm, email, phone, countries, specialization, languages, website, commission_cents, active, created_at')
     .single()
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Anlegen fehlgeschlagen.' })
+    console.warn('[settings/lawyers] create failed', error)
+    throw createError({ statusCode: 500, statusMessage: 'Anwalt konnte nicht angelegt werden.', cause: error })
   }
   return toAdminLawyer(data)
 })

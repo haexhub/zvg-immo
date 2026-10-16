@@ -1,6 +1,7 @@
 import { load } from 'cheerio'
 import type { Attachment, Auction } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
+import { aggregateMarketValue } from '~/server/utils/market-value-aggregation'
 import { FR_BASE, FR_LIST_REGIONS, UA, COUNTRY, DISALLOWED_DATA_PATHS } from './constants'
 
 const DETAIL_CONCURRENCY = 4
@@ -103,12 +104,14 @@ function parseListPage(html: string): ListPage {
  *  once past the last one (it clamps to the last valid page instead), so we
  *  must compute the page count from the `total`/`limit` fields up front
  *  rather than looping until empty. */
-async function discoverListItems(): Promise<Map<string, ListItem>> {
+async function discoverListItems(): Promise<{ byHref: Map<string, ListItem>; complete: boolean }> {
   const byHref = new Map<string, ListItem>()
+  let complete = true
 
   // Isolate failures per region: a transient error on one "grande région"
   // (timeout, HTTP 5xx) must not discard the listings already collected from
-  // the others.
+  // the others — but the run is then partial and must not read as complete,
+  // or crawl_state would hide that region's listings as gone.
   for (const region of FR_LIST_REGIONS) {
     const baseUrl = `${FR_BASE}/ventes-aux-encheres-immobilieres/${region}/prochaines-ventes.html`
     try {
@@ -121,11 +124,12 @@ async function discoverListItems(): Promise<Map<string, ListItem>> {
         for (const item of page_.items) byHref.set(item.href, item)
       }
     } catch (err) {
+      complete = false
       console.error(`licitor.com: failed to fetch region "${region}"`, err)
     }
   }
 
-  return byHref
+  return { byHref, complete }
 }
 
 interface DetailInfo {
@@ -163,14 +167,15 @@ function parseDetailPage(html: string, href: string): DetailInfo {
   })
 
   const priceTexts: string[] = []
-  let marketValueEur: number | null = null
+  const lotValues: number[] = []
   $('.AddressBlock .Lot h3').each((_i, el) => {
     const text = clean($(el).text())
     if (!text) return
     priceTexts.push(text)
     const amount = parseEurAmount(text)
-    if (amount != null) marketValueEur = (marketValueEur ?? 0) + amount
+    if (amount != null) lotValues.push(amount)
   })
+  const marketValueEur = aggregateMarketValue(lotValues)
 
   const visits = clean($('.AddressBlock .Visits').first().text()) || null
   const description = [...lotTexts, visits].filter(Boolean).join('\n') || null
@@ -209,21 +214,25 @@ async function fetchDetail(href: string, platformId: string): Promise<DetailInfo
   if (url.origin !== new URL(FR_BASE).origin) {
     throw new Error(`Unexpected detail URL origin: ${url.origin}`)
   }
+  let html: string
+  let detail: DetailInfo
   try {
-    const html = await htmlFetch(url.toString())
-    const detail = parseDetailPage(html, href)
-    // Licitor never publishes a real court case number (see mapItem below) —
-    // caseNumber stays '' here too, matching the auction this capture keys to.
-    await archiveDetailCapture(
-      Buffer.from(html, 'utf8'),
-      { platform: platformId, country: COUNTRY, externalId: detail.externalId, caseNumber: '', authority: detail.authority },
-      url.toString(),
-      new Date().toISOString(),
-    )
-    return detail
+    html = await htmlFetch(url.toString())
+    detail = parseDetailPage(html, href)
   } catch {
     return null
   }
+  // Outside the try: archive persistence failures must fail the crawl (see
+  // fetch-archive.ts), not silently degrade the listing to list-page data.
+  // Licitor never publishes a real court case number (see mapItem below) —
+  // caseNumber stays '' here too, matching the auction this capture keys to.
+  await archiveDetailCapture(
+    Buffer.from(html, 'utf8'),
+    { platform: platformId, country: COUNTRY, externalId: detail.externalId, caseNumber: '', authority: detail.authority },
+    url.toString(),
+    new Date().toISOString(),
+  )
+  return detail
 }
 
 function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string): Auction {
@@ -268,10 +277,10 @@ function mapItem(item: ListItem, detail: DetailInfo | null, platformId: string):
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const byHref = await discoverListItems()
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { byHref, complete } = await discoverListItems()
   const entries = [...byHref.entries()]
-  if (entries.length === 0) return { auctions: [], total: 0 }
+  if (entries.length === 0) return { auctions: [], total: 0, complete }
 
   const details: (DetailInfo | null)[] = new Array(entries.length).fill(null)
   let cursor = 0
@@ -286,5 +295,5 @@ export async function fetchAllListings(
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
 
   const auctions = entries.map(([, item], i) => mapItem(item, details[i] ?? null, platformId))
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete }
 }

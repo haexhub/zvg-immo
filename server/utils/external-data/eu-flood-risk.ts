@@ -1,9 +1,18 @@
 import { readFile } from 'node:fs/promises'
 import type { Auction, HazardAssessment } from '~/types/auction'
 import type { HazardAssessmentAdapter } from '~/server/tasks/external-enrichment'
-import { writeJsonCache } from '../json-cache'
+import { minOf } from '~/lib/array-math'
+import { readCachedFileCollection } from './cached-file-collection'
 import { distanceMeters, type Point } from './geo'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import {
+  boundsDistanceMeters,
+  distanceToPolygonMeters,
+  isStale,
+  pointInPolygon,
+  polygonsBounds,
+  type GeoBounds,
+} from './eu-flood-risk-assessment'
 
 export type GeoJsonPosition = [number, number] | [number, number, number]
 export type GeoJsonLinearRing = GeoJsonPosition[]
@@ -30,12 +39,17 @@ export interface FloodRiskZone {
   polygons: GeoJsonPolygonCoordinates[]
   severity: HazardAssessment['severity']
   properties: Record<string, unknown>
+  /** Derived at parse time, not part of the cache file. */
+  bounds: GeoBounds | null
 }
 
 export interface FloodRiskZoneCollection {
   sourceVersion: string
   generatedAt: string
   zones: FloodRiskZone[]
+  /** EEA country codes the zones were reported for; absent when the cache
+   *  carries no `countryCode` property, so coverage can't be judged. */
+  countryCodes?: ReadonlySet<string>
 }
 
 export interface FloodRiskEvaluationOptions {
@@ -49,32 +63,7 @@ export interface FloodRiskFileAdapterOptions extends FloodRiskEvaluationOptions 
   sourceVersion?: string
 }
 
-export interface ImportEuFloodRiskCacheOptions {
-  cachePath: string
-  serviceUrl?: string
-  sourceVersion?: string
-  generatedAt?: string
-  pageSize?: number
-  maxPages?: number
-  countryCodes?: string[]
-  fetchImpl?: typeof fetch
-}
-
-export interface ImportEuFloodRiskCacheSummary {
-  cachePath: string
-  serviceUrl: string
-  sourceVersion: string
-  generatedAt: string
-  fetched: number
-  normalized: number
-  pages: number
-}
-
 const DEFAULT_NEARBY_DISTANCE_METERS = 1_000
-const DEFAULT_PAGE_SIZE = 2_000
-export const EU_FLOOD_RISK_SOURCE_VERSION = 'eea-floods-ref-v03-r00-2025-08-05'
-export const EU_FLOOD_RISK_POLYGON_LAYER_URL =
-  'https://water.discomap.eea.europa.eu/arcgis/rest/services/FloodsDirective/Floods2024_RiskZone_WM/MapServer/2'
 const FLOOD_SOURCE = EXTERNAL_DATA_SOURCES.find((source) => source.id === 'eu-flood-risk-areas')!
 
 export async function readFloodRiskGeoJson(path: string, sourceVersion?: string): Promise<FloodRiskZoneCollection> {
@@ -116,66 +105,27 @@ export function normalizeFloodRiskFeatureCollection(
       polygons,
       severity: severityFromProperties(properties),
       properties,
+      bounds: polygonsBounds(polygons),
     }]
   })
 
+  const countryCodes = new Set(zones.flatMap((zone) => {
+    const code = stringProperty(zone.properties, 'countryCode')
+    return code ? [code.trim().toUpperCase()] : []
+  }))
   return {
     sourceVersion,
     generatedAt,
     zones,
+    ...(countryCodes.size > 0 ? { countryCodes } : {}),
   }
 }
 
-export async function importEuFloodRiskGeoJsonCache(
-  options: ImportEuFloodRiskCacheOptions,
-): Promise<ImportEuFloodRiskCacheSummary> {
-  const serviceUrl = options.serviceUrl?.trim() || EU_FLOOD_RISK_POLYGON_LAYER_URL
-  const generatedAt = options.generatedAt ?? new Date().toISOString()
-  const sourceVersion = options.sourceVersion?.trim() || EU_FLOOD_RISK_SOURCE_VERSION
-  const pageSize = options.pageSize ?? DEFAULT_PAGE_SIZE
-  const fetchImpl = options.fetchImpl ?? fetch
-  const where = countryWhereClause(options.countryCodes)
-  const features: FloodRiskFeature[] = []
-  let pages = 0
-
-  for (let offset = 0; ; offset += pageSize) {
-    if (options.maxPages != null && pages >= options.maxPages) break
-    const page = await fetchArcGisGeoJsonPage(fetchImpl, serviceUrl, {
-      where,
-      offset,
-      pageSize,
-    })
-    pages++
-    features.push(...page.features.filter(isFeature))
-    if (page.features.length < pageSize) break
-  }
-
-  const collection: FloodRiskFeatureCollection = {
-    type: 'FeatureCollection',
-    properties: {
-      sourceVersion,
-      generatedAt,
-      sourceLabel: FLOOD_SOURCE.label,
-      sourceUrl: FLOOD_SOURCE.sourceUrl,
-      serviceUrl,
-    },
-    features,
-  }
-  const normalized = normalizeFloodRiskFeatureCollection(collection, {
-    sourceVersion,
-    generatedAt,
-  })
-  await writeJsonCache(options.cachePath, collection)
-
-  return {
-    cachePath: options.cachePath,
-    serviceUrl,
-    sourceVersion,
-    generatedAt,
-    fetched: features.length,
-    normalized: normalized.zones.length,
-    pages,
-  }
+/** The EEA reports Greece as EL and the United Kingdom as UK, not by their
+ *  ISO 3166 codes the crawlers use. */
+export function eeaCountryCode(country: string): string {
+  const code = country.trim().toUpperCase()
+  return code === 'GR' ? 'EL' : code === 'GB' ? 'UK' : code
 }
 
 export function buildFloodHazardAssessment(
@@ -196,22 +146,20 @@ export function buildFloodHazardAssessment(
     return assessment('unknown', 'unknown', null, checkedAt)
   }
 
-  const matches = collection.zones
-    .map((zone) => ({
-      zone,
-      inside: zoneContainsPoint(zone, point),
-      distanceMeters: distanceToZoneMeters(point, zone),
-    }))
-    .sort((a, b) => a.distanceMeters - b.distanceMeters)
-
-  const inside = matches.find((match) => match.inside)
-  if (inside) {
-    return assessment('inside', inside.zone.severity, 0, checkedAt)
+  // No zones reported for this country means no data, not "no flood risk":
+  // the nearest zone would otherwise sit hundreds of km away across a border
+  // and turn every auction there into a green 'outside'.
+  if (collection.countryCodes && !collection.countryCodes.has(eeaCountryCode(auction.country))) {
+    return assessment('unknown', 'unknown', null, checkedAt)
   }
 
-  const nearest = matches[0]
+  const nearest = nearestZone(point, collection.zones)
   if (!nearest || !Number.isFinite(nearest.distanceMeters)) {
     return assessment('unknown', 'unknown', null, checkedAt)
+  }
+
+  if (zoneContainsPoint(nearest.zone, point)) {
+    return assessment('inside', nearest.zone.severity, 0, checkedAt)
   }
 
   if (nearest.distanceMeters <= nearbyDistanceMeters) {
@@ -224,7 +172,14 @@ export function buildFloodHazardAssessment(
 export async function createEuFloodRiskFileAdapter(
   options: FloodRiskFileAdapterOptions,
 ): Promise<HazardAssessmentAdapter> {
-  const collection = await readFloodRiskGeoJson(options.geoJsonPath, options.sourceVersion)
+  // Cached by mtime: external-enrichment rebuilds its adapters per call and
+  // fires one call per auction, so an uncached parse here happens dozens of
+  // times concurrently (see cached-file-collection.ts).
+  const collection = await readCachedFileCollection(
+    options.geoJsonPath,
+    (path) => readFloodRiskGeoJson(path, options.sourceVersion),
+    options.sourceVersion ?? '',
+  )
   return {
     id: 'eu-flood-risk-file-cache',
     sourceVersion: options.sourceVersion ?? collection.sourceVersion,
@@ -234,18 +189,6 @@ export async function createEuFloodRiskFileAdapter(
       return result ? [result] : []
     },
   }
-}
-
-export function pointInPolygon(point: Point, polygon: GeoJsonPolygonCoordinates): boolean {
-  if (!ringContainsPoint(point, polygon[0] ?? [])) return false
-  return !polygon.slice(1).some((hole) => ringContainsPoint(point, hole))
-}
-
-export function distanceToPolygonMeters(point: Point, polygon: GeoJsonPolygonCoordinates): number {
-  if (pointInPolygon(point, polygon)) return 0
-  const rings = polygon.filter((ring) => ring.length >= 2)
-  if (rings.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...rings.map((ring) => distanceToRingMeters(point, ring)))
 }
 
 function assessment(
@@ -267,54 +210,37 @@ function assessment(
   }
 }
 
-async function fetchArcGisGeoJsonPage(
-  fetchImpl: typeof fetch,
-  serviceUrl: string,
-  options: { where: string; offset: number; pageSize: number },
-): Promise<FloodRiskFeatureCollection> {
-  const url = new URL(`${serviceUrl.replace(/\/$/, '')}/query`)
-  url.searchParams.set('f', 'geojson')
-  url.searchParams.set('where', options.where)
-  url.searchParams.set('outFields', '*')
-  url.searchParams.set('returnGeometry', 'true')
-  url.searchParams.set('outSR', '4326')
-  url.searchParams.set('orderByFields', 'OBJECTID')
-  url.searchParams.set('resultOffset', String(options.offset))
-  url.searchParams.set('resultRecordCount', String(options.pageSize))
+/**
+ * Nearest zone by exact outline distance, but measured only for the zones
+ * that can still win: candidates are ordered by their bounding box distance
+ * (a lower bound for the outline distance), and the walk stops as soon as
+ * that lower bound passes the best exact distance found so far. Zones without
+ * usable coordinates get an infinite bound, so they are measured only while
+ * no finite best distance exists yet — once any bounded zone has set one,
+ * an unbounded zone is skipped without ever being checked, even if it would
+ * have been the true nearest (or containing) match.
+ */
+function nearestZone(
+  point: Point,
+  zones: FloodRiskZone[],
+): { zone: FloodRiskZone; distanceMeters: number } | null {
+  const candidates = zones
+    .map((zone) => ({
+      zone,
+      lowerBound: zone.bounds ? boundsDistanceMeters(point, zone.bounds) : Number.POSITIVE_INFINITY,
+    }))
+    .sort((a, b) => a.lowerBound - b.lowerBound)
 
-  const response = await fetchImpl(url)
-  if (!response.ok) throw new Error(`EU flood risk request failed: ${response.status} ${response.statusText}`)
-  const body = await response.json() as unknown
-  if (hasArcGisError(body)) {
-    throw new Error(`EU flood risk request failed: ${body.error.message}`)
+  let best: { zone: FloodRiskZone; distanceMeters: number } | null = null
+  for (const candidate of candidates) {
+    if (best && candidate.lowerBound > best.distanceMeters) break
+    const distanceMeters = distanceToZoneMeters(point, candidate.zone)
+    if (!best || distanceMeters < best.distanceMeters) {
+      best = { zone: candidate.zone, distanceMeters }
+    }
+    if (distanceMeters === 0) break
   }
-  if (!isFeatureCollection(body)) {
-    throw new Error('EU flood risk response was not a GeoJSON FeatureCollection')
-  }
-  return body
-}
-
-function hasArcGisError(input: unknown): input is { error: { message: string } } {
-  if (!input || typeof input !== 'object') return false
-  const error = (input as { error?: unknown }).error
-  return !!error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string'
-}
-
-function countryWhereClause(countryCodes: string[] | undefined): string {
-  const normalized = (countryCodes ?? [])
-    .map((country) => country.trim().toUpperCase())
-    .filter((country) => /^[A-Z]{2}$/.test(country))
-  if (normalized.length === 0) return '1=1'
-  return `countryCode IN (${normalized.map((country) => `'${country}'`).join(',')})`
-}
-
-function isStale(generatedAt: string, checkedAt: string, maxAgeDays: number | undefined): boolean {
-  if (maxAgeDays == null) return false
-  const generatedTime = Date.parse(generatedAt)
-  const checkedTime = Date.parse(checkedAt)
-  if (!Number.isFinite(generatedTime)) return true
-  if (!Number.isFinite(checkedTime)) return true
-  return checkedTime - generatedTime > maxAgeDays * 24 * 60 * 60 * 1000
+  return best
 }
 
 function zoneContainsPoint(zone: FloodRiskZone, point: Point): boolean {
@@ -322,67 +248,9 @@ function zoneContainsPoint(zone: FloodRiskZone, point: Point): boolean {
 }
 
 function distanceToZoneMeters(point: Point, zone: FloodRiskZone): number {
-  return Math.min(...zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
+  return minOf(zone.polygons.map((polygon) => distanceToPolygonMeters(point, polygon)))
 }
 
-function ringContainsPoint(point: Point, ring: GeoJsonLinearRing): boolean {
-  let inside = false
-  const x = point.lng
-  const y = point.lat
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i]?.[0]
-    const yi = ring[i]?.[1]
-    const xj = ring[j]?.[0]
-    const yj = ring[j]?.[1]
-    if (xi == null || yi == null || xj == null || yj == null) continue
-    const intersects = ((yi > y) !== (yj > y)) &&
-      (x < ((xj - xi) * (y - yi)) / (yj - yi) + xi)
-    if (intersects) inside = !inside
-  }
-  return inside
-}
-
-function distanceToRingMeters(point: Point, ring: GeoJsonLinearRing): number {
-  const segments = normalizedRingSegments(ring)
-  if (segments.length === 0) return Number.POSITIVE_INFINITY
-  return Math.min(...segments.map(([a, b]) => distanceToSegmentMeters(point, a, b)))
-}
-
-function normalizedRingSegments(ring: GeoJsonLinearRing): Array<[Point, Point]> {
-  const points = ring
-    .filter((position) => Number.isFinite(position[0]) && Number.isFinite(position[1]))
-    .map((position) => ({ lng: position[0], lat: position[1] }))
-  if (points.length < 2) return []
-  const closed = samePoint(points[0]!, points[points.length - 1]!)
-    ? points
-    : [...points, points[0]!]
-  return closed.slice(1).map((point, index) => [closed[index]!, point])
-}
-
-function distanceToSegmentMeters(point: Point, a: Point, b: Point): number {
-  const projected = projectPointToSegment(point, a, b)
-  return distanceMeters(point, projected)
-}
-
-function projectPointToSegment(point: Point, a: Point, b: Point): Point {
-  const latScale = 111_320
-  const lngScale = 111_320 * Math.cos(toRadians(point.lat))
-  const px = point.lng * lngScale
-  const py = point.lat * latScale
-  const ax = a.lng * lngScale
-  const ay = a.lat * latScale
-  const bx = b.lng * lngScale
-  const by = b.lat * latScale
-  const dx = bx - ax
-  const dy = by - ay
-  const lengthSq = dx * dx + dy * dy
-  if (lengthSq === 0) return a
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq))
-  return {
-    lng: (ax + t * dx) / lngScale,
-    lat: (ay + t * dy) / latScale,
-  }
-}
 
 function polygonsForFeature(feature: FloodRiskFeature): GeoJsonPolygonCoordinates[] {
   const geometry = feature.geometry
@@ -438,21 +306,13 @@ function idForFeature(properties: Record<string, unknown>, index: number): strin
   return `flood-zone-${index + 1}`
 }
 
-function isFeatureCollection(input: unknown): input is FloodRiskFeatureCollection {
+export function isFeatureCollection(input: unknown): input is FloodRiskFeatureCollection {
   if (!input || typeof input !== 'object') return false
   const candidate = input as Partial<FloodRiskFeatureCollection>
   return candidate.type === 'FeatureCollection' && Array.isArray(candidate.features)
 }
 
-function isFeature(input: unknown): input is FloodRiskFeature {
+export function isFeature(input: unknown): input is FloodRiskFeature {
   if (!input || typeof input !== 'object') return false
   return (input as Partial<FloodRiskFeature>).type === 'Feature'
-}
-
-function samePoint(a: Point, b: Point): boolean {
-  return a.lat === b.lat && a.lng === b.lng
-}
-
-function toRadians(degrees: number): number {
-  return (degrees * Math.PI) / 180
 }

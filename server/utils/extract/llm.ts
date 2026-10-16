@@ -6,31 +6,24 @@
 //
 // Optionally vision: when `pdfPageImages` is set (a scanned/image-only
 // Gutachten PDF where pdftotext returned nothing usable — see
-// server/tasks/enrich.ts), the rendered page images are sent alongside the
-// prompt instead of relying on text alone. parseExtractionResponse/
-// clampExtraction are pure and unit-tested; the network call is a thin wrapper.
+// llm-documents.ts), the rendered page images are sent alongside the prompt
+// instead of relying on text alone. clampExtraction is pure and unit-tested;
+// the network call is a thin wrapper around the provider implementations.
 
 import { ClaudeProxyProvider } from './providers/claude-proxy'
 import { OpenAiCompatibleProvider } from './providers/openai-compatible'
 import { GeminiNativeProvider } from './providers/gemini-native'
-import { clampExtraction, type ClampedExtraction } from './llm-clamp'
+import { clampExtraction, type ClampedExtraction, type RulesHint } from './llm-clamp'
 import {
+  DOCUMENT_SUMMARY_SCHEMA,
+  DOCUMENT_SUMMARY_SCHEMA_NAME,
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_ID,
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
 } from './llm-schema'
-
-export {
-  clampExtraction,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
-  UNIVERSAL_AUCTION_SCHEMA_ID,
-  UNIVERSAL_AUCTION_SCHEMA_NAME,
-  UNIVERSAL_AUCTION_SCHEMA_VERSION,
-}
-export type { ClampedExtraction, PhotoCuration } from './llm-clamp'
 
 export interface LlmInput {
   title: string | null
@@ -42,7 +35,7 @@ export interface LlmInput {
   documentText?: string | null
   pdfText?: string | null
   /** Base64 JPEGs of Gutachten pages 1..N, used when pdfText is too sparse to
-   *  be the scanned PDF's real content (see pdfPagesToBase64Jpeg). Page 1
+   *  be the scanned PDF's real content (see renderPdfPagesJpeg). Page 1
    *  alone isn't enough — it's almost always a cover page, the facts sought
    *  are on later pages. */
   pdfPageImages?: string[] | null
@@ -62,6 +55,13 @@ export interface LlmInput {
    *  (`photoIndex`) in the extraction response rather than by filename,
    *  since a filename echoed back by the model is unreliable. */
   candidateImages?: { label: string; mimeType: string; data: string }[]
+  /** The deterministic rules pass's already-found values for propertyType/
+   *  rooms/units/securityDeposit (null for whatever it didn't find). Passed
+   *  along so the LLM can specifically verify or falsify each one instead of
+   *  guessing blind — see `ruleCheck` in the response schema and
+   *  mergeLlmResult, which only lets the LLM override a rules value that it
+   *  explicitly falsified. */
+  rulesHint?: RulesHint | null
 }
 
 export interface LlmConfig {
@@ -73,25 +73,15 @@ export interface LlmConfig {
    *  'gemini-native' opts into Gemini's own API instead of its OpenAI-compat
    *  layer, for its one genuine extra capability: native PDF understanding
    *  (see `document` ContentPart below). */
-  provider?: 'claude-proxy' | 'openai-compatible' | 'gemini-native'
+  provider?: 'claude-proxy' | 'openai-compatible' | 'gemini-native' | 'openrouter'
   baseUrl: string
   apiKey?: string
   model: string
   maxTokens?: number
-}
-
-export class LlmProviderError extends Error {
-  readonly provider: string
-
-  constructor(provider: string, message: string, options?: { cause?: unknown }) {
-    super(`${provider}: ${message}`, options)
-    this.name = 'LlmProviderError'
-    this.provider = provider
-  }
-}
-
-export function isLlmProviderError(error: unknown): error is LlmProviderError {
-  return error instanceof LlmProviderError
+  /** Set when resolved from an assigned LlmProviderProfile — see
+   *  LlmProviderOverride.profileId. Threaded through so reprocess.ts can
+   *  record which profile won the fallback chain (WP-1 provenance). */
+  profileId?: string
 }
 
 /** Provider-neutral request content — a specific backend's provider
@@ -108,90 +98,89 @@ export type ContentPart =
 export interface ExtractionRequest {
   systemPrompt: string
   schema: Record<string, unknown>
+  /** Tool/response-schema name sent to providers that require one
+   *  (OpenAiCompatibleProvider's `response_format.json_schema.name`).
+   *  Defaults to UNIVERSAL_AUCTION_SCHEMA_NAME — callers passing a
+   *  different schema (see extractByLlm's opts.schema) must also pass a
+   *  matching name, or every response gets mislabeled as the universal
+   *  auction schema regardless of its actual shape. */
+  name?: string
   parts: ContentPart[]
+}
+
+/** Token counts pulled off a provider response for cost accounting
+ *  (llm-usage.ts). Either field is null when the provider didn't report it —
+ *  never guessed at. */
+export interface LlmUsage {
+  inputTokens: number | null
+  outputTokens: number | null
+  /** Provider-reported USD spend when available (OpenRouter supplies this
+   * for compatible responses).  Otherwise the caller uses its price table. */
+  costUsd?: number | null
 }
 
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
- *  buildParts/clampExtraction. Implementations resolve to null for a request
- *  failure or unparseable response, but must throw (not swallow to null) when
- *  the failure is a rate limit/quota error — see isRateLimitError(). `opts.
+ *  buildParts/clampExtraction. When the caller passes `opts.onRequestError`,
+ *  implementations resolve to null for an empty/unparseable response (and,
+ *  except claude-proxy, for a request failure); without it they throw
+ *  LlmProviderError. They must always throw (not swallow to null) when the
+ *  failure is a rate limit/quota error — see isRateLimitError(). `opts.
  *  onRequestError` fires only for an actual request failure (network/HTTP
  *  error), never for an empty/unparseable response — reprocess.ts uses it to
  *  tell "the provider errored" apart from "the provider returned nothing",
- *  which extractByLlm's null return can't distinguish on its own. */
+ *  which extractByLlm's null return can't distinguish on its own. `opts.
+ *  onUsage` fires once a response was actually received — including when it
+ *  turns out unparseable, since tokens were spent either way — but never on
+ *  a request failure (no response came back to read usage off). */
 export interface ExtractionProvider {
   extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null>
 }
 
-/** Whether a thrown $fetch error was an HTTP 429 (rate limit/quota exceeded).
- *  Providers rethrow rather than swallow this to null so a capacity outage
- *  (observed in prod on Gemini's free tier — see gemini-native.ts) never
- *  counts toward extraction's retry-lockout: reprocess.ts's per-candidate
- *  try/catch skips a thrown error without touching the cache entry, leaving
- *  `llmFailures` untouched so the auction is retried again next run instead
- *  of being permanently downgraded to rules-only after MAX_LLM_FAILURES
- *  unrelated capacity failures. */
-export function isRateLimitError(err: unknown): boolean {
-  return (err as { response?: { status?: number } })?.response?.status === 429
-}
+// The old 60–80k-character caps routinely sent entire appraisals alongside
+// eight gallery photos. That is disproportionate to the structured facts we
+// need and exhausts an OAuth subscription long before the backlog moves.
+// Keep both the beginning (object/master data) and end (valuation/conclusion)
+// of a document, where those facts conventionally live.
+const MAX_PDF_CHARS = 24_000
+const MAX_DOCUMENT_TEXT_CHARS = 24_000
 
-/** Whether the current model/profile is the problem — rate-limited/over
- *  quota, or a provider-level failure such as a model id that no longer
- *  resolves (see gemini-native.ts) — as opposed to a caller-side bug. Callers
- *  configured with a fallback chain (see app-settings.ts's
- *  getLlmProviderOverrideChain) use this to decide whether to try the next
- *  model instead of giving up. */
-export function isLlmProviderUnavailable(err: unknown): boolean {
-  return isRateLimitError(err) || isLlmProviderError(err)
-}
-
-// Docling's Markdown is longer than the pdftotext prose this used to cap:
-// measured 114.570 vs 103.600 chars on a 37-page appraisal, because table
-// syntax costs pipes and separator rows. At 60k that document lost half its
-// content. Raised so structure isn't bought by truncating more of the
-// document — and no more expensive than the status quo, where the native-PDF
-// path uploaded the whole file anyway.
-const MAX_PDF_CHARS = 120_000
-const MAX_DOCUMENT_TEXT_CHARS = 80_000
-
-/** Pull the structured object out of the proxy's `final_result` tool_use block. */
-export function parseExtractionResponse(resp: unknown): Record<string, unknown> | null {
-  if (!resp || typeof resp !== 'object') return null
-  const content = (resp as { content?: unknown }).content
-  if (!Array.isArray(content)) return null
-  const block = content.find(
-    (c): c is { input: unknown } =>
-      !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'tool_use' &&
-      (c as { name?: unknown }).name === 'final_result',
-  )
-  if (!block || typeof block.input !== 'object' || block.input == null) return null
-  return block.input as Record<string, unknown>
+function compactDocumentText(text: string, limit: number): string {
+  if (text.length <= limit) return text
+  const firstPart = Math.floor(limit * 0.7)
+  const lastPart = limit - firstPart
+  return `${text.slice(0, firstPart)}\n\n[... Dokumentmitte aus Budgetgründen ausgelassen ...]\n\n${text.slice(-lastPart)}`
 }
 
 /**
- * Assemble provider-neutral content parts from an LlmInput. `pdfPageImages`
- * is left out when `pdfBytes`/`pdfDocuments` are set (a provider with native
- * document understanding is in play) — sending both would double the token
- * cost for the same information.
- *
- * `pdfText` is always included: since Docling entered the pipeline the two
- * fields describe *different* documents, never the same one twice. A document
- * that was converted to Markdown travels as text and withholds its bytes,
- * one that wasn't travels as bytes and has no text (see
- * server/utils/extract/llm-documents.ts's buildPreparedInput). Dropping the
- * text here would silently lose every converted document in a mixed set.
+ * Assemble provider-neutral content parts from an LlmInput. Rendered page
+ * images are omitted when native PDF parts are present, but pdfText is kept:
+ * Docling Markdown describes PDFs whose native bytes are withheld, so a mixed
+ * set must reach the model complete.
  */
 export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
   if (input.title) text.push(`Objektbezeichnung: ${input.title}`)
   if (input.description) text.push(`Beschreibung:\n${input.description}`)
+  const hint = input.rulesHint
+  const hintLines: string[] = []
+  if (hint?.propertyType != null) hintLines.push(`Objektart: ${hint.propertyType}`)
+  if (hint?.rooms != null) hintLines.push(`Zimmeranzahl: ${hint.rooms}`)
+  if (hint?.units != null) hintLines.push(`Anzahl Wohneinheiten: ${hint.units}`)
+  if (hint?.securityDeposit != null) hintLines.push(`Sicherheitsleistung: ${hint.securityDeposit}`)
+  if (hintLines.length) {
+    text.push(
+      'Automatisch (regelbasiert) vorermittelte Werte zur Prüfung — können falsch sein, z. B. wenn ein ' +
+        'Begriff im Text das umgebende Gebäude statt das tatsächliche Versteigerungsobjekt meint:\n' +
+        hintLines.join('\n'),
+    )
+  }
   if (input.documentText) {
-    text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${input.documentText.slice(0, MAX_DOCUMENT_TEXT_CHARS)}`)
+    text.push(`Weitere Dokumenttexte/HTML-Anhänge:\n${compactDocumentText(input.documentText, MAX_DOCUMENT_TEXT_CHARS)}`)
   }
   const nativeDocuments = input.pdfDocuments?.length
     ? input.pdfDocuments
@@ -200,7 +189,7 @@ export function buildParts(input: LlmInput): ContentPart[] {
       : []
   const usingDocumentPart = nativeDocuments.length > 0
   if (input.pdfText) {
-    text.push(`Auszug aus Gutachten/Exposé (PDF):\n${input.pdfText.slice(0, MAX_PDF_CHARS)}`)
+    text.push(`Auszug aus Gutachten/Exposé (PDF):\n${compactDocumentText(input.pdfText, MAX_PDF_CHARS)}`)
   }
   if (input.pdfPageImages?.length && !usingDocumentPart) {
     text.push(
@@ -254,6 +243,7 @@ export function getProvider(config: LlmConfig): ExtractionProvider {
     case 'claude-proxy':
       return new ClaudeProxyProvider(config)
     case 'openai-compatible':
+    case 'openrouter':
       return new OpenAiCompatibleProvider(config)
     case 'gemini-native':
       return new GeminiNativeProvider(config)
@@ -267,15 +257,19 @@ export function getProvider(config: LlmConfig): ExtractionProvider {
  *  Returns null when unconfigured (baseUrl unset) — same graceful-degrade
  *  contract as those callers. */
 export function resolveLlmConfig(
-  c: { provider?: string; baseUrl?: string; apiKey?: string; model?: string } | undefined,
+  c: { provider?: string; baseUrl?: string; apiKey?: string; model?: string; profileId?: string } | undefined,
   overrides?: { maxTokens?: number },
 ): LlmConfig | null {
   if (!c?.baseUrl) return null
-  const provider = c.provider === 'claude-proxy' || c.provider === 'gemini-native' ? c.provider : 'openai-compatible'
+  const provider =
+    c.provider === 'claude-proxy' || c.provider === 'gemini-native' || c.provider === 'openrouter'
+      ? c.provider
+      : 'openai-compatible'
   return {
     provider,
     baseUrl: c.baseUrl,
     apiKey: c.apiKey || undefined,
+    profileId: c.profileId,
     model: c.model || (provider === 'gemini-native' ? 'gemini-flash-latest' : 'claude-haiku-4-5'),
     maxTokens: overrides?.maxTokens,
   }
@@ -291,14 +285,32 @@ export function resolveLlmConfig(
 export async function extractByLlm(
   input: LlmInput,
   config: LlmConfig,
-  opts: { onProviderAttempt?: () => void; onProviderError?: (err: unknown) => void } = {},
+  opts: {
+    onProviderAttempt?: () => void
+    onProviderError?: (err: unknown) => void
+    onUsage?: (usage: LlmUsage) => void
+    /** Overrides the default universal-auction schema/prompt/name — used by
+     *  the per-document map-reduce path (reprocess-map-reduce.ts) to request
+     *  a smaller per-document schema instead. clampExtraction still applies
+     *  to whatever comes back, so callers passing a schema with fewer
+     *  properties than UNIVERSAL_AUCTION_SCHEMA get a ClampedExtraction with
+     *  the omitted fields simply absent/null. */
+    schema?: Record<string, unknown>
+    systemPrompt?: string
+    name?: string
+  } = {},
 ): Promise<ClampedExtraction | null> {
   const parts = buildParts(input)
   if (parts.length === 0) return null
   opts.onProviderAttempt?.()
   const raw = await getProvider(config).extract(
-    { systemPrompt: SYSTEM_PROMPT, schema: UNIVERSAL_AUCTION_SCHEMA, parts },
-    { onRequestError: opts.onProviderError },
+    {
+      systemPrompt: opts.systemPrompt ?? SYSTEM_PROMPT,
+      schema: opts.schema ?? UNIVERSAL_AUCTION_SCHEMA,
+      name: opts.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME,
+      parts,
+    },
+    { onRequestError: opts.onProviderError, onUsage: opts.onUsage },
   )
   return raw ? clampExtraction(raw) : null
 }

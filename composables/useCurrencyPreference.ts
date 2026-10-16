@@ -15,7 +15,11 @@ export function useCurrencyPreference() {
   const ready = useState('currency-preference-ready', () => false)
 
   function init(): void {
-    if (ready.value) return
+    // Mirrors useAuth.ts: the account-metadata watch only matters once the
+    // client resolves the real session, so `ready` must stay false through
+    // SSR — otherwise it's serialized as `true` into the payload and the
+    // client skips this watch() entirely on hydration, never syncing.
+    if (ready.value || import.meta.server) return
     ready.value = true
     watch(
       user,

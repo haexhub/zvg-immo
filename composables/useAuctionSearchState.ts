@@ -1,17 +1,24 @@
 import { refDebounced } from '@vueuse/core'
-import type { ComputedRef, Ref } from 'vue'
+import type { ComputedRef, InjectionKey, Ref } from 'vue'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
+import { toggleInArray } from '~/lib/toggle-array'
+import {
+  activeAuctionSearchFilterCount,
+  defaultAuctionSearchFilters,
+  finiteNumber,
+  parseAuctionSearchFilters,
+  serializeAuctionSearchFilters,
+  type AuctionSearchFilters,
+  type AuctionSearchSortBy,
+} from '~/lib/auction-search-filter-contract'
 import type { CountryEntry } from '~/server/crawlers/registry'
 
-const SORT_OPTIONS = ['default', 'dateAsc', 'priceAsc', 'priceDesc'] as const
-export type AuctionSearchSortBy = typeof SORT_OPTIONS[number]
+export type { AuctionSearchSortBy } from '~/lib/auction-search-filter-contract'
 
 type DisplayToEur = (amount: number) => number | null
 type EurToDisplay = (amount: number) => number | null
 
-function numOrNull(v: unknown): number | null {
-  return typeof v === 'number' && !Number.isNaN(v) ? v : null
-}
+function numOrNull(v: unknown): number | null { return typeof v === 'number' && !Number.isNaN(v) ? v : null }
 
 export function useAuctionSearchState(options: {
   countries: Ref<CountryEntry[] | null>
@@ -24,59 +31,56 @@ export function useAuctionSearchState(options: {
   const { t } = useI18n()
   const countryLabel = useCountryLabel()
 
-  function queryStr(key: string, fallback = ''): string {
-    const v = route.query[key]
-    return (Array.isArray(v) ? (v[0] ?? '') : (v ?? '')) || fallback
-  }
-
-  function queryNum(key: string): number | null {
-    const v = queryStr(key)
-    if (!v) return null
-    const n = Number(v)
-    return Number.isFinite(n) ? n : null
-  }
-
-  function queryList(key: string): string[] {
-    const v = route.query[key]
-    const raw = Array.isArray(v) ? v.join(',') : (v ?? '')
-    return raw ? raw.split(',').filter(Boolean) : []
-  }
-
-  function querySortBy(): AuctionSearchSortBy {
-    const v = queryStr('sort', 'default')
-    return SORT_OPTIONS.includes(v as AuctionSearchSortBy) ? (v as AuctionSearchSortBy) : 'default'
-  }
+  const initialFilters = parseAuctionSearchFilters(route.query, options.hideRulesOnlyServerDefault.value)
 
   const mounted = ref(false)
-  const selectedCountries = ref<string[]>(queryList('country'))
-  const selectedRegionKeys = ref<string[]>(queryList('region'))
+  const selectedCountries = ref<string[]>(initialFilters.countries)
+  const selectedRegionKeys = ref<string[]>(initialFilters.regionKeys)
   const filtersOpen = ref(false)
-  const search = ref(queryStr('q'))
+  const search = ref(initialFilters.search)
   const debouncedSearch = refDebounced(search, 250)
-  const includeCancelled = ref(route.query.cancelled === '1')
-  const authorityFilter = ref<string>(queryStr('authority', ALL_SCOPE))
-  const priceMin = ref<number | null>(queryNum('priceMin'))
-  const priceMax = ref<number | null>(queryNum('priceMax'))
-  const landAreaMin = ref<number | null>(queryNum('landMin'))
-  const landAreaMax = ref<number | null>(queryNum('landMax'))
-  const livingAreaMin = ref<number | null>(queryNum('livMin'))
-  const livingAreaMax = ref<number | null>(queryNum('livMax'))
-  const yearBuiltMin = ref<number | null>(queryNum('yearBuiltMin'))
-  const yearBuiltMax = ref<number | null>(queryNum('yearBuiltMax'))
-  const renovationYearMin = ref<number | null>(queryNum('renovationYearMin'))
-  const renovationYearMax = ref<number | null>(queryNum('renovationYearMax'))
-  const categoryFilter = ref<string>(queryStr('category', ALL_SCOPE))
-  const conditionFilter = ref<string>(queryStr('condition', ALL_SCOPE))
-  const featuresFilter = ref<string[]>(queryList('features'))
-  const onlyWithPhotos = ref(route.query.photos === '1')
-  const hideRulesOnly = ref(
-    route.query.llmOnly === '1' ? true : route.query.llmOnly === '0' ? false : options.hideRulesOnlyServerDefault.value,
-  )
-  const boundToMap = ref(route.query.boundToMap === '1')
-  const sortBy = ref<AuctionSearchSortBy>(querySortBy())
+  const includeCancelled = ref(initialFilters.includeCancelled)
+  const authorityFilter = ref<string>(initialFilters.authority)
+  const priceMin = ref<number | null>(initialFilters.priceMin)
+  const priceMax = ref<number | null>(initialFilters.priceMax)
+  const landAreaMin = ref<number | null>(initialFilters.landMin)
+  const landAreaMax = ref<number | null>(initialFilters.landMax)
+  const livingAreaMin = ref<number | null>(initialFilters.livMin)
+  const livingAreaMax = ref<number | null>(initialFilters.livMax)
+  const yearBuiltMin = ref<number | null>(initialFilters.yearBuiltMin)
+  const yearBuiltMax = ref<number | null>(initialFilters.yearBuiltMax)
+  const renovationYearMin = ref<number | null>(initialFilters.renovationYearMin)
+  const renovationYearMax = ref<number | null>(initialFilters.renovationYearMax)
+  const nearSea = ref<number | null>(initialFilters.nearSea)
+  const nearLake = ref<number | null>(initialFilters.nearLake)
+  const nearRiver = ref<number | null>(initialFilters.nearRiver)
+  const nearMountain = ref<number | null>(initialFilters.nearMountain)
+  const nearAirport = ref<number | null>(initialFilters.nearAirport)
+  const nearSki = ref<number | null>(initialFilters.nearSki)
+  const nearSkiDownhill = ref<number | null>(initialFilters.nearSkiDownhill)
+  const nearSkiNordic = ref<number | null>(initialFilters.nearSkiNordic)
+  const urbanRural = ref<string>(initialFilters.urbanRural)
+  const nearLat = ref<number | null>(initialFilters.nearLat)
+  const nearLng = ref<number | null>(initialFilters.nearLng)
+  const nearRadius = ref<number | null>(initialFilters.nearRadius)
+  const categoryFilter = ref<string>(initialFilters.category)
+  const platformFilter = ref<string[]>(initialFilters.platform)
+  const conditionFilter = ref<string[]>(initialFilters.condition)
+  const featuresFilter = ref<string[]>(initialFilters.features)
+  const onlyWithPhotos = ref(initialFilters.onlyWithPhotos)
+  const hideRulesOnly = ref(initialFilters.hideRulesOnly)
+  const sortBy = ref<AuctionSearchSortBy>(initialFilters.sortBy)
   const view = ref<'list' | 'map'>('list')
   const mapViewImpliedByCountryQuery = ref(false)
   let applyingImplicitMapView = false
+  let applyingRouteFilters = false
+
+  // The map's own viewport (center/zoom), not a filter — round-tripped through
+  // the URL alongside the filters below so a shared link or a back-navigation
+  // from an auction detail page reproduces the exact pan/zoom the user left.
+  const mapLat = ref<number | null>(finiteNumber(route.query.mapLat))
+  const mapLng = ref<number | null>(finiteNumber(route.query.mapLng))
+  const mapZoom = ref<number | null>(finiteNumber(route.query.mapZoom))
 
   const availableRegions = computed(() => {
     if (selectedCountries.value.length === 0) return []
@@ -85,19 +89,29 @@ export function useAuctionSearchState(options: {
       .flatMap((c) => c.regions.map((r) => ({ ...r, key: `${c.code}:${r.code}`, countryName: countryLabel(c.code, c.name) })))
   })
 
-  const queryParams = computed(() => ({
-    ...route.query,
-    country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
-    regionNames: selectedRegionKeys.value
-      .map((key) => {
-        const region = availableRegions.value.find((entry) => entry.key === key)
-        return region ? `${region.country}:${region.name}` : null
-      })
-      .filter((value): value is string => value != null)
-      .join(',') || undefined,
-    page: 1,
-    pageSize: 30,
-  }))
+  const queryParams = computed((previous?: Record<string, unknown>) => {
+    // mapLat/mapLng/mapZoom track the map viewport, not a search filter, so
+    // they stay out of the request. Dropping the keys alone is not enough:
+    // this computed still re-runs on every pan/zoom, and useFetch deep-watches
+    // its `query` option and refetches on every new object identity, even
+    // when the key hash is unchanged. Reusing the previous object for an equal
+    // query keeps pans/zooms from refetching /api/auctions and the geo points.
+    const { mapLat: _mapLat, mapLng: _mapLng, mapZoom: _mapZoom, ...filterQuery } = route.query
+    const next = {
+      ...filterQuery,
+      country: selectedCountries.value.length ? selectedCountries.value.join(',') : undefined,
+      regionNames: selectedRegionKeys.value
+        .map((key) => {
+          const region = availableRegions.value.find((entry) => entry.key === key)
+          return region ? `${region.country}:${region.name}` : null
+        })
+        .filter((value): value is string => value != null)
+        .join(',') || undefined,
+      page: 1,
+      pageSize: 30,
+    }
+    return previous && JSON.stringify(previous) === JSON.stringify(next) ? previous : next
+  })
 
   const priceMinDisplay = computed<number | null>({
     get: () => toDisplayOrNull(priceMin.value),
@@ -126,36 +140,45 @@ export function useAuctionSearchState(options: {
   })
 
   const headerLabel = computed(() => {
-    return selectedRegionLabel.value
-      ? `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
-      : selectedCountryLabel.value
+    if (selectedRegionLabel.value) return `${selectedRegionLabel.value}, ${selectedCountryLabel.value}`
+    const trimmedSearch = search.value.trim()
+    if (selectedCountries.value.length === 0 && trimmedSearch) return trimmedSearch
+    return selectedCountryLabel.value
   })
 
-  const activeFilterCount = computed(() => {
-    let n = 0
-    if (selectedCountries.value.length) n++
-    if (selectedRegionKeys.value.length) n++
-    if (search.value.trim()) n++
-    if (!isAllScope(authorityFilter.value)) n++
-    if (numOrNull(priceMin.value) != null) n++
-    if (numOrNull(priceMax.value) != null) n++
-    if (numOrNull(landAreaMin.value) != null) n++
-    if (numOrNull(landAreaMax.value) != null) n++
-    if (numOrNull(livingAreaMin.value) != null) n++
-    if (numOrNull(livingAreaMax.value) != null) n++
-    if (numOrNull(yearBuiltMin.value) != null) n++
-    if (numOrNull(yearBuiltMax.value) != null) n++
-    if (numOrNull(renovationYearMin.value) != null) n++
-    if (numOrNull(renovationYearMax.value) != null) n++
-    if (!isAllScope(categoryFilter.value)) n++
-    if (!isAllScope(conditionFilter.value)) n++
-    if (featuresFilter.value.length) n++
-    if (onlyWithPhotos.value) n++
-    if (includeCancelled.value) n++
-    if (boundToMap.value) n++
-    if (hideRulesOnly.value !== options.hideRulesOnlyServerDefault.value) n++
-    return n
-  })
+  function currentFilters(searchValue = search.value): AuctionSearchFilters {
+    return {
+      countries: selectedCountries.value, regionKeys: selectedRegionKeys.value, search: searchValue,
+      authority: authorityFilter.value, priceMin: priceMin.value, priceMax: priceMax.value,
+      landMin: landAreaMin.value, landMax: landAreaMax.value, livMin: livingAreaMin.value, livMax: livingAreaMax.value,
+      yearBuiltMin: yearBuiltMin.value, yearBuiltMax: yearBuiltMax.value,
+      renovationYearMin: renovationYearMin.value, renovationYearMax: renovationYearMax.value,
+      nearSea: nearSea.value, nearLake: nearLake.value, nearRiver: nearRiver.value,
+      nearMountain: nearMountain.value, nearAirport: nearAirport.value, nearSki: nearSki.value,
+      nearSkiDownhill: nearSkiDownhill.value, nearSkiNordic: nearSkiNordic.value,
+      urbanRural: urbanRural.value, nearLat: nearLat.value, nearLng: nearLng.value, nearRadius: nearRadius.value,
+      category: categoryFilter.value, platform: platformFilter.value, condition: conditionFilter.value, features: featuresFilter.value,
+      onlyWithPhotos: onlyWithPhotos.value, includeCancelled: includeCancelled.value,
+      hideRulesOnly: hideRulesOnly.value, sortBy: sortBy.value,
+    }
+  }
+
+  function applyFilters(filters: AuctionSearchFilters): void {
+    selectedCountries.value = filters.countries; selectedRegionKeys.value = filters.regionKeys; search.value = filters.search
+    authorityFilter.value = filters.authority; priceMin.value = filters.priceMin; priceMax.value = filters.priceMax
+    landAreaMin.value = filters.landMin; landAreaMax.value = filters.landMax; livingAreaMin.value = filters.livMin; livingAreaMax.value = filters.livMax
+    yearBuiltMin.value = filters.yearBuiltMin; yearBuiltMax.value = filters.yearBuiltMax
+    renovationYearMin.value = filters.renovationYearMin; renovationYearMax.value = filters.renovationYearMax
+    nearSea.value = filters.nearSea; nearLake.value = filters.nearLake; nearRiver.value = filters.nearRiver
+    nearMountain.value = filters.nearMountain; nearAirport.value = filters.nearAirport; nearSki.value = filters.nearSki
+    nearSkiDownhill.value = filters.nearSkiDownhill; nearSkiNordic.value = filters.nearSkiNordic
+    urbanRural.value = filters.urbanRural; nearLat.value = filters.nearLat; nearLng.value = filters.nearLng; nearRadius.value = filters.nearRadius
+    categoryFilter.value = filters.category; platformFilter.value = filters.platform; conditionFilter.value = filters.condition; featuresFilter.value = filters.features
+    onlyWithPhotos.value = filters.onlyWithPhotos; includeCancelled.value = filters.includeCancelled
+    hideRulesOnly.value = filters.hideRulesOnly; sortBy.value = filters.sortBy
+  }
+
+  const activeFilterCount = computed(() => activeAuctionSearchFilterCount(currentFilters(), options.hideRulesOnlyServerDefault.value))
 
   function toDisplayOrNull(eur: number | null): number | null {
     if (eur == null) return null
@@ -170,17 +193,11 @@ export function useAuctionSearchState(options: {
   }
 
   function toggleCountry(code: string): void {
-    const set = new Set(selectedCountries.value)
-    if (set.has(code)) set.delete(code)
-    else set.add(code)
-    selectedCountries.value = [...set]
+    selectedCountries.value = toggleInArray(selectedCountries.value, code)
   }
 
   function toggleRegion(key: string): void {
-    const set = new Set(selectedRegionKeys.value)
-    if (set.has(key)) set.delete(key)
-    else set.add(key)
-    selectedRegionKeys.value = [...set]
+    selectedRegionKeys.value = toggleInArray(selectedRegionKeys.value, key)
   }
 
   function setPriceBucket(min: number | null, max: number | null): void {
@@ -188,28 +205,17 @@ export function useAuctionSearchState(options: {
     priceMax.value = max
   }
 
+  // Rounded to a fixed precision so a value written to the URL and read back
+  // parses to the exact same number — otherwise the round-trip below would
+  // re-fire this same watcher on every navigation.
+  function updateMapView(lat: number, lng: number, zoom: number): void {
+    mapLat.value = Math.round(lat * 1e5) / 1e5
+    mapLng.value = Math.round(lng * 1e5) / 1e5
+    mapZoom.value = Math.round(zoom * 100) / 100
+  }
+
   function clearAllFilters(): void {
-    selectedCountries.value = []
-    selectedRegionKeys.value = []
-    search.value = ''
-    authorityFilter.value = ALL_SCOPE
-    priceMin.value = null
-    priceMax.value = null
-    landAreaMin.value = null
-    landAreaMax.value = null
-    livingAreaMin.value = null
-    livingAreaMax.value = null
-    yearBuiltMin.value = null
-    yearBuiltMax.value = null
-    renovationYearMin.value = null
-    renovationYearMax.value = null
-    categoryFilter.value = ALL_SCOPE
-    conditionFilter.value = ALL_SCOPE
-    featuresFilter.value = []
-    onlyWithPhotos.value = false
-    includeCancelled.value = false
-    boundToMap.value = false
-    hideRulesOnly.value = options.hideRulesOnlyServerDefault.value
+    applyFilters(defaultAuctionSearchFilters(options.hideRulesOnlyServerDefault.value))
   }
 
   function initializeMountedState(): void {
@@ -242,8 +248,10 @@ export function useAuctionSearchState(options: {
       const sameCountries = countries.join(',') === (prevCountries ?? []).join(',')
       const sameRegions = regions.join(',') === (prevRegions ?? []).join(',')
       if (sameCountries && sameRegions) return
+      if (applyingRouteFilters) return
       authorityFilter.value = ALL_SCOPE
       categoryFilter.value = ALL_SCOPE
+      platformFilter.value = []
     },
   )
 
@@ -253,60 +261,35 @@ export function useAuctionSearchState(options: {
   })
 
   watch(
-    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, categoryFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, boundToMap, sortBy, view],
+    [selectedCountries, selectedRegionKeys, debouncedSearch, authorityFilter, priceMin, priceMax, landAreaMin, landAreaMax, livingAreaMin, livingAreaMax, yearBuiltMin, yearBuiltMax, renovationYearMin, renovationYearMax, nearSea, nearLake, nearRiver, nearMountain, nearAirport, nearSki, nearSkiDownhill, nearSkiNordic, urbanRural, nearLat, nearLng, nearRadius, categoryFilter, platformFilter, conditionFilter, featuresFilter, onlyWithPhotos, includeCancelled, hideRulesOnly, sortBy, view, mapLat, mapLng, mapZoom],
     () => {
-      const query: Record<string, string> = {}
-      if (selectedCountries.value.length) query.country = selectedCountries.value.join(',')
-      if (selectedRegionKeys.value.length) query.region = selectedRegionKeys.value.join(',')
-      if (debouncedSearch.value.trim()) query.q = debouncedSearch.value.trim()
-      if (!isAllScope(authorityFilter.value)) query.authority = authorityFilter.value
-      if (numOrNull(priceMin.value) != null) query.priceMin = String(numOrNull(priceMin.value))
-      if (numOrNull(priceMax.value) != null) query.priceMax = String(numOrNull(priceMax.value))
-      if (numOrNull(landAreaMin.value) != null) query.landMin = String(numOrNull(landAreaMin.value))
-      if (numOrNull(landAreaMax.value) != null) query.landMax = String(numOrNull(landAreaMax.value))
-      if (numOrNull(livingAreaMin.value) != null) query.livMin = String(numOrNull(livingAreaMin.value))
-      if (numOrNull(livingAreaMax.value) != null) query.livMax = String(numOrNull(livingAreaMax.value))
-      if (numOrNull(yearBuiltMin.value) != null) query.yearBuiltMin = String(numOrNull(yearBuiltMin.value))
-      if (numOrNull(yearBuiltMax.value) != null) query.yearBuiltMax = String(numOrNull(yearBuiltMax.value))
-      if (numOrNull(renovationYearMin.value) != null) query.renovationYearMin = String(numOrNull(renovationYearMin.value))
-      if (numOrNull(renovationYearMax.value) != null) query.renovationYearMax = String(numOrNull(renovationYearMax.value))
-      if (!isAllScope(categoryFilter.value)) query.category = categoryFilter.value
-      if (!isAllScope(conditionFilter.value)) query.condition = conditionFilter.value
-      if (featuresFilter.value.length) query.features = featuresFilter.value.join(',')
-      if (onlyWithPhotos.value) query.photos = '1'
-      if (includeCancelled.value) query.cancelled = '1'
-      if (boundToMap.value) query.boundToMap = '1'
-      if (hideRulesOnly.value !== options.hideRulesOnlyServerDefault.value) query.llmOnly = hideRulesOnly.value ? '1' : '0'
-      if (sortBy.value !== 'default') query.sort = sortBy.value
+      const query = serializeAuctionSearchFilters(currentFilters(debouncedSearch.value), options.hideRulesOnlyServerDefault.value)
       if (view.value === 'map' && !mapViewImpliedByCountryQuery.value) query.view = 'map'
+      if (mapLat.value != null && mapLng.value != null && mapZoom.value != null) {
+        query.mapLat = String(mapLat.value)
+        query.mapLng = String(mapLng.value)
+        query.mapZoom = String(mapZoom.value)
+      }
       router.replace({ query })
     },
   )
 
   watch(() => route.query, (q) => {
     const hadCountrySelection = selectedCountries.value.length > 0
-    selectedCountries.value = queryList('country')
-    selectedRegionKeys.value = queryList('region')
-    search.value = queryStr('q')
-    includeCancelled.value = q.cancelled === '1'
-    authorityFilter.value = queryStr('authority', ALL_SCOPE)
-    priceMin.value = queryNum('priceMin')
-    priceMax.value = queryNum('priceMax')
-    landAreaMin.value = queryNum('landMin')
-    landAreaMax.value = queryNum('landMax')
-    livingAreaMin.value = queryNum('livMin')
-    livingAreaMax.value = queryNum('livMax')
-    yearBuiltMin.value = queryNum('yearBuiltMin')
-    yearBuiltMax.value = queryNum('yearBuiltMax')
-    renovationYearMin.value = queryNum('renovationYearMin')
-    renovationYearMax.value = queryNum('renovationYearMax')
-    categoryFilter.value = queryStr('category', ALL_SCOPE)
-    conditionFilter.value = queryStr('condition', ALL_SCOPE)
-    featuresFilter.value = queryList('features')
-    onlyWithPhotos.value = q.photos === '1'
-    boundToMap.value = q.boundToMap === '1'
-    hideRulesOnly.value = q.llmOnly === '1' ? true : q.llmOnly === '0' ? false : options.hideRulesOnlyServerDefault.value
-    sortBy.value = querySortBy()
+    applyingRouteFilters = true
+    const routeFilters = parseAuctionSearchFilters(q, options.hideRulesOnlyServerDefault.value)
+    // Our own URL sync writes the trimmed, debounced text. Echoing that back
+    // into the input would eat a trailing space and anything typed since the
+    // last debounce (a pan/zoom also lands here), so only an external q change
+    // (back/forward, recent pick) may replace what the user is typing.
+    if (routeFilters.search === debouncedSearch.value.trim()) routeFilters.search = search.value
+    applyFilters(routeFilters)
+    void nextTick(() => {
+      applyingRouteFilters = false
+    })
+    mapLat.value = finiteNumber(q.mapLat)
+    mapLng.value = finiteNumber(q.mapLng)
+    mapZoom.value = finiteNumber(q.mapZoom)
     const isMapView = q.view === 'map'
     const isCountryMapView = !isMapView &&
       q.view === undefined &&
@@ -346,20 +329,46 @@ export function useAuctionSearchState(options: {
     yearBuiltMax,
     renovationYearMin,
     renovationYearMax,
+    nearSea,
+    nearLake,
+    nearRiver,
+    nearMountain,
+    nearAirport,
+    nearSki,
+    nearSkiDownhill,
+    nearSkiNordic,
+    urbanRural,
+    nearLat,
+    nearLng,
+    nearRadius,
     categoryFilter,
+    platformFilter,
     conditionFilter,
     featuresFilter,
     onlyWithPhotos,
     hideRulesOnly,
-    boundToMap,
     sortBy,
+    mapLat,
+    mapLng,
+    mapZoom,
     headerLabel,
     activeFilterCount,
     numOrNull,
     toggleCountry,
     toggleRegion,
     setPriceBucket,
+    updateMapView,
     clearAllFilters,
     initializeMountedState,
   }
 }
+
+// layouts/search.vue owns the single instance (so its header slot and the
+// page share one reactive state) and bundles in the countries list it
+// already fetches for useAuctionSearchState itself — pages/search.vue injects
+// this rather than calling useAuctionSearchState() or fetching /api/regions
+// again.
+export type AuctionSearchState = ReturnType<typeof useAuctionSearchState> & {
+  countries: Ref<CountryEntry[] | null>
+}
+export const AUCTION_SEARCH_STATE_KEY: InjectionKey<AuctionSearchState> = Symbol('auctionSearchState')

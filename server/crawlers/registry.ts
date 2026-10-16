@@ -1,6 +1,6 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM, isAllScope } from '~/lib/auction-constants'
-import { deriveMarketValueEur, getRates } from '../utils/exchange-rate'
+import { deriveMarketValuesEur } from '../utils/exchange-rate'
 import { COUNTRY_NAMES } from '../utils/countries'
 import { getPool } from '../utils/db'
 import { normalizeAuctionDescriptions } from '../utils/description-normalization'
@@ -9,6 +9,7 @@ import {
   getEnabledCountries as getStoredEnabledCountries,
 } from '../utils/app-settings'
 import type { CrawlOptions, PlatformCrawler, RegionInfo } from './types'
+import { dedupeRegionAuctions } from './dedupe'
 import { zvgPortalCrawler } from './zvg-portal'
 import { boeCrawler } from './boe'
 import { zvbawuCrawler } from './zvbawu'
@@ -36,6 +37,12 @@ import { eauction24Crawler } from './gr'
 import { auctionHouseCrawler } from './gb'
 import { bid4assetsCrawler } from './us'
 import { zaporiCrawler } from './bg'
+import { dgaAgCrawler } from './dga-ag'
+import { kipCrawler } from './kip'
+import { bimaCrawler } from './bima'
+import { bulgarianHouseCrawler } from './bulgarianhouse'
+import { aloCrawler } from './alo'
+import { bcpeaCrawler } from './bcpea'
 
 /**
  * All registered platform crawlers. Adding a new platform is purely additive:
@@ -73,6 +80,12 @@ export const platforms: readonly PlatformCrawler[] = [
   auctionHouseCrawler,
   bid4assetsCrawler,
   zaporiCrawler,
+  dgaAgCrawler,
+  kipCrawler,
+  bimaCrawler,
+  bulgarianHouseCrawler,
+  aloCrawler,
+  bcpeaCrawler,
 ] as const
 
 export interface RegionEntry extends RegionInfo {
@@ -94,7 +107,7 @@ export interface CountryEntry {
  * Countries actively crawled/shown. The default is used without Postgres and
  * on fresh installs; the admin UI persists overrides in app_settings. Paused
  * countries keep their raw data, crawl history, watchlists and permalinks, but
- * stop being scheduled, served from list_cache or surfaced in discovery.
+ * stop being scheduled, served or surfaced in discovery.
  */
 let enabledCountries = new Set<string>(DEFAULT_ENABLED_COUNTRIES)
 let enabledCountriesLoaded = false
@@ -232,51 +245,6 @@ export function getCrawlersForRegion(country: string, regionCode: string): Platf
 }
 
 /**
- * French judicial-sale sources (licitor.com, avoventes.fr) never publish the
- * court's own case number, so both always have an empty {caseNumber}, yet
- * they frequently cross-publish the exact same sale (the same avocat
- * poursuivant submits to both platforms). Fall back to a normalized {postal
- * code, house number, sale date} fingerprint so that pair collapses to one
- * pin instead of showing twice. Scoped to country 'fr' only — other
- * countries with an empty caseNumber (AT, EE, LV, FI) have exactly one
- * registered platform each and must keep relying on {platform, externalId}.
- */
-export function frAddressDateKey(a: Auction): string | null {
-  if (a.country !== 'fr' || !a.address || !a.auctionDateIso) return null
-  const postal = a.address.match(/\b\d{5}\b/)?.[0]
-  if (!postal) return null
-  // Strip the postal code before looking for a house number — otherwise a
-  // postal-code-only address (no street number, e.g. a rural lieu-dit) would
-  // match the postal code itself as "the house number", degenerating to a
-  // {postal, postal, date} key that can falsely merge two distinct auctions
-  // that only share a postal code and a sale date.
-  const addressWithoutPostal = a.address.replace(new RegExp(`\\b${postal}\\b`), '')
-  const houseNumber = addressWithoutPostal.match(/\b\d+[a-z]?(?:\s*(?:bis|ter|quater))?\b/i)?.[0]
-  if (!houseNumber) return null
-  return `fr-addr|${postal}|${houseNumber}|${a.auctionDateIso.slice(0, 10)}`
-}
-
-/**
- * Rough completeness score used to pick a winner when two platforms publish
- * the same real-world sale. Higher is richer — so when e.g. avoventes.fr has
- * a fuller record for a sale than licitor.com (or vice versa), the fuller one
- * survives instead of whichever platform happens to be registered first.
- */
-export function completenessScore(a: Auction): number {
-  return (
-    (a.marketValueEur != null ? 1 : 0) +
-    (a.title ? 1 : 0) +
-    (a.address ? 1 : 0) +
-    (a.auctionDateIso ? 1 : 0) +
-    (a.description ? 1 : 0) +
-    (a.sourceLivingAreaSqm != null || a.sourceLandAreaSqm != null ? 1 : 0) +
-    (a.sourceRooms != null ? 1 : 0) +
-    (a.lat != null ? 1 : 0) +
-    Math.min(a.photoCount, 5)
-  )
-}
-
-/**
  * Crawl one region via every platform that owns it. When multiple platforms
  * cover the same {country, region}, their results are merged into a single
  * CrawlResult. Per-platform failures are logged but do not abort the whole
@@ -294,9 +262,15 @@ export async function crawlSingle(
   }
   const settled = await Promise.allSettled(crawlers.map((c) => c.crawl(opts)))
   const results: CrawlResult[] = []
+  const succeeded: string[] = []
   for (const [i, s] of settled.entries()) {
     if (s.status === 'fulfilled') {
       results.push(s.value)
+      // Trust the crawler's own verdict, not just "it didn't throw" — a
+      // crawler can return normally after an incomplete run (pagination cut
+      // short, one of several required endpoints failed) and reports that by
+      // leaving itself out of its own platformsSucceeded.
+      succeeded.push(...s.value.platformsSucceeded)
     } else {
       console.warn(
         `[crawlSingle] ${opts.country}/${opts.region} via ${crawlers[i]?.id}: ${(s.reason as Error).message}`,
@@ -309,64 +283,8 @@ export async function crawlSingle(
     const firstReject = settled.find((s) => s.status === 'rejected')
     throw firstReject ? (firstReject as PromiseRejectedResult).reason : new Error('all crawlers failed')
   }
-  // Overlapping platforms (e.g. zvg-portal + zvbawü both list the same BW
-  // property) would otherwise produce duplicate pins and list rows. Dedup by
-  // a normalized {authority, caseNumber} key — the Aktenzeichen is the
-  // court's own case number and is stable across portals. Among auctions
-  // sharing a key, keep the one with the richer record (completenessScore)
-  // rather than whichever platform happens to be registered/crawled first.
-  const azWinners = new Map<string, Auction>()
-  const pfSeen = new Set<string>()
-  const noAzAuctions: Auction[] = []
-  for (const a of results.flatMap((r) => r.auctions)) {
-    const az = a.caseNumber.trim().toLowerCase().replace(/\s+/g, ' ')
-    const ag = a.authority.trim().toLowerCase()
-    if (az && ag) {
-      const key = `az|${ag}|${az}`
-      const existing = azWinners.get(key)
-      if (!existing || completenessScore(a) > completenessScore(existing)) {
-        azWinners.set(key, a)
-      }
-      continue
-    }
-    // No court case number available — {platform, externalId} is checked
-    // unconditionally so platform-internal uniqueness is always preserved,
-    // independently of the cross-platform address+date matching below.
-    const pfKey = `pf|${a.platform}|${a.externalId}`
-    if (pfSeen.has(pfKey)) continue
-    pfSeen.add(pfKey)
-    noAzAuctions.push(a)
-  }
-
-  // French judicial-sale sources never publish the court's own case number,
-  // yet frequently cross-publish the exact same sale — collapse auctions
-  // sharing a {postal code, house number, date} fingerprint (frAddressDateKey)
-  // to whichever has the richer record, but ONLY across different platforms.
-  // Two same-platform auctions sharing that fingerprint are distinct lots
-  // (e.g. two apartments in one seized building sold the same day) and must
-  // both survive — grouping by platform first guards that.
-  const addrGroups = new Map<string, Auction[]>()
-  const auctions: Auction[] = []
-  for (const a of noAzAuctions) {
-    const key = frAddressDateKey(a)
-    if (!key) {
-      auctions.push(a)
-      continue
-    }
-    const group = addrGroups.get(key)
-    if (group) group.push(a)
-    else addrGroups.set(key, [a])
-  }
-  for (const group of addrGroups.values()) {
-    if (new Set(group.map((a) => a.platform)).size === 1) {
-      auctions.push(...group)
-    } else {
-      auctions.push(group.reduce((best, a) => (completenessScore(a) > completenessScore(best) ? a : best)))
-    }
-  }
-  auctions.push(...azWinners.values())
-  const rates = await getRates()
-  for (const a of auctions) deriveMarketValueEur(a, rates)
+  const auctions = dedupeRegionAuctions(results.flatMap((r) => r.auctions))
+  await deriveMarketValuesEur(auctions)
   normalizeAuctionDescriptions(auctions)
   return {
     platform: results.length === 1 ? (results[0] as CrawlResult).platform : MULTI_PLATFORM,
@@ -374,6 +292,11 @@ export async function crawlSingle(
     countries: [opts.country],
     regions: [...new Set(results.flatMap((r) => r.regions))],
     fetchedAt: new Date().toISOString(),
+    // Only the platforms that actually returned AND ran to completion. One
+    // that threw, or that returned an incomplete run, must not be recorded as
+    // successfully crawled, or crawl-state.ts would read its entire catalog
+    // as disappeared and hide it from search.
+    platformsSucceeded: succeeded,
     totalReported: results.reduce<number | null>(
       (sum, r) => (r.totalReported == null ? sum : (sum ?? 0) + r.totalReported),
       null,
@@ -390,8 +313,10 @@ export interface CrawlAllOptions {
   /** Max parallel region fetches across all platforms. */
   regionConcurrency?: number
   /** Called after each region attempt (success or failure) completes, for
-   *  callers that want to report live crawl progress (see enrich.ts). */
-  onRegionDone?: (done: number, total: number) => void
+   *  callers that want to report live crawl progress (see enrich.ts). `last`
+   *  identifies the region that was just attempted, so callers can break the
+   *  done/total tally down per country. */
+  onRegionDone?: (done: number, total: number, last: { country: string; region: string }) => void
   /** Called for each successful regional crawl before it is merged. */
   onRegionResult?: (country: string, region: string, result: CrawlResult) => void | Promise<void>
   /** Cooperative cancellation used by exclusive scheduled/manual jobs. */
@@ -444,7 +369,7 @@ export async function crawlAll(
           message: (err as Error).message,
         })
       }
-      opts.onRegionDone?.(++regionsDone, all.length)
+      opts.onRegionDone?.(++regionsDone, all.length, { country: r.country, region: r.code })
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
@@ -457,6 +382,11 @@ export async function crawlAll(
 
   return {
     platform: MULTI_PLATFORM,
+    // The union of what actually delivered across every region. Unlike
+    // `countries`/`regions` below this is deliberately NOT the requested
+    // scope: it feeds expiry, where claiming a failed platform succeeded
+    // would hide its whole catalog (see server/utils/crawl-state.ts).
+    platformsSucceeded: [...new Set(results.flatMap((r) => r.platformsSucceeded))],
     source: [...new Set(results.map((r) => r.source))].join(', '),
     // Reflect the requested scope, not just the successful subset — failed
     // regions still belong to the run and reappear in `errors`.

@@ -12,8 +12,8 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
     message?: string
   }
   return value.data?.data?.detail
-    || value.data?.statusMessage
     || value.data?.message
+    || value.data?.statusMessage
     || value.statusMessage
     || value.message
     || fallback

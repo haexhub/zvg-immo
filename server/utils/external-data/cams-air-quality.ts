@@ -15,6 +15,7 @@ import type {
 } from '~/types/auction'
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import { fetchOpenMeteo } from './open-meteo-rate-limit'
 
 export interface CamsAirQualityOptions {
   checkedAt: string
@@ -73,7 +74,7 @@ export async function readAirQuality(
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   let payload: AirQualityResponse
   try {
-    const res = await fetchImpl(url.toString(), { signal: controller.signal })
+    const res = await fetchOpenMeteo(url.toString(), controller.signal, fetchImpl)
     if (!res.ok) throw new Error(`air quality service returned ${res.status}`)
     payload = await res.json() as AirQualityResponse
   } finally {

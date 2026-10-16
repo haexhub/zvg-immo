@@ -1,9 +1,9 @@
 // Converts marketValueEur -> the user's preferred currency, entirely in the
-// browser. `server: false` means the rate table (/api/exchange-rates) is
-// never fetched during SSR, so `rates` holds the `default()` empty object on
-// both the server render and the client's pre-mount render — identical
-// output regardless of the currency cookie, no hydration mismatch. Once the
-// client-only fetch resolves, `activeCurrency`/converted amounts update
+// browser. The rate table (/api/exchange-rates) is only ever fetched
+// client-side (see `init()` below), so `rates` holds its default empty
+// object on both the server render and the client's pre-mount render —
+// identical output regardless of the currency cookie, no hydration mismatch.
+// Once the one-time fetch resolves, `activeCurrency`/converted amounts update
 // reactively. This is what keeps the SSR-rendered page currency-invariant
 // (only locale varies server-side — see i18n design doc Baustein C,
 // "Cache-Explosion Sprache × Währung").
@@ -11,10 +11,23 @@ import { currencyToEur, eurToCurrency } from '~/lib/currency-convert'
 
 export function useCurrencyDisplay() {
   const { currency, setPreferredCurrency } = useCurrencyPreference()
-  const { data: rates } = useFetch<Record<string, number>>('/api/exchange-rates', {
-    default: () => ({}) as Record<string, number>,
-    server: false,
-  })
+  // Dozens of components (every AuctionCard, plus the header switcher, …)
+  // call this composable on the same page, so the rate table lives in
+  // useState — shared across all of them — and is fetched exactly once per
+  // session via the `ready` guard, same pattern as useCurrencyPreference.ts's
+  // init().
+  const rates = useState<Record<string, number>>('exchange-rates', () => ({}))
+  const ready = useState('exchange-rates-ready', () => false)
+
+  function init(): void {
+    if (import.meta.server || ready.value) return
+    ready.value = true
+    $fetch<Record<string, number>>('/api/exchange-rates')
+      .then((r) => { rates.value = r })
+      .catch(() => {})
+  }
+
+  init()
 
   // Falls back to EUR whenever the preferred code isn't (yet) backed by a
   // rate — covers the pre-fetch window above and an unrecognized code.

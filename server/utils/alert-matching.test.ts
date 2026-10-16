@@ -1,4 +1,16 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { filterAuctions } from '~/lib/auction-filters'
+import type { Auction } from '~/types/auction'
+
+const { getServiceClient, enqueueAlertDelivery, fillAuctionGeocodes } = vi.hoisted(() => ({
+  getServiceClient: vi.fn(),
+  enqueueAlertDelivery: vi.fn(),
+  fillAuctionGeocodes: vi.fn(),
+}))
+
+vi.mock('./supabase', () => ({ getServiceClient }))
+vi.mock('./outbound-delivery', () => ({ enqueueAlertDelivery, canonicalAppOrigin: () => 'https://app.example.test' }))
+vi.mock('./auction-geocoding', () => ({ fillAuctionGeocodes }))
 
 // toAuctionFilters resolves `${countryCode}:${regionCode}` pairs to
 // `${countryCode}:${regionDisplayName}` via listCountries() — stub the
@@ -11,10 +23,46 @@ vi.mock('../crawlers/registry', () => ({
       name: 'Deutschland',
       regions: [{ code: 'sn', name: 'Sachsen', platforms: [] }],
     },
+    // A nationwide-only country: its only registered region is the ALL_SCOPE
+    // pseudo-entry, so picker keys carry the region name as their code.
+    {
+      code: 'bg',
+      name: 'Bulgarien',
+      regions: [{ code: 'all', name: 'Bulgarien', platforms: [] }],
+    },
   ],
 }))
 
-const { toAuctionFilters } = await import('./alert-matching')
+const { toAuctionFilters, matchAlerts } = await import('./alert-matching')
+
+const auction = {
+  platform: 'portal', externalId: '42', title: 'Haus', authority: 'AG Test',
+  caseNumber: '1 K 2/26', country: 'de', region: 'Sachsen', cancelled: false,
+} as never
+
+function alertSupabase(options: { email?: string, userError?: Error, filters?: Record<string, unknown> } = {}) {
+  // notified_matches is only read here; outbound-delivery confirms it after a
+  // successful send, so enqueueAlertDelivery is the observable side effect.
+  const notifiedSelect = {
+    select: vi.fn(() => ({ eq: vi.fn(async () => ({ data: [], error: null })) })),
+  }
+  const client = {
+    from: vi.fn((table: string) => table === 'alert_subscriptions'
+      ? { select: vi.fn(() => ({ eq: vi.fn(async () => ({
+        data: [{ id: 'sub-1', user_id: 'user-1', saved_searches: { filters: options.filters ?? {} } }], error: null,
+      })) })) }
+      : notifiedSelect),
+    auth: { admin: { getUserById: vi.fn(async () => ({
+      data: { user: options.email ? { email: options.email } : null }, error: options.userError ?? null,
+    })) } },
+  }
+  return { client }
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+  vi.clearAllMocks()
+})
 
 describe('toAuctionFilters', () => {
   it('parses the stored query-param shape (saved_searches.filters) into AuctionFilters', () => {
@@ -32,6 +80,11 @@ describe('toAuctionFilters', () => {
       photos: '1',
       cancelled: '1',
       llmOnly: '1',
+      nearLat: '52.5',
+      nearLng: '13.4',
+      nearRadius: '25',
+      nearSea: '5',
+      urbanRural: 'rural',
     })
 
     expect(filters.countries).toEqual(['de'])
@@ -39,7 +92,7 @@ describe('toAuctionFilters', () => {
     expect(filters.search).toBe('Wohnung')
     expect(filters.authority).toBe('AG Dresden')
     expect(filters.category).toBe('einfamilienhaus')
-    expect(filters.condition).toBe('gepflegt')
+    expect(filters.condition).toEqual(['gepflegt'])
     expect(filters.features).toEqual(['balkon', 'garage'])
     expect(filters.onlyWithPhotos).toBe(true)
     expect(filters.includeCancelled).toBe(true)
@@ -48,6 +101,11 @@ describe('toAuctionFilters', () => {
     expect(filters.priceMax).toBeNull()
     expect(filters.landMin).toBe(500)
     expect(filters.landMax).toBeNull()
+    expect(filters.nearLat).toBe(52.5)
+    expect(filters.nearLng).toBe(13.4)
+    expect(filters.nearRadius).toBe(25)
+    expect(filters.nearSea).toBe(5)
+    expect(filters.urbanRural).toBe('rural')
   })
 
   it('defaults to no restriction / authority=all / category=all on an empty stored object', () => {
@@ -56,7 +114,7 @@ describe('toAuctionFilters', () => {
     expect(filters.regionNameKeys).toBeNull()
     expect(filters.authority).toBe('all')
     expect(filters.category).toBe('all')
-    expect(filters.condition).toBe('all')
+    expect(filters.condition).toEqual([])
     expect(filters.features).toEqual([])
     expect(filters.onlyWithPhotos).toBe(false)
     expect(filters.includeCancelled).toBe(false)
@@ -67,5 +125,104 @@ describe('toAuctionFilters', () => {
   it('drops region keys that no longer resolve against the current registry', () => {
     const filters = toAuctionFilters({ region: 'de:unknown-region' })
     expect(filters.regionNameKeys).toEqual(new Set())
+  })
+
+  it('reads a nationwide-only country\'s key as the region name itself', () => {
+    // Those options come from the stored auctions, not the registry (see
+    // region-picker.ts) — resolving them against the registry would drop them
+    // and silently widen the alert to the whole country.
+    expect(toAuctionFilters({ region: 'bg:Burgas' }).regionNameKeys).toEqual(new Set(['bg:Burgas']))
+  })
+
+  it('shares nearby-distance semantics with the in-memory alert evaluator', () => {
+    const filters = toAuctionFilters({ nearLat: '52.52', nearLng: '13.405', nearRadius: '10' })
+    const base: Auction = {
+      platform: 'test', country: 'de', region: 'Sachsen', externalId: 'x', caseNumber: '1', authority: 'AG', title: null,
+      address: null, marketValueEur: null, marketValueText: null, auctionDateIso: null, auctionDateText: null,
+      cancelled: false, sourceUpdatedIso: null, pdfUrl: null, detailUrl: null, pdfUrlUpstream: null,
+      detailUrlUpstream: null, attachments: [], description: null, photoCount: 0, thumbnailUrl: null,
+    }
+    expect(filterAuctions([
+      { ...base, externalId: 'near', lat: 52.52, lng: 13.405 },
+      { ...base, externalId: 'far', lat: 53.551, lng: 9.993 },
+    ], filters).map((auction) => auction.externalId)).toEqual(['near'])
+  })
+})
+
+describe('alert delivery state', () => {
+  it('queues no mail when the recipient lookup fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', userError: new Error('directory unavailable') })
+    getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
+  })
+
+  it('retries the match on a later crawl when durable enqueue fails', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    enqueueAlertDelivery.mockRejectedValueOnce(new Error('database down')).mockResolvedValueOnce(true)
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(enqueueAlertDelivery).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips and logs a legacy subscription with an unsupported geo-metric filter instead of loosening it', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test', filters: { nearSea: '5' } })
+    getServiceClient.mockReturnValue(client)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    await matchAlerts('de', 'sn', { auctions: [auction] } as never)
+
+    expect(enqueueAlertDelivery).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('unsupported filters: nearSea'))
+  })
+
+  it('matches a radius alert against cached geocodes without mutating the crawl batch', async () => {
+    const { client } = alertSupabase({
+      email: 'person@example.test', filters: { nearLat: '51.34', nearLng: '12.37', nearRadius: '30' },
+    })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    fillAuctionGeocodes.mockImplementation(async (items: Auction[]) => {
+      for (const item of items) Object.assign(item, { lat: 51.3, lng: 12.4 })
+    })
+    const unlocated = { ...(auction as object), address: 'Leipzig' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [unlocated] } as never)
+
+    expect(fillAuctionGeocodes).toHaveBeenCalledWith([expect.objectContaining({ externalId: '42' })], { fetchMissing: false })
+    expect(enqueueAlertDelivery).toHaveBeenCalledWith(expect.objectContaining({ externalId: '42' }))
+    expect(unlocated.lat).toBeUndefined()
+  })
+
+  it('redacts affected person names from the queued mail subject', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+    const named = { ...(auction as object), title: 'Einfamilienhaus des Schuldners Hans Müller' } as Auction
+
+    await matchAlerts('de', 'sn', { auctions: [named] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.subject).toContain('[anonymisiert]')
+    expect(delivery.subject).not.toContain('Hans Müller')
+  })
+
+  it('links the app detail page from NUXT_APP_ORIGIN even when the source has no detail URL', async () => {
+    const { client } = alertSupabase({ email: 'person@example.test' })
+    getServiceClient.mockReturnValue(client)
+    enqueueAlertDelivery.mockResolvedValue(true)
+
+    await matchAlerts('de', 'sn', { auctions: [{ ...(auction as object), detailUrl: null }] } as never)
+
+    const [delivery] = enqueueAlertDelivery.mock.calls[0]!
+    expect(delivery.text).toContain('Details: https://app.example.test/objekt/portal/42')
+    expect(delivery.text).not.toContain('Quelle:')
   })
 })

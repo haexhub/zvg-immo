@@ -4,27 +4,15 @@
 
 import {
   checkRateLimit,
+  currentSessionSigningKey,
   recordFailedAttempt,
   signSession,
   timingSafePasswordEqual,
 } from '../../utils/settings-auth'
+import { requestClientIp } from '../../utils/request-client-ip'
 
 const SESSION_COOKIE = 'settings_session'
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000
-
-function clientIp(event: ReturnType<typeof getRequestHeaders> extends infer _ ? any : never, trustForwarded: boolean): string {
-  // Only honour x-forwarded-for when explicitly opted in. Otherwise a client
-  // hitting the app directly (e.g. port 3000 exposed on the host) could
-  // rotate rate-limit buckets by sending arbitrary header values. When behind
-  // a real reverse proxy (e.g. Traefik) that APPENDS to the header, set
-  // NUXT_TRUST_FORWARDED_FOR=1. Use the LAST entry: it is the one appended by
-  // the trusted proxy, while the first entry is client-supplied and spoofable.
-  if (trustForwarded) {
-    const fwd = getRequestHeader(event, 'x-forwarded-for')
-    if (fwd) return fwd.split(',').at(-1)!.trim()
-  }
-  return event.node.req.socket?.remoteAddress ?? 'unknown'
-}
 
 export default defineEventHandler(async (event) => {
   const config = useRuntimeConfig()
@@ -37,8 +25,15 @@ export default defineEventHandler(async (event) => {
     })
   }
 
-  const trustForwarded = String(config.trustForwardedFor ?? '') === '1'
-  const ip = clientIp(event, trustForwarded)
+  const ip = requestClientIp(event)
+  const body = await readBody<{ password?: unknown }>(event).catch(
+    () => undefined,
+  ) ?? ({} as { password?: unknown })
+
+  // Check and record must stay in one synchronous stretch with no await in
+  // between: otherwise a burst of parallel requests all pass the check while
+  // the first ones are still reading their body, and the limit only counts
+  // sequential attempts.
   const now = Date.now()
   if (!checkRateLimit(ip, now)) {
     throw createError({
@@ -46,18 +41,17 @@ export default defineEventHandler(async (event) => {
       statusMessage: 'Zu viele Fehlversuche. Bitte 60 Sekunden warten.',
     })
   }
-
-  const body = await readBody<{ password?: unknown }>(event).catch(
-    () => ({} as { password?: unknown }),
-  )
   const submitted = typeof body.password === 'string' ? body.password : ''
   if (!timingSafePasswordEqual(submitted, password)) {
     recordFailedAttempt(ip, now)
     throw createError({ statusCode: 401, statusMessage: 'Falsches Passwort.' })
   }
 
+  // Only reached after the password matched, so this await cannot split the
+  // rate-limit check from its record above.
+  const key = await currentSessionSigningKey(secret, password, now)
   const expiry = now + SESSION_TTL_MS
-  setCookie(event, SESSION_COOKIE, signSession(secret, expiry), {
+  setCookie(event, SESSION_COOKIE, signSession(key, now, expiry), {
     httpOnly: true,
     secure: !import.meta.dev,
     sameSite: 'lax',

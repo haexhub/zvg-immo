@@ -1,16 +1,14 @@
 <script setup lang="ts">
-import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useSettingsAction } from '~/composables/settings/useSettingsAction'
 import type { LlmMaxTokensKind } from '~/server/utils/app-settings'
 
 type LlmMaxTokensDraft = string | number
 
 const { t, te } = useI18n()
-const { normalizeSettingsError } = useSettingsError()
+const { pending: llmConfigPending, error: llmConfigError, run } = useSettingsAction()
 
 const llmConfig = ref<Record<LlmMaxTokensKind, LlmMaxTokensDraft>>({})
-const llmConfigError = ref<string | null>(null)
 const llmConfigSaved = ref(false)
-const llmConfigPending = ref(false)
 const llmConfigLoaded = ref(false)
 const llmConfigSaveDisabled = computed(
   () => llmConfigPending.value || !llmConfigLoaded.value || Object.keys(llmConfig.value).length === 0,
@@ -22,14 +20,10 @@ function llmKindLabel(kind: string): string {
 }
 
 async function loadLlmConfig(): Promise<void> {
-  try {
-    const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config')
-    llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
-    llmConfigError.value = null
-    llmConfigLoaded.value = true
-  } catch (err) {
-    llmConfigError.value = normalizeSettingsError(err, t('settings.llm.loadError'))
-  }
+  const res = await run(() => $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config'), 'settings.llm.loadError')
+  if (!res) return
+  llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
+  llmConfigLoaded.value = true
 }
 
 function parseLlmMaxTokens(raw: LlmMaxTokensDraft): number | null {
@@ -50,21 +44,14 @@ async function saveLlmConfig(): Promise<void> {
     parsed[kind] = value
   }
 
-  llmConfigPending.value = true
-  llmConfigError.value = null
   llmConfigSaved.value = false
-  try {
-    const res = await $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config', {
-      method: 'PUT',
-      body: parsed,
-    })
-    llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
-    llmConfigSaved.value = true
-  } catch (err) {
-    llmConfigError.value = normalizeSettingsError(err, t('settings.llm.saveError'))
-  } finally {
-    llmConfigPending.value = false
-  }
+  const res = await run(
+    () => $fetch<Record<LlmMaxTokensKind, number>>('/api/settings/llm-config', { method: 'PUT', body: parsed }),
+    'settings.llm.saveError',
+  )
+  if (!res) return
+  llmConfig.value = Object.fromEntries(Object.entries(res).map(([kind, value]) => [kind, String(value)]))
+  llmConfigSaved.value = true
 }
 
 onMounted(loadLlmConfig)

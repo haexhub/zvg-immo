@@ -1,17 +1,20 @@
-import type {
-  ImportEuFloodRiskCachePayload,
-  ImportEuFloodRiskCacheTaskSummary,
-} from '~/server/tasks/import-eu-flood-risk-cache'
+import type { ImportEuFloodRiskCachePayload } from '~/server/tasks/import-eu-flood-risk-cache'
 
 const MAX_PAGE_SIZE = 10_000
 const MAX_MAX_PAGES = 10_000
 
-export default defineEventHandler(async (event): Promise<ImportEuFloodRiskCacheTaskSummary> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+// Detached, like copernicus-effis-cache next to it: paginating the EEA layer
+// takes minutes even country-scoped, and awaiting it here is what made this
+// button look like it did nothing (measured 2026-08-11: the unfiltered layer
+// pulled 542 MB in 158 s). Progress/result surface through task-runs
+// (euFloodRiskImportStatus in /api/settings/llm-batch-jobs).
+export default defineEventHandler(async (event): Promise<{ started: true }> => {
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
 
+  // cachePath/serviceUrl are deliberately not taken from the request: the
+  // task then uses the source's configured (or default) values, so a request
+  // body cannot pick the file the import overwrites or the host it fetches.
   const payload: ImportEuFloodRiskCachePayload = {
-    cachePath: optionalString(body.cachePath),
-    serviceUrl: optionalString(body.serviceUrl),
     sourceVersion: optionalString(body.sourceVersion),
     generatedAt: optionalString(body.generatedAt),
     pageSize: optionalInteger(body.pageSize, 'pageSize', 1, MAX_PAGE_SIZE),
@@ -19,8 +22,10 @@ export default defineEventHandler(async (event): Promise<ImportEuFloodRiskCacheT
     countryCodes: optionalCountryCodes(body.countryCodes),
   }
 
-  const outcome = await runTask('import-eu-flood-risk-cache', { payload: { ...payload } }) as { result: ImportEuFloodRiskCacheTaskSummary }
-  return outcome.result
+  void runTask('import-eu-flood-risk-cache', { payload: { ...payload } }).catch((err: unknown) => {
+    console.error('[settings/external-data/eu-flood-risk-cache] trigger failed:', (err as Error).message)
+  })
+  return { started: true }
 })
 
 function optionalString(value: unknown): string | undefined {

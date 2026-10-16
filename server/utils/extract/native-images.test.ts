@@ -4,6 +4,10 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { downloadNativeImages } from './native-images'
 
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
+
 // Minimal valid JPEG/PNG/WebP magic-byte prefixes. Real bodies would be longer
 // but downloadNativeImages only inspects the first bytes to reject non-images.
 const JPEG_MAGIC = Buffer.from([0xff, 0xd8, 0xff, 0xe0])
@@ -24,6 +28,7 @@ interface FakeResponse {
   status?: number
   body: Buffer | null
   contentType?: string
+  contentLength?: number
 }
 
 function stubFetch(responsesByUrl: Record<string, FakeResponse | (() => FakeResponse)>): void {
@@ -44,7 +49,10 @@ function stubFetch(responsesByUrl: Record<string, FakeResponse | (() => FakeResp
       return {
         ok: resolved.ok,
         status: resolved.status ?? (resolved.ok ? 200 : 500),
-        headers: new Headers({ 'content-type': resolved.contentType ?? 'image/jpeg' }),
+        headers: new Headers({
+          'content-type': resolved.contentType ?? 'image/jpeg',
+          ...(resolved.contentLength != null ? { 'content-length': String(resolved.contentLength) } : {}),
+        }),
         arrayBuffer,
       } as unknown as Response
     }),
@@ -61,6 +69,16 @@ describe('downloadNativeImages', () => {
   afterEach(async () => {
     vi.unstubAllGlobals()
     await rm(destDir, { recursive: true, force: true })
+  })
+
+  it('skips an image whose declared size exceeds the byte cap without buffering it', async () => {
+    const big = { ok: true, body: makeImage(JPEG_MAGIC, 7), contentLength: 21 * 1024 * 1024 }
+    const small = { ok: true, body: makeImage(JPEG_MAGIC, 8) }
+    stubFetch({ 'https://example.com/huge.jpg': big, 'https://example.com/ok.jpg': small })
+
+    const files = await downloadNativeImages(['https://example.com/huge.jpg', 'https://example.com/ok.jpg'], { destDir })
+
+    expect(files).toHaveLength(1)
   })
 
   it('downloads JPEG + PNG and writes content-addressable filenames', async () => {

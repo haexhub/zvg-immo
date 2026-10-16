@@ -11,7 +11,10 @@ export default defineConfig({
   },
   test: {
     include: ['**/*.test.ts'],
-    exclude: [...configDefaults.exclude, '.claude/**'],
+    // Nested worktrees (agent ones and the repository-local .worktrees/ the
+    // spaex workflow creates) contain their own copy of the test suite. They
+    // are not part of this checkout and must not be discovered recursively.
+    exclude: [...configDefaults.exclude, '.claude/**', '.claude-worktrees/**', '.worktrees/**'],
     environment: 'node',
     testTimeout: 15_000,
   },

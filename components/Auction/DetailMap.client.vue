@@ -11,13 +11,16 @@ import Point from 'ol/geom/Point'
 import { circular } from 'ol/geom/Polygon'
 import { fromLonLat } from 'ol/proj'
 import { createXYZ } from 'ol/tilegrid'
-import { Circle as CircleStyle, Fill, Icon, Stroke, Style } from 'ol/style'
+import { Fill, Icon, Stroke, Style } from 'ol/style'
 import Overlay from 'ol/Overlay'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
 import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
+import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/lib/mapFeatureIcon'
+import { minOf } from '~/lib/array-math'
+import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
@@ -30,9 +33,20 @@ const props = defineProps<{
 }>()
 
 const { t, locale } = useI18n()
+const { hazardDetailLine, hazardOverlayLabel } = useHazardDisplay()
+const { formatDistance } = useAuctionDetailFormatters()
 const runtimeConfig = useRuntimeConfig()
 const mapTilerApiKey = computed(() => String(runtimeConfig.public.maptilerApiKey || '').trim())
 const baseLayer = ref<'streets' | 'satellite'>('streets')
+// Same blue as Auction/Map.client.vue's PIN_COLOR (Tailwind's blue-600,
+// matching accent-blue-600 further down) — named once here since it's baked
+// into an SVG data URI for both the map marker and the legend swatch below,
+// not a DOM class Tailwind could reach.
+const SUBJECT_PIN_COLOR = '#2563eb'
+const controlToggleClass = 'cursor-pointer rounded-md border border-slate-900/15 bg-white/95 px-2.5 py-1 text-xs font-semibold text-gray-900 shadow-sm'
+const controlPanelClass = 'max-h-60 w-60 overflow-y-auto rounded-md border border-slate-900/15 bg-white/95 px-2 py-1.5 text-xs leading-tight text-gray-900 shadow-sm backdrop-blur-sm'
+const layerLabelClass = 'flex min-h-5 cursor-pointer items-center gap-1'
+const layerInputClass = 'shrink-0 accent-blue-600'
 
 // The MapTiler base layer renders as vector tiles (see
 // useMapTilerVectorBaseLayer) with labels re-localized to the UI locale — one
@@ -48,25 +62,6 @@ const vectorStyleUrl = computed(() => {
 const olMapRef = shallowRef<OlMap | null>(null)
 useMapTilerVectorBaseLayer({ map: olMapRef, styleUrl: vectorStyleUrl, lang: locale })
 
-function hazardStatusColor(status: HazardAssessment['status']): string {
-  if (status === 'inside') return '#dc2626'
-  if (status === 'nearby') return '#d97706'
-  if (status === 'outside') return '#16a34a'
-  return '#64748b'
-}
-
-function hazardRadius(hazard: HazardAssessment): number {
-  if (hazard.status === 'inside') return 250
-  if (hazard.distanceMeters != null && hazard.distanceMeters > 0) {
-    return Math.min(Math.max(hazard.distanceMeters, 250), 5_000)
-  }
-  return 500
-}
-
-function hazardOverlayLabel(hazard: HazardAssessment): string {
-  return `${t(`objektDetail.hazard.${hazard.hazard}`)}: ${t(`objektDetail.hazardStatus.${hazard.status}`)}`
-}
-
 function hazardMapLayerLabel(hazard: HazardAssessment): string {
   return `${t(`objektDetail.mapLayerHazardPrefix`)} ${t(`objektDetail.hazard.${hazard.hazard}`)}`
 }
@@ -81,42 +76,13 @@ function featureLayerLabel(feature: LocationMapFeature): string {
   return t('objektDetail.mapLayerLeisure')
 }
 
-function featureColor(feature: LocationMapFeature): string {
-  if (feature.kind === 'industry') return '#dc2626'
-  if (feature.kind === 'commercial') return '#ea580c'
-  if (feature.kind === 'major_road') return '#9333ea'
-  if (feature.kind === 'airport' || feature.kind === 'runway') return '#be123c'
-  if (feature.kind === 'helipad') return '#e11d48'
-  if (feature.kind === 'public_transport' || feature.kind === 'rail') return '#2563eb'
-  if (feature.kind === 'ferry') return '#0891b2'
-  if (feature.kind === 'school' || feature.kind === 'childcare' || feature.kind === 'university') return '#7c3aed'
-  if (feature.kind === 'pharmacy' || feature.kind === 'healthcare' || feature.kind === 'hospital') return '#16a34a'
-  if (feature.kind === 'groceries') return '#059669'
-  if (feature.kind === 'restaurant') return '#f97316'
-  if (feature.kind === 'cafe') return '#a16207'
-  if (feature.kind === 'recreation') return '#65a30d'
-  return '#64748b'
-}
-
-function featureRadius(feature: LocationMapFeature): number {
-  if (feature.kind === 'major_road') return 8
-  if (feature.kind === 'industry' || feature.kind === 'commercial') return 7
-  return 6
-}
-
 function featureLabel(feature: LocationMapFeature): string {
   return t(`objektDetail.mapFeatureKind.${feature.kind}`)
 }
 
 function featurePopup(feature: LocationMapFeature): string {
   const name = feature.name ? `${escapeHtml(feature.name)}<br>` : ''
-  return `${name}${escapeHtml(featureLabel(feature))}<br>${distanceLabel(feature.distanceMeters)}`
-}
-
-function distanceLabel(distanceMeters: number): string {
-  return distanceMeters < 1000
-    ? t('objektDetail.distanceMeters', { meters: distanceMeters.toLocaleString(undefined, { maximumFractionDigits: 0 }) })
-    : t('objektDetail.distanceKilometers', { kilometers: (distanceMeters / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 }) })
+  return `${name}${escapeHtml(featureLabel(feature))}<br>${formatDistance(feature.distanceMeters)}`
 }
 
 function escapeHtml(value: string): string {
@@ -126,11 +92,6 @@ function escapeHtml(value: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
-}
-
-function rgba(hex: string, alpha: number): string {
-  const n = Number.parseInt(hex.slice(1), 16)
-  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
 }
 
 function circularPolygon(lng: number, lat: number, radiusMeters: number) {
@@ -233,12 +194,12 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
     environment.nearestHeavyIndustryDistanceMeters,
     environment.nearestIndustrialDistanceMeters,
   ].filter((distance): distance is number => distance != null)
-  const nearest = signals.length ? Math.min(...signals) : null
+  const nearest = signals.length ? minOf(signals) : null
   if (nearest == null || nearest > 5_000) return
   const radius = Math.min(Math.max(nearest, 300), 5_000)
   const label = t('objektDetail.mapLayerOdorSignals')
   const feature = new Feature({ geometry: circularPolygon(props.lng, props.lat, radius) })
-  feature.set('popupHtml', `${label}<br>${distanceLabel(nearest)}`)
+  feature.set('popupHtml', () => `${t('objektDetail.mapLayerOdorSignals')}<br>${formatDistance(nearest)}`)
   const layer = new VectorLayer({
     source: new VectorSource({ features: [feature] }),
     style: new Style({
@@ -249,40 +210,63 @@ function odorOverlayEntry(entries: OverlayEntry[]): void {
   addOverlayEntry(entries, label, layer, false, 'odor')
 }
 
+// Set by hovering a legend row (see hoveredFeatureKind/hoveredHazardKind
+// below) so the matching markers can be scaled up and drawn on top — the
+// vector layers' style functions read these on every render.
+const hoveredFeatureKind = ref<string | null>(null)
+const hoveredHazardKind = ref<string | null>(null)
+const HOVER_SCALE = 1.5
+const HOVER_LAYER_Z_INDEX = 10
+
+// Style.zIndex (used above) only reorders features *within* one layer — each
+// hazard/feature-label group is its own separate VectorLayer, so lifting a
+// hovered marker above one from a *different* layer needs that layer raised
+// too. Layers register their kind(s) here; the watch below sets each one's
+// zIndex based on whether the hovered kind is among them.
+const hoverableLayers: { layer: VectorLayer<VectorSource>, group: 'feature' | 'hazard', kinds: Set<string> }[] = []
+
 function hazardOverlayEntries(entries: OverlayEntry[]): void {
   for (const hazard of props.hazards ?? []) {
     const color = hazardStatusColor(hazard.status)
     const circleFeature = new Feature({ geometry: circularPolygon(props.lng, props.lat, hazardRadius(hazard)) })
-    circleFeature.set('popupHtml', `${hazardOverlayLabel(hazard)}<br>${t('objektDetail.hazardSeverityLabel')} ${t(`objektDetail.hazardSeverity.${hazard.severity}`)}`)
+    circleFeature.set('popupHtml', () => [hazardOverlayLabel(hazard), hazardDetailLine(hazard)].filter(Boolean).join('<br>'))
     const dotFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
     const layer = new VectorLayer({
       source: new VectorSource({ features: [circleFeature, dotFeature] }),
       style: (feature) => {
+        const hovered = hoveredHazardKind.value === hazard.hazard
         if (feature === dotFeature) {
-          return new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color }), stroke: new Stroke({ color, width: 2 }) }) })
+          return new Style({
+            image: new Icon({ src: hazardIconDataUri(hazard.hazard, color), scale: hovered ? HOVER_SCALE : 1 }),
+            zIndex: hovered ? 10 : 0,
+          })
         }
         return new Style({
-          stroke: new Stroke({ color, width: 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
-          fill: new Fill({ color: rgba(color, hazard.status === 'inside' ? 0.18 : 0.08) }),
+          stroke: new Stroke({ color, width: hovered ? 3.5 : 2, lineDash: hazard.status === 'inside' ? undefined : [6, 6] }),
+          fill: new Fill({ color: rgba(color, (hazard.status === 'inside' ? 0.18 : 0.08) * (hovered ? 2 : 1)) }),
         })
       },
     })
+    hoverableLayers.push({ layer, group: 'hazard', kinds: new Set([hazard.hazard]) })
     addOverlayEntry(entries, hazardMapLayerLabel(hazard), layer, false)
   }
 }
 
 function featureOverlayEntries(entries: OverlayEntry[]): void {
   const layersByLabel = new Map<string, VectorSource>()
+  const kindsByLabel = new Map<string, Set<string>>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     const label = featureLayerLabel(feature)
     let source = layersByLabel.get(label)
     if (!source) {
       source = new VectorSource()
       layersByLabel.set(label, source)
+      kindsByLabel.set(label, new Set())
     }
+    kindsByLabel.get(label)!.add(feature.kind)
     const olFeature = new Feature({ geometry: new Point(fromLonLat([feature.lng, feature.lat])) })
     olFeature.set('data', feature)
-    olFeature.set('popupHtml', featurePopup(feature))
+    olFeature.set('popupHtml', () => featurePopup(feature))
     source.addFeature(olFeature)
   }
   for (const [label, source] of layersByLabel) {
@@ -290,16 +274,14 @@ function featureOverlayEntries(entries: OverlayEntry[]): void {
       source,
       style: (olFeature) => {
         const data = olFeature.get('data') as LocationMapFeature
-        const color = featureColor(data)
+        const hovered = hoveredFeatureKind.value === data.kind
         return new Style({
-          image: new CircleStyle({
-            radius: featureRadius(data),
-            fill: new Fill({ color: rgba(color, data.kind === 'major_road' ? 0.45 : 0.75) }),
-            stroke: new Stroke({ color, width: 2 }),
-          }),
+          image: new Icon({ src: featureIconDataUri(data.kind, featureColor(data)), scale: hovered ? HOVER_SCALE : 1 }),
+          zIndex: hovered ? 10 : 0,
         })
       },
     })
+    hoverableLayers.push({ layer, group: 'feature', kinds: kindsByLabel.get(label)! })
     // Visible by default, unlike the noise/flood/hazard/odor overlays above —
     // matches the Leaflet version, which added these straight to the map
     // instead of only registering them with the layer-switcher control.
@@ -314,6 +296,19 @@ let map: OlMap | null = null
 const panelOpen = ref(false)
 const overlayEntries = shallowRef<OverlayEntry[]>([])
 
+// Style functions above read the hovered-kind refs directly, but OL only
+// re-invokes them on a render pass — nudge every overlay layer to redraw
+// when the hover target changes so the highlight actually appears. Layers
+// default to zIndex 0 when unset, so resetting a non-matching layer to 0
+// here is enough to drop it back below the (still-10) hovered one.
+watch([hoveredFeatureKind, hoveredHazardKind], () => {
+  for (const entry of overlayEntries.value) entry.layer.changed()
+  for (const { layer, group, kinds } of hoverableLayers) {
+    const hovered = group === 'feature' ? hoveredFeatureKind.value : hoveredHazardKind.value
+    layer.setZIndex(hovered != null && kinds.has(hovered) ? HOVER_LAYER_Z_INDEX : 0)
+  }
+})
+
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
   entry.layer.setVisible(entry.visible.value)
@@ -323,6 +318,7 @@ interface LegendEntry {
   key: string
   color: string
   label: string
+  icon: string
 }
 
 const legendOpen = ref(true)
@@ -331,19 +327,18 @@ const featureLegendEntries = computed<LegendEntry[]>(() => {
   const byKind = new Map<string, LegendEntry>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
     if (!byKind.has(feature.kind)) {
-      byKind.set(feature.kind, { key: feature.kind, color: featureColor(feature), label: featureLabel(feature) })
+      const color = featureColor(feature)
+      byKind.set(feature.kind, { key: feature.kind, color, label: featureLabel(feature), icon: featureIconDataUri(feature.kind, color) })
     }
   }
   return [...byKind.values()]
 })
 
-const hazardStatusLegendEntries = computed<LegendEntry[]>(() => {
-  if (!props.hazards?.length) return []
-  return (['inside', 'nearby', 'outside', 'unknown'] as const).map((status) => ({
-    key: status,
-    color: hazardStatusColor(status),
-    label: t(`objektDetail.hazardStatus.${status}`),
-  }))
+const hazardLegendEntries = computed<LegendEntry[]>(() => {
+  return (props.hazards ?? []).map((hazard) => {
+    const color = hazardStatusColor(hazard.status)
+    return { key: hazard.hazard, color, label: hazardOverlayLabel(hazard), icon: hazardIconDataUri(hazard.hazard, color) }
+  })
 })
 
 const showOdorLegend = computed(() => overlayEntries.value.some((entry) => entry.id === 'odor'))
@@ -397,17 +392,29 @@ onMounted(async () => {
   const markerFeature = new Feature({ geometry: new Point(fromLonLat([props.lng, props.lat])) })
   const markerLayer = new VectorLayer({
     source: new VectorSource({ features: [markerFeature] }),
-    style: new Style({ image: new Icon({ src: mapPinDataUri('#2563eb'), anchor: MAP_PIN_ANCHOR }) }),
+    // Scaled up and always above every hazard/feature layer (including a
+    // hovered one, see HOVER_LAYER_Z_INDEX above) so the subject property
+    // always reads as the one marker that matters. Set on the layer itself,
+    // not just the Style, since Style.zIndex alone can't lift a feature
+    // above features that live in a different layer.
+    zIndex: 20,
+    style: new Style({ image: new Icon({ src: mapPinDataUri(SUBJECT_PIN_COLOR), anchor: MAP_PIN_ANCHOR, scale: 1.6 }) }),
   })
 
   const popupOverlay = new Overlay({
     element: popupEl.value,
     offset: [0, -12],
     positioning: 'bottom-center',
+    autoPan: { margin: 20 },
   })
 
   map = new OlMap({
     target: mapEl.value,
+    // OL's own click/drag threshold defaults to 1px, so a mouse/trackpad
+    // click that drifts by 2px+ between press and release gets reclassified
+    // as a pan and never fires 'click' at all — the popup click handler
+    // below then never runs and an open popup can't be dismissed.
+    moveTolerance: 8,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
     layers: [...rasterFallbackLayers, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],
@@ -417,7 +424,11 @@ onMounted(async () => {
 
   map.on('click', (evt) => {
     const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
-    const html = feature?.get('popupHtml') as string | undefined
+    // Stored as a thunk (not a plain string) so the popup re-renders with the
+    // active locale/formatters on every click instead of the one baked in
+    // when the layers were built in onMounted.
+    const popupHtml = feature?.get('popupHtml') as (() => string) | undefined
+    const html = popupHtml?.()
     if (!html) {
       popupOverlay.setPosition(undefined)
       return
@@ -439,190 +450,48 @@ onBeforeUnmount(() => {
 <template>
   <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
     <div ref="mapEl" class="h-full w-full" />
-    <div ref="popupEl" class="auction-detail-map-popup" />
-    <div class="auction-detail-map-layers">
+    <div ref="popupEl" class="empty:hidden min-w-[140px] max-w-[260px] rounded-lg bg-white px-2 py-1 text-xs leading-[1.35] text-gray-900 shadow-lg" />
+    <div class="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
       <button
         type="button"
-        class="auction-detail-map-layers__toggle"
+        :class="controlToggleClass"
         :aria-expanded="panelOpen"
         aria-controls="auction-detail-map-layers-panel"
         @click="panelOpen = !panelOpen"
       >
         {{ t('map.layers') }}
       </button>
-      <div v-if="panelOpen" id="auction-detail-map-layers-panel" class="auction-detail-map-layers__panel">
-        <div class="auction-detail-map-layers__group">
-          <label><input v-model="baseLayer" type="radio" value="streets"> {{ t('map.baseLayerStreets') }}</label>
-          <label><input v-model="baseLayer" type="radio" value="satellite"> {{ t('map.baseLayerSatellite') }}</label>
+      <div v-if="panelOpen" id="auction-detail-map-layers-panel" :class="controlPanelClass">
+        <div class="mb-1.5 flex flex-col gap-0.5 border-b border-slate-900/10 pb-1.5">
+          <label :class="layerLabelClass">
+            <input v-model="baseLayer" type="radio" value="streets" :class="layerInputClass"> {{ t('map.baseLayerStreets') }}
+          </label>
+          <label :class="layerLabelClass">
+            <input v-model="baseLayer" type="radio" value="satellite" :class="layerInputClass"> {{ t('map.baseLayerSatellite') }}
+          </label>
         </div>
-        <div v-if="overlayEntries.length" class="auction-detail-map-layers__overlays">
-          <label v-for="entry in overlayEntries" :key="entry.key">
-            <input type="checkbox" :checked="entry.visible.value" @change="toggleOverlay(entry)"> {{ entry.key }}
+        <div v-if="overlayEntries.length" class="flex flex-col gap-0.5">
+          <label v-for="entry in overlayEntries" :key="entry.key" :class="layerLabelClass">
+            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.key }}
           </label>
         </div>
       </div>
     </div>
-    <div class="auction-detail-map-legend">
-      <button
-        type="button"
-        class="auction-detail-map-legend__toggle"
-        :aria-expanded="legendOpen"
-        aria-controls="auction-detail-map-legend-panel"
-        @click="legendOpen = !legendOpen"
-      >
-        {{ t('map.legend') }}
-      </button>
-      <div v-if="legendOpen" id="auction-detail-map-legend-panel" class="auction-detail-map-legend__panel">
-        <div class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__pin" />
-          {{ t('map.legendSubject') }}
-        </div>
-        <div v-for="entry in featureLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
-          {{ entry.label }}
-        </div>
-        <template v-if="hazardStatusLegendEntries.length">
-          <div class="auction-detail-map-legend__group-title">{{ t('objektDetail.hazardsTitle') }}</div>
-          <div v-for="entry in hazardStatusLegendEntries" :key="entry.key" class="auction-detail-map-legend__item">
-            <span class="auction-detail-map-legend__swatch" :style="{ backgroundColor: entry.color }" />
-            {{ entry.label }}
-          </div>
-        </template>
-        <div v-if="showOdorLegend" class="auction-detail-map-legend__item">
-          <span class="auction-detail-map-legend__swatch auction-detail-map-legend__swatch--dashed" />
-          {{ t('objektDetail.mapLayerOdorSignals') }}
-        </div>
-      </div>
-    </div>
+    <AuctionDetailMapLegend
+      v-model:open="legendOpen"
+      :feature-entries="featureLegendEntries"
+      :hazard-entries="hazardLegendEntries"
+      :show-odor="showOdorLegend"
+      :subject-icon="mapPinDataUri(SUBJECT_PIN_COLOR)"
+      :subject-label="t('map.legendSubject')"
+      :hazards-title="t('objektDetail.hazardsTitle')"
+      :odor-icon="odorLegendIconDataUri()"
+      :odor-label="t('objektDetail.mapLayerOdorSignals')"
+      :toggle-class="controlToggleClass"
+      :panel-class="controlPanelClass"
+      :toggle-label="t('map.legend')"
+      @hover-feature="hoveredFeatureKind = $event"
+      @hover-hazard="hoveredHazardKind = $event"
+    />
   </div>
 </template>
-
-<style scoped>
-.auction-detail-map-popup:empty {
-  display: none;
-}
-
-.auction-detail-map-popup {
-  border-radius: 8px;
-  padding: 4px 8px;
-  min-width: 140px;
-  max-width: 260px;
-  background: white;
-  font-size: 12px;
-  line-height: 1.35;
-  box-shadow: 0 4px 16px rgb(15 23 42 / 20%);
-}
-
-.auction-detail-map-layers,
-.auction-detail-map-legend {
-  position: absolute;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.auction-detail-map-layers {
-  top: 8px;
-  right: 8px;
-  align-items: flex-end;
-}
-
-.auction-detail-map-legend {
-  bottom: 8px;
-  left: 8px;
-  align-items: flex-start;
-}
-
-.auction-detail-map-layers__toggle,
-.auction-detail-map-legend__toggle {
-  padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #111827;
-  background: rgb(255 255 255 / 98%);
-  border: 1px solid rgb(15 23 42 / 15%);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
-  cursor: pointer;
-}
-
-.auction-detail-map-layers__panel,
-.auction-detail-map-legend__panel {
-  width: 15rem;
-  max-height: 15rem;
-  overflow-y: auto;
-  padding: 6px 8px;
-  color: #111827;
-  background: rgb(255 255 255 / 96%);
-  border: 1px solid rgb(15 23 42 / 15%);
-  border-radius: 6px;
-  box-shadow: 0 2px 8px rgb(15 23 42 / 15%);
-  font-size: 12px;
-  line-height: 1.25;
-  backdrop-filter: blur(4px);
-}
-
-.auction-detail-map-layers__group {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid rgb(15 23 42 / 10%);
-}
-
-.auction-detail-map-layers__overlays {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.auction-detail-map-layers label {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-height: 20px;
-  cursor: pointer;
-}
-
-.auction-detail-map-layers input {
-  flex: 0 0 auto;
-  accent-color: #2563eb;
-}
-
-.auction-detail-map-legend__group-title {
-  padding-top: 4px;
-  margin-top: 4px;
-  font-weight: 600;
-  border-top: 1px solid rgb(15 23 42 / 10%);
-}
-
-.auction-detail-map-legend__item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 18px;
-}
-
-.auction-detail-map-legend__swatch {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-}
-
-.auction-detail-map-legend__swatch--dashed {
-  background: rgb(239 68 68 / 15%);
-  border: 1.5px dashed #7f1d1d;
-}
-
-.auction-detail-map-legend__pin {
-  flex: 0 0 auto;
-  width: 10px;
-  height: 10px;
-  background: #2563eb;
-  border-radius: 50% 50% 50% 0;
-  transform: rotate(-45deg);
-}
-</style>

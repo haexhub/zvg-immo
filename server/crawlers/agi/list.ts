@@ -120,22 +120,26 @@ async function fetchDetailBatch(ids: number[], cookies: string): Promise<DetailE
   return data
 }
 
-/** Fetch full detail for all lots in batches of DETAIL_BATCH_SIZE. */
+/** Fetch full detail for all lots in batches of DETAIL_BATCH_SIZE. A failed
+ *  batch (agi answers 429 under load) is skipped but counted, because its
+ *  lots are then missing from the crawl result. */
 export async function fetchAllDetails(
   ids: number[],
   cookies: string,
-): Promise<DetailEntry[]> {
-  const results: DetailEntry[] = []
+): Promise<{ details: DetailEntry[]; failedBatches: number }> {
+  const details: DetailEntry[] = []
+  let failedBatches = 0
   for (let i = 0; i < ids.length; i += DETAIL_BATCH_SIZE) {
     const batch = ids.slice(i, i + DETAIL_BATCH_SIZE)
     try {
       const entries = await fetchDetailBatch(batch, cookies)
-      results.push(...entries)
+      details.push(...entries)
     } catch (err) {
+      failedBatches++
       console.warn(`[agi] fetchAllDetails: batch ${i}–${i + batch.length - 1} failed, skipping: ${(err as Error).message}`)
     }
   }
-  return results
+  return { details, failedBatches }
 }
 
 /** Italian CAP: exactly 5 digits — when present the indirizzo already contains the city. */

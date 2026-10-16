@@ -1,13 +1,12 @@
 {
   "site": {
-    "title": "PropHammer — Zwangsversteigerungen europaweit",
-    "description": "PropHammer durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte."
+    "title": "ImmoHammer — Zwangsversteigerungen europaweit",
+    "description": "ImmoHammer durchsucht rund um die Uhr Amts- und Gerichtsportale in vielen europäischen Ländern und zeigt jede Zwangsversteigerung auf einer Karte.",
+    "searchTitle": "Zwangsversteigerungen suchen — ImmoHammer",
+    "searchDescription": "Durchsuche aktuelle Zwangsversteigerungen europaweit nach Ort, Preis, Objektart und Umgebung."
   },
   "nav": {
-    "brand": "PropHammer",
-    "search": "Suche",
-    "archive": "Archiv",
-    "calculator": "Rechner",
+    "brand": "ImmoHammer",
     "menu": "Menü"
   },
   "map": {
@@ -15,75 +14,63 @@
     "baseLayerStreets": "Straße",
     "baseLayerSatellite": "Satellit",
     "legend": "Legende",
-    "legendSubject": "Auktionsobjekt"
+    "legendSubject": "Auktionsobjekt",
+    "clusterPickerHint": "{count} Auktionen an diesem Ort",
+    "tourismLayerToggle": "Tourismus",
+    "tourismLayerOff": "Aus",
+    "tourismCategory": {
+      "ski_downhill": "Ski Alpin",
+      "ski_nordic": "Langlauf",
+      "hiking": "Wandern & Rad",
+      "swimming": "Baden",
+      "attraction": "Sehenswürdigkeiten",
+      "lodging": "Unterkünfte"
+    },
+    "tourismVisitorToggle": "Besucherzahlen",
+    "tourismVisitorUnit": "Übernachtungen pro km²",
+    "tourismVisitorNoData": "Keine Daten",
+    "tourismVisitorAttribution": "Daten: Eurostat (tour_occ_nin2) · Grenzen: © EuroGeographics / Eurostat-GISCO"
   },
   "landing": {
     "hero": {
-      "eyebrow": "Zwangsversteigerungen · europaweit",
-      "headline": "Alle Immobilien-Auktionen",
-      "headlineHighlight": "auf einer Karte",
-      "headlineSuffix": "— europaweit.",
-      "subheadline": "PropHammer durchsucht rund um die Uhr Gerichts- und Amtsportale in vielen europäischen Ländern und zeigt dir jede Zwangsversteigerung auf einer interaktiven Karte — mit Fotos, Verkehrswert und Termin.",
-      "statLive": "{total} Objekte im Bestand · {countries} Länder · {regions} Regionen",
-      "statPlaceholder": "Tausende Objekte · viele Länder europaweit",
       "searchPlaceholder": "Ort, Objektart oder Aktenzeichen suchen …",
-      "searchCta": "Suchen",
-      "trust": ["100 % kostenlos", "Ohne Anmeldung", "Live von Amts- & Gerichtsportalen"],
-      "ctaPrimary": "Objekte durchsuchen",
-      "mapLabel": "Karte nach Land",
-      "mapHint": "Land anklicken",
-      "legendAvailable": "Daten verfügbar — anklicken",
-      "legendSoon": "bald verfügbar"
+      "searchCta": "Suchen"
     },
-    "coverage": {
-      "heading": "Ein Portal für ganz Europa",
-      "subheadline": "Von den deutschen Amtsgerichtsportalen über Frankreich, Italien, Spanien und Polen bis zu kuratierten Quellen in Nordamerika — PropHammer crawlt kontinuierlich im Hintergrund, du musst nichts manuell aktualisieren.",
-      "stat": "{countries} Länder · {regions} Regionen/Bundesländer",
-      "statPlaceholder": "Viele Länder und Regionen",
-      "tileListings": "Objekte im Bestand",
-      "tileCountries": "Länder",
-      "tileRegions": "Regionen & Bundesländer",
-      "note": "Neue Auktionen erscheinen automatisch, ohne dass du manuell aktualisierst.",
-      "cta": "Verfügbare Länder ansehen"
-    },
-    "features": {
-      "heading": "Mehr als nur eine Suche",
-      "subheadline": "KI-gestützte Analyse und Funktionen, die es sonst nirgends gibt.",
-      "items": [
-        { "title": "KI-Gutachten-Analyse", "badge": "KI-gestützt", "desc": "Statt hundert Seiten PDF zu wälzen: PropHammer fasst Gutachten und Exposés zusammen und erkennt automatisch Objektart, Fläche und Zimmerzahl." },
-        { "title": "Kartenansicht", "badge": "Live", "desc": "Alle Auktionen eines Landes auf einer interaktiven Karte — mit Filtern nach Objektart, Preis und Termin." },
-        { "title": "Bildergalerie", "badge": "Original + Gutachten", "desc": "Fotos aus Anzeige und Gutachten an einem Ort — kein Wälzen durch PDFs mehr." },
-        { "title": "Gutachten & Exposés", "badge": "Direktzugriff", "desc": "Alle verfügbaren Dokumente zum Objekt — Gutachten, Exposé und mehr — griffbereit zum Download." },
-        { "title": "Kostenrechner", "badge": "Deutschland", "desc": "Grunderwerbsteuer, Gerichtskosten und Zinsen für deutsche Zwangsversteigerungen auf einen Blick." },
-        { "title": "Email-Benachrichtigungen", "badge": "Automatisch", "desc": "Suche einmal speichern — wir informieren dich per E-Mail, sobald ein passendes Objekt neu auftaucht." },
-        { "title": "Mehrsprachig & Multiwährung", "badge": "20+ Länder", "desc": "Beschreibungen automatisch übersetzt, Verkehrswerte live in deiner Wunschwährung — das Original bleibt daneben sichtbar." }
-      ]
-    },
-    "faq": {
-      "heading": "Häufig gestellte Fragen",
-      "items": [
-        { "q": "Ist PropHammer kostenlos?", "a": "Ja — Suche, Kartenansicht und Filter sind komplett kostenlos, auch ohne Anmeldung. Ein Konto brauchst du nur für Zusatzfunktionen wie Watchlist und gespeicherte Suchen." },
-        { "q": "Aus welchen Ländern kommen die Daten?", "a": "PropHammer crawlt Amts- und Gerichtsportale in vielen europäischen Ländern sowie kuratierte Quellen in Nordamerika. Die genaue Länderliste siehst du im Filter der Suche." },
-        { "q": "Wie aktuell sind die Daten?", "a": "Ein Hintergrund-Crawler aktualisiert die Daten laufend — du musst nichts manuell anstoßen." },
-        { "q": "Ersetzt PropHammer eine Rechtsberatung?", "a": "Nein. PropHammer liefert Recherche-Daten, keine Rechtsberatung. Über die Objektseite kannst du bei Bedarf direkt einen vermittelten Anwalt kontaktieren." },
-        { "q": "Was macht die KI-Zusammenfassung?", "a": "Sie fasst Objektdaten, Lage und Zustand aus Gutachten und Exposés zusammen und übersetzt sie bei Bedarf — auf Knopfdruck, direkt auf der Objektseite." },
-        { "q": "Funktioniert der Erwerbskosten-Rechner für alle Länder?", "a": "Nein, aktuell nur für deutsche Zwangsversteigerungen." }
-      ]
+    "rails": {
+      "country": {
+        "title": "{name}"
+      },
+      "bestCondition": {
+        "title": "Am besten gepflegt",
+        "subtitle": "Neuwertige und gepflegte Objekte"
+      },
+      "sea": {
+        "title": "Am Meer",
+        "subtitle": "Bis 5 km zur Küste"
+      },
+      "mountains": {
+        "title": "In den Bergen",
+        "subtitle": "Bis 15 km zum nächsten Gipfel"
+      },
+      "lakes": {
+        "title": "Am See",
+        "subtitle": "Bis 5 km zum Wasser"
+      },
+      "rivers": {
+        "title": "Am Fluss",
+        "subtitle": "Bis 2 km zum Fluss"
+      },
+      "showAll": "Alle anzeigen"
     },
     "footer": {
       "tagline": "Zwangsversteigerungen europaweit — auf einer Karte.",
-      "legal": "© 2026 PropHammer"
+      "legal": "© 2026 ImmoHammer"
     }
   },
   "search": {
-    "titleWithLabel": "Zwangsversteigerungen {label}",
     "europe": "Europa",
     "countriesCount": "{count} Länder",
     "regionsCount": "{count} Regionen",
-    "total": "gesamt",
-    "active": "aktiv",
-    "cancelled": "aufgehoben",
-    "asOf": "Stand: {date}",
     "resultsCount": "{count} Treffer",
     "onMap": "auf Karte",
     "geocoded": "{done}/{total} geokodiert",
@@ -94,11 +81,13 @@
     "saveSearchPrompt": "Name für die gespeicherte Suche:",
     "saveSearchError": "Suche konnte nicht gespeichert werden.",
     "filterButton": "Filter",
+    "countrySuggestionBadge": "Land",
     "viewMap": "Karte",
     "viewList": "Liste",
     "loadingData": "Lade Daten …",
     "loadError": "Fehler beim Laden: {msg}",
     "geoError": "Fehler beim Geokodieren: {msg}",
+    "loadMoreError": "Weitere Auktionen konnten nicht geladen werden.",
     "loadingLocations": "Lade Standorte …",
     "initialLoadHint": "Erstaufruf kann mehrere Minuten dauern (alle registrierten Quellen parallel)",
     "noResults": "Keine Termine entsprechen den Filtern.",
@@ -111,9 +100,11 @@
     "original": "Original: {value}",
     "startingBid": "Startgebot: {value}",
     "currentBid": "Aktuelles Gebot: {value}",
+    "cardLivingArea": "Wohnfläche {value}",
+    "cardLandArea": "Grundstück {value}",
     "detailsLink": "Details →",
-    "removeFromWatchlist": "Von Watchlist entfernen",
-    "addToWatchlist": "Zur Watchlist hinzufügen",
+    "removeFromWatchlist": "Aus Favoriten entfernen",
+    "addToWatchlist": "Zu Favoriten hinzufügen",
     "loadMoreShown": "{shown} von {total} angezeigt",
     "loadMore": "Mehr laden",
     "priceBucket100k": "≤ 100k",
@@ -126,9 +117,7 @@
     "sortDefault": "Standard",
     "sortDateAsc": "Termin (nächste zuerst)",
     "sortPriceAsc": "Preis aufsteigend",
-    "sortPriceDesc": "Preis absteigend",
-    "boundToMap": "Kartenbereich",
-    "boundToMapHint": "Nur Objekte im sichtbaren Kartenausschnitt anzeigen"
+    "sortPriceDesc": "Preis absteigend"
   },
   "settings": {
     "title": "Einstellungen — Zwangsversteigerungen",
@@ -136,7 +125,59 @@
     "heading": "Einstellungen",
     "logoutAdmin": "Abmelden",
     "logoutAdminError": "Abmelden fehlgeschlagen.",
+    "sections": {
+      "status": "Status",
+      "operations": "Betrieb & Fehler",
+      "pipeline": "Crawling & Anreicherung",
+      "llm": "KI / LLM",
+      "admin": "Verwaltung"
+    },
     "sessionExpired": "Sitzung abgelaufen.",
+    "operations": {
+      "title": "Betriebszustand",
+      "description": "Start- und Migrationsstatus der Anwendung sowie der unabhängige Host-Reporter.",
+      "refresh": "Status aktualisieren",
+      "loadError": "Betriebsstatus konnte nicht geladen werden.",
+      "app": "Anwendung",
+      "migration": "Datenbank-Migration",
+      "host": "Host / Container",
+      "database": "PostgreSQL",
+      "startedAt": "Letzter Start",
+      "restarts15m": "Starts in den letzten 15 Minuten",
+      "migrationUpdated": "Letzte Änderung",
+      "hostReportedAt": "Letzter Host-Report",
+      "serviceState": "Service-Zustand",
+      "restartCount": "Systemd-Neustarts",
+      "exitCode": "Letzter Exit-Code",
+      "sharedMemory": "Gemeinsamer Speicher (/dev/shm)",
+      "recentFailures": "Aktuelle Fehlerhinweise",
+      "noFailures": "Keine aktuellen Fehlerhinweise.",
+      "unavailable": "Noch nicht verfügbar — der Host-Reporter ist nicht installiert oder hat noch keinen Bericht geschrieben.",
+      "stale": "Der Host-Report ist älter als fünf Minuten.",
+      "status": {
+        "pending": "Ausstehend",
+        "running": "Läuft",
+        "ready": "Erfolgreich",
+        "failed": "Fehlgeschlagen",
+        "healthy": "In Ordnung",
+        "attention": "Prüfen"
+      }
+    },
+    "outbound": {
+      "title": "Ausgehende Nachrichten",
+      "description": "Zustand der langlebigen Mail-Outbox; Inhalte und Empfänger bleiben verborgen.",
+      "refresh": "Aktualisieren",
+      "loadError": "Zustand konnte nicht geladen werden.",
+      "pending": "Ausstehend: {count}",
+      "processing": "In Arbeit: {count}",
+      "failed": "Dauerhaft fehlgeschlagen: {count}",
+      "attempt": "Versuch {count}",
+      "unknownError": "unbekannt"
+    },
+    "messageDetails": {
+      "show": "{count} Einträge anzeigen",
+      "hide": "Einträge ausblenden"
+    },
     "login": {
       "title": "Anmeldung",
       "protected": "Diese Seite ist passwortgeschützt.",
@@ -156,6 +197,8 @@
       "starting": "Starte …",
       "startLogin": "Login starten",
       "connected": "✓ Bereits angemeldet",
+      "accountLabel": "Angemeldet als:",
+      "accountUnknown": "Angemeldeter Account konnte nicht ermittelt werden.",
       "reconnect": "Neu verknüpfen",
       "openingLogin": "Öffne Anthropic-Login …",
       "step1": "1. Öffne die Anthropic-Login-Seite und autorisiere den Zugriff:",
@@ -184,6 +227,7 @@
       "updateError": "Aktualisieren fehlgeschlagen.",
       "hasInquiries": "Anwalt hat bereits Anfragen — bitte deaktivieren statt löschen.",
       "deleteError": "Löschen fehlgeschlagen.",
+      "deleteConfirm": "Anwalt „{name}“ wirklich löschen?",
       "saveError": "Speichern fehlgeschlagen.",
       "colName": "Name",
       "colCountries": "Länder",
@@ -213,13 +257,33 @@
       "save": "Speichern",
       "cancel": "Abbrechen"
     },
+    "llmKillSwitch": {
+      "title": "Not-Aus: LLM-Kette",
+      "description": "Stoppt Extraktion, Übersetzung, Insights, Admin-Testläufe und neue Batch-Submissions app-weit sofort — ohne Redeploy. Bereits eingereichte Batch-Jobs werden weiterhin abgerufen, es werden nur keine neuen Anfragen mehr gestellt.",
+      "label": "LLM-Kette deaktivieren",
+      "statusOn": "Gestoppt",
+      "statusOff": "Aktiv",
+      "loadError": "Status konnte nicht geladen werden.",
+      "saveError": "Speichern fehlgeschlagen.",
+      "retry": "Erneut versuchen"
+    },
+    "automation": {
+      "title": "Automatische Verarbeitung",
+      "description": "Pausiert nur Hintergrund- und Startläufe. Bereits laufende Prozesse werden nicht abgebrochen; die Einstellung wirkt vor dem nächsten automatischen Lauf.",
+      "crawlersLabel": "Automatische Crawler aktiv",
+      "crawlersHelp": "Stündliche Aktualisierung sowie automatische Enrich- und Geocode-Läufe.",
+      "llmLabel": "Automatische LLM-Verarbeitung aktiv",
+      "llmHelp": "Geplante und beim Serverstart ausgelöste LLM-Verarbeitung.",
+      "manualHint": "Manuelle Länder- und Einzelaktionen bleiben bewusst verfügbar, damit sie ohne Konkurrenz durch Hintergrundläufe ausgeführt werden können.",
+      "loadError": "Automatisierungsstatus konnte nicht geladen werden.",
+      "saveError": "Automatisierungsstatus konnte nicht gespeichert werden.",
+      "retry": "Erneut versuchen"
+    },
     "llm": {
       "title": "LLM-Konfiguration",
       "description": "Max-Output-Tokens-Grenze pro Anwendungsfall — wirkt sofort für den nächsten LLM-Call, kein Redeploy nötig.",
       "extractionLabel": "Extraktion",
       "translationLabel": "Übersetzung",
-      "usage-ideasLabel": "Nutzungsideen",
-      "renovation-cost-estimateLabel": "Sanierungskosten",
       "loadError": "Konfiguration konnte nicht geladen werden.",
       "invalidValue": "Bitte für jedes Feld eine gültige Zahl eingeben.",
       "saveError": "Speichern fehlgeschlagen.",
@@ -234,11 +298,13 @@
       "addProfile": "Profil hinzufügen",
       "removeProfile": "Profil entfernen",
       "deleteError": "Löschen fehlgeschlagen.",
+      "deleteConfirm": "Profil „{name}“ wirklich löschen? Der gespeicherte API-Key wird entfernt und das Profil aus allen Modellzuordnungen gestrichen.",
       "profileNameLabel": "Profilname",
       "newProfileName": "Neues LLM-Profil",
       "providerLabel": "Provider",
       "providerClaudeProxy": "Claude-Proxy (OAuth)",
       "providerOpenaiCompatible": "OpenAI-kompatibel",
+      "providerOpenrouter": "OpenRouter",
       "providerGeminiNative": "Gemini (native)",
       "executionModeLabel": "API-Aufruf",
       "executionModeSync": "Sync",
@@ -246,6 +312,7 @@
       "batchUnsupported": "Dieser Provider bietet hier keinen Batch-Modus an.",
       "batchBroken": "Batch-API zuletzt fehlgeschlagen: {message}",
       "batchConfigGated": "Batch-API aktuell deaktiviert (Free-Tier-Konfiguration)",
+      "batchTextOnly": "OpenRouters Batch-API akzeptiert nur Text — Auktionen mit Fotos/Bild-PDFs laufen dafür automatisch synchron.",
       "batchKeyRequired": "Batch über Claude-Proxy benötigt einen gespeicherten Proxy-/API-Key.",
       "batchOpenAiRequired": "OpenAI-Batch benötigt https://api.openai.com/v1 als Base-URL und einen gespeicherten API-Key.",
       "baseUrlLabel": "Base-URL",
@@ -274,8 +341,14 @@
       "noProfileAssigned": "Server-Standard / Fallback",
       "usingEnvDefault": "Kein Override gesetzt — der Server-Standard ist aktiv: {provider} ({baseUrl})",
       "usingTranslationFallback": "Kein Übersetzungs-Override gesetzt — Übersetzungen nutzen aktuell: {provider} ({baseUrl})",
+      "usingInsightFallback": "Kein eigener Override gesetzt — nutzt aktuell die Dokument-Extraktion: {provider} ({baseUrl})",
       "primary": "Primär",
       "fallbackN": "Fallback {n}",
+      "poolMember": "Key {n}",
+      "strategyFallback": "Fallback-Kette (primäres Modell zuerst)",
+      "strategyRoundRobin": "Round-Robin (gleichmäßig auf alle Profile)",
+      "strategyFallbackHint": "Jede Auktion beginnt beim ersten Profil; die weiteren springen nur ein, wenn es nicht verfügbar ist. Richtig, wenn die Liste eine Qualitätsrangfolge ist.",
+      "strategyRoundRobinHint": "Aufeinanderfolgende Auktionen gehen abwechselnd an die Profile. Bei Profilen mit unterschiedlichen API-Keys vervielfacht das das Minutenkontingent — das Kontingent gilt pro Projekt und Modell. Bei ungleichwertigen Modellen bekommt ein Teil der Auktionen das schwächere.",
       "addFallback": "Modell hinzufügen …",
       "moveUp": "Nach oben",
       "moveDown": "Nach unten",
@@ -300,7 +373,7 @@
     },
     "sources": {
       "title": "Datenquellen",
-      "description": "Aktivierte Länder werden in der Suche angezeigt, aus dem Cache ausgeliefert und regelmäßig gecrawlt. Änderungen wirken sofort; für eine neu aktivierte Quelle kannst du anschließend den Refresh manuell starten.",
+      "description": "Aktivierte Länder werden in der Suche und in der Länderübersicht angezeigt, aus dem Cache ausgeliefert und regelmäßig gecrawlt. Änderungen wirken sofort.",
       "enabledCount": "{enabled} von {total} Quellen aktiv",
       "loadError": "Datenquellen konnten nicht geladen werden.",
       "saveError": "Datenquellen konnten nicht gespeichert werden.",
@@ -318,33 +391,98 @@
       "enrichStatusRunning": "Crawl/Archiv läuft seit {at} …",
       "enrichStatusLastRun": "Letzter Crawl/Archiv-Lauf: {at} — {archived} archiviert, {duration}s.",
       "enrichStatusLastError": "Crawl/Archiv zuletzt fehlgeschlagen: {message}",
-      "enrichStatusProgress": "{regionsDone}/{regionsTotal} Quellen gecrawlt, {archivedDone}/{archivedTotal} Anzeigen archiviert",
+      "refreshOverview": "Status aktualisieren",
       "llmStatusRunning": "LLM-Extraktion läuft seit {at} …",
       "llmStatusLastRun": "Letzte LLM-Extraktion: {at} — {processed} verarbeitet, {llmCalls} LLM-Aufrufe, {duration}s.",
       "llmStatusLastWarning": "LLM-Hinweis: {message}",
       "llmStatusLastError": "LLM-Extraktion zuletzt fehlgeschlagen: {message}",
       "llmStatusLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
       "llmStatusLastLlmError": "Letzter LLM-Fehler: {message}",
-      "llmStatusProgress": "{processed}/{candidatesTotal} verarbeitet, {llmCalls} LLM-Aufrufe, {skipped} übersprungen",
       "externalStatusRunning": "Lagebewertung läuft seit {at} …",
+      "externalStatusProgress": "{done} von {total} geprüft",
       "externalStatusLastRun": "Letzte Lagebewertung: {at} — {processed} geprüft, {written} gespeichert, {duration}s.",
       "externalStatusLastError": "Lagebewertung zuletzt fehlgeschlagen: {message}",
       "offloadStatusLastRun": "Fotos ausgelagert: {at} — {removed} Datei(en), {freedMb} MB lokal freigegeben.",
-      "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}"
+      "offloadStatusLastError": "Foto-Auslagerung zuletzt fehlgeschlagen: {message}",
+      "copernicusEffisStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
+      "copernicusEffisStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Brandflächen übernommen ({pages} Seiten).",
+      "copernicusEffisStatusLastError": "Import zuletzt fehlgeschlagen: {message}",
+      "euFloodRiskStatusRunning": "Import läuft seit {at} — kann mehrere Minuten dauern …",
+      "euFloodRiskStatusLastRun": "Letzter Import: {at} — {normalized} von {fetched} Hochwasserzonen übernommen ({pages} Seiten).",
+      "euFloodRiskStatusLastError": "Import zuletzt fehlgeschlagen: {message}",
+      "eurostatTourismNutsStatusRunning": "Import läuft seit {at} …",
+      "eurostatTourismNutsStatusLastRun": "Letzter Import: {at} — {regionsWithData} von {regionCount} Regionen mit Daten.",
+      "eurostatTourismNutsStatusLastError": "Import zuletzt fehlgeschlagen: {message}"
+    },
+    "crawlStatus": {
+      "title": "Crawling-Status",
+      "refresh": "Status aktualisieren",
+      "retryOpen": "Offene crawlen",
+      "retryFailed": "Fehlerhafte erneut crawlen",
+      "empty": "Keine Länder aktiv."
+    },
+    "osmImport": {
+      "title": "OSM-Standortdaten",
+      "rawRowCount": "{count} OSM-Rohobjekte verfügbar",
+      "loadOpen": "Offene OSM-Daten laden",
+      "retryBlocked": "Blockierte OSM-Daten erneut laden",
+      "pending": "Angefordert am {at} — wird beim nächsten täglichen Lauf verarbeitet."
+    },
+    "geoMetrics": {
+      "title": "Umgebungsfilter-Berechnung",
+      "description": "Berechnet Entfernungen zu Meer/See/Fluss/Berg/Flughafen/Ski (aus den OSM-Standortdaten oben) pro Auktion vor — die Umgebungsfilter in der Suche lesen nur aus diesen vorberechneten Werten. Läuft täglich automatisch, kann hier aber auch sofort angestoßen werden, z. B. nach einem manuellen OSM-Reimport.",
+      "loadError": "Status konnte nicht geladen werden.",
+      "rebuildError": "Neuberechnung fehlgeschlagen.",
+      "refresh": "Status aktualisieren",
+      "geoFeaturesRows": "Vorberechnete Umgebungspunkte",
+      "auctionGeoMetricsRows": "Auktionen mit Umgebungsdaten",
+      "latestEpoch": "Letzter vollständiger Aufbau",
+      "rebuild": "Jetzt neu berechnen",
+      "rebuilding": "Berechne …",
+      "rebuildStarted": "Neuberechnung gestartet — läuft im Hintergrund und kann mehrere Minuten dauern. Fortschritt über \"Status aktualisieren\" prüfen."
     },
     "externalData": {
       "title": "Externe Datenquellen",
-      "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv.",
+      "description": "POI/ÖPNV, Lärm, Hochwasser und Marktvergleich auf der Detailseite kommen aus diesen Diensten. Ein leeres Feld übernimmt den per Deployment (Env-Var) gesetzten Wert, sofern vorhanden — sonst bleibt die Quelle inaktiv. „Alle Auktionen neu anreichern“ oben schreibt diese Daten für jede Auktion neu; „Cache jetzt importieren“ bei einer Quelle aktualisiert dagegen nur deren Rohdaten und lässt bestehende Auktionsdaten unverändert.",
       "configured": "Aktiv",
       "notConfigured": "Nicht konfiguriert",
       "loadError": "Datenquellen konnten nicht geladen werden.",
       "saveError": "Speichern fehlgeschlagen.",
       "saved": "Gespeichert.",
       "saving": "Speichere …",
-      "save": "Speichern"
+      "save": "Speichern",
+      "refreshNow": "Alle Auktionen neu anreichern",
+      "refreshing": "Anreicherung wird gestartet …",
+      "triggerError": "Anstoßen fehlgeschlagen.",
+      "usageHints": {
+        "fr-dvf-geolocated": "Marktvergleich auf der Detailseite (nur Frankreich).",
+        "eu-flood-risk-areas": "Hochwasser-Hinweis auf der Detailseite.",
+        "eea-environmental-noise-directive": "Lärmbelastung (Straße/Schiene/Flughafen) auf der Detailseite.",
+        "cams-air-quality": "Luftqualitäts-Werte auf der Detailseite.",
+        "open-meteo-climate-normals": "Klimadiagramm auf der Detailseite.",
+        "copernicus-effis": "Waldbrand-Hinweis auf der Detailseite.",
+        "eurostat-regional-tourism-nights": "Besucherintensitäts-Ebene auf der Suchkarte (nicht die Detailseite)."
+      },
+      "coverage": {
+        "title": "Datenabdeckung",
+        "summary": "{covered} von {total} geocodierten Auktionen ({percent} %)",
+        "lastSuccessAt": "Zuletzt erfolgreich aktualisiert: {at}",
+        "empty": "Noch keine geocodierten Auktionen für diese Quelle.",
+        "loadError": "Datenabdeckung konnte nicht geladen werden."
+      },
+      "cacheImport": {
+        "import": "Cache jetzt importieren",
+        "importing": "Importiere …",
+        "csvPathPlaceholder": "Pfad zur DVF-CSV-Datei",
+        "csvPathRequired": "csvPath ist erforderlich.",
+        "done": "Import abgeschlossen: {normalized} Datensätze übernommen ({at}).",
+        "started": "Import gestartet — läuft im Hintergrund und kann mehrere Minuten dauern. Status siehe oben.",
+        "skipped": "Import übersprungen — für diese Quelle ist kein Cache-Pfad konfiguriert.",
+        "error": "Import fehlgeschlagen."
+      }
     },
     "reprocess": {
-      "title": "Reprocess-Testlauf",
+      "title": "Extraktions-Testlauf",
       "description": "Extraktion für eine begrenzte Anzahl Auktionen aus dem Archiv neu laufen lassen — z. B. um eine neue Provider-/Modell-Konfiguration zu verifizieren, bevor der volle Bestand neu verarbeitet wird.",
       "limitLabel": "Anzahl Auktionen",
       "countryLabel": "Land",
@@ -352,11 +490,14 @@
       "run": "Testlauf starten",
       "running": "Läuft …",
       "runError": "Testlauf fehlgeschlagen.",
+      "started": "Testlauf gestartet — läuft im Hintergrund, das Ergebnis erscheint hier.",
+      "failed": "Testlauf fehlgeschlagen: {message}",
       "candidates": "Kandidaten",
       "processed": "Verarbeitet",
       "skipped": "Übersprungen",
       "llmCalls": "LLM-Aufrufe",
       "llmErrors": "LLM-Anfragefehler",
+      "rulesFalsified": "Regel-Werte vom LLM korrigiert",
       "warning": "Hinweis: {message}",
       "lastLlmError": "Letzter LLM-Fehler: {message}",
       "batchLabel": "Über Batch API einreichen (prüft, ob Batch für diesen Provider aktuell funktioniert)"
@@ -369,6 +510,7 @@
       "reprocessLastError": "Letzter Lauf fehlgeschlagen: {message}",
       "reprocessLastWarning": "Letzter Lauf mit Hinweis: {message}",
       "reprocessLlmErrors": "{count} LLM-Anfragefehler im letzten Lauf",
+      "reprocessRulesFalsified": "{count} Regel-Werte im letzten Lauf vom LLM korrigiert",
       "reprocessLastLlmError": "Letzter LLM-Fehler: {message}",
       "refresh": "Aktualisieren",
       "loadError": "Batch-Pipeline konnte nicht geladen werden.",
@@ -376,18 +518,18 @@
       "totalJobs": "Offene Jobs",
       "totalRequests": "Offene Requests",
       "readyRequests": "Bereit für nächsten Lauf",
+      "neverExtracted": "Nie extrahiert",
       "lowConfidenceRules": "Regex low",
       "missingLlmFields": "LLM-Felder offen",
       "orphanedBatchMarkers": "Verwaiste Marker",
       "failedLimit": "{count} Anzeigen haben das LLM-Fehlerlimit erreicht.",
-      "readySample": "Beispiele: noch nicht eingereiht",
-      "orphanedSample": "Beispiele: Marker ohne bekannten offenen Job",
       "openHeading": "Offene Provider-Jobs",
       "historyHeading": "Letzte Batch-Jobs",
       "pendingOfTotal": "{pending} von {total} offen",
       "itemsTotal": "{total} Requests",
       "submittedAt": "Eingereicht: {at}",
       "updatedAt": "Aktualisiert: {at}",
+      "groupCount": "{count}× identische Fehler",
       "status": {
         "pending": "Offen",
         "succeeded": "Erfolgreich",
@@ -398,6 +540,92 @@
         "enrich": "Enrich",
         "reprocess": "Reprocess"
       }
+    },
+    "llmCost": {
+      "title": "LLM-Kosten",
+      "description": "Geschätzte Kosten aus tatsächlichem Token-Verbrauch, gruppiert nach Aufgabe, Modell und Profil. Modelle ohne hinterlegten Preis zählen als „unbepreist“ statt als 0.",
+      "refresh": "Aktualisieren",
+      "loadError": "Kostenübersicht konnte nicht geladen werden.",
+      "empty": "Noch keine erfassten LLM-Aufrufe.",
+      "statCost30d": "Kosten (30 Tage)",
+      "statCostToday": "Kosten (heute)",
+      "statTokens": "Tokens (30 Tage)",
+      "statUnpriced": "Unbepreiste Aufrufe",
+      "trendHeading": "Tagesverlauf",
+      "breakdownHeading": "Aufschlüsselung",
+      "colTask": "Aufgabe",
+      "colModel": "Modell",
+      "colProfile": "Profil",
+      "colCalls": "Aufrufe",
+      "colTokens": "Tokens",
+      "colCost": "Kosten",
+      "unpricedCount": "{count}× unbepreist",
+      "task": {
+        "extraction": "Extraktion",
+        "translation": "Übersetzung",
+        "place-name-translation": "Ortsnamen-Übersetzung"
+      }
+    },
+    "llmStatus": {
+      "title": "LLM-Status",
+      "retryOpen": "Offene starten",
+      "retryFailed": "Fehlerhafte erneut starten",
+      "colFailures": "Fehlversuche"
+    },
+    "translationStatus": {
+      "titleForLang": "Übersetzungs-Status ({lang})",
+      "retryOpen": "Offene starten",
+      "retryFailed": "Fehlerhafte erneut starten",
+      "colLang": "Sprache"
+    },
+    "statusOverview": {
+      "loadError": "Status konnte nicht geladen werden.",
+      "listLoadError": "Liste konnte nicht geladen werden.",
+      "listEmpty": "Keine Anzeigen in diesem Bereich.",
+      "noData": "Keine Daten",
+      "retryError": "Erneuter Versuch fehlgeschlagen.",
+      "bucketDone": "Erledigt",
+      "bucketPending": "In Bearbeitung",
+      "bucketOpen": "Offen",
+      "bucketError": "Fehlerhaft",
+      "colPlatform": "Plattform",
+      "colTitle": "Anzeige",
+      "colRegion": "Region",
+      "colError": "Letzter Fehler",
+      "pageInfo": "{from}–{to} von {total}",
+      "prevPage": "Zurück",
+      "nextPage": "Weiter"
+    },
+    "dailySnapshots": {
+      "title": "Täglicher Statusvergleich",
+      "description": "Snapshot vom {latest}; Veränderung gegenüber {previous} in Klammern.",
+      "first": "Erster Snapshot vom {latest}; der Vergleich erscheint ab dem nächsten Tag.",
+      "empty": "Der erste tägliche Snapshot wird nach dem nächsten geplanten Lauf angezeigt.",
+      "pipeline": "Bereich",
+      "crawl": "Crawling",
+      "llm": "LLM-Extraktion",
+      "translation": "Übersetzung ({lang})",
+      "osm": "OSM-Standortdaten",
+      "allStatuses": "Alle Status",
+      "days": "{count} Tage",
+      "chartEmpty": "Für diesen Filter liegen noch keine Snapshots vor.",
+      "legend": "Grün = bessere Entwicklung, Rot = schlechtere Entwicklung. Bei offen, fehlerhaft und in Bearbeitung ist weniger besser."
+    },
+    "countryOverview": {
+      "description": "Alle Verarbeitungsstände und OSM-Standortdaten sind pro Land zusammengefasst. Ein Klick auf ein Verarbeitungsdiagramm öffnet die zugehörige Tabelle.",
+      "forceCrawl": "Crawler erzwingen",
+      "forceLlm": "LLM-Extraktion erzwingen",
+      "forceError": "Aktion konnte nicht gestartet werden.",
+      "osmAvailable": "Objekte vorhanden",
+      "osmRequested": "Import angefordert",
+      "osmMissing": "Keine Daten",
+      "osmAttached": "OSM-Daten angehangen",
+      "osmOpen": "Offene Auktionen",
+      "osmBlocked": "OSM-Daten nicht verfügbar",
+      "tableTitle": "Anzeigen: {status}",
+      "filterPlaceholder": "Tabelle filtern …",
+      "filterHint": "Filtert Plattform, Anzeige und Region",
+      "retryRow": "Diesen Eintrag erneut starten"
     },
     "archive": {
       "title": "Roh-Archiv",
@@ -431,6 +659,95 @@
         "detail_html": "Detail-HTML",
         "document_text": "Dokument-Text"
       }
+    },
+    "auctionTechnical": {
+      "title": "Technik — {platform}/{id}",
+      "heading": "Technik: {platform}/{id}",
+      "back": "Zurück zur Anzeige",
+      "loading": "Lade …",
+      "loadError": "Technik-Übersicht konnte nicht geladen werden.",
+      "noData": "Keine Daten.",
+      "sections": {
+        "identity": "Identität & Geocoding",
+        "fetchState": "Crawl-/Fetch-Zustand",
+        "extractionHistory": "Extraktionshistorie",
+        "translations": "Übersetzungen",
+        "externalData": "Externe Daten",
+        "llmBatchJobs": "LLM-Batch-Jobs",
+        "documents": "Dokumentarchiv"
+      },
+      "badges": {
+        "live": "Live",
+        "trial": "Trial",
+        "pending": "Läuft …",
+        "failed": "Fehlgeschlagen",
+        "success": "Erfolgreich"
+      },
+      "trial": {
+        "profilePlaceholder": "LLM-Profil wählen",
+        "start": "Testlauf starten",
+        "running": "Testlauf läuft …",
+        "triggerError": "Testlauf konnte nicht gestartet werden.",
+        "timeout": "Der Testlauf hat sich in drei Minuten nicht gemeldet. Die Seite neu laden, um das Ergebnis zu prüfen."
+      },
+      "diff": {
+        "compare": "Vergleichen",
+        "loading": "Lade Vergleich …",
+        "loadError": "Vergleich konnte nicht geladen werden.",
+        "title": "Versionsvergleich",
+        "showAll": "Auch gleiche Felder anzeigen",
+        "noDifferences": "Keine Unterschiede in den angezeigten Feldern."
+      },
+      "versions": {
+        "selectHint": "Zwei auswählen zum Vergleichen, eine oder mehrere zum Löschen.",
+        "promote": "Live schalten",
+        "promoteError": "Version konnte nicht live geschaltet werden.",
+        "deleteSelected": "Ausgewählte löschen ({count})",
+        "deleteConfirm": "{count} Version(en) wirklich löschen? Das entfernt zugehörige Fotos und Übersetzungen unwiderruflich.",
+        "deleteError": "Version(en) konnten nicht gelöscht werden."
+      },
+      "fields": {
+        "country": "Land/Region",
+        "authority": "Amtsgericht",
+        "caseNumber": "Aktenzeichen",
+        "coordinates": "Koordinaten",
+        "geocodeResult": "Geocoding-Ergebnis",
+        "geocodeAttemptedAt": "Geocoding versucht am",
+        "firstSeenAt": "Erstmals gesehen",
+        "updatedAt": "Zuletzt aktualisiert",
+        "detailFetchedAt": "Detailabruf am",
+        "llmFailures": "LLM-Fehlversuche",
+        "llmLastAttemptedAt": "Letzter LLM-Versuch",
+        "llmBatchJob": "LLM-Batch-Job",
+        "photoFailures": "Foto-Fehlversuche",
+        "photosCheckedAt": "Fotos geprüft am",
+        "attachments": "Anhänge",
+        "version": "Version",
+        "status": "Status",
+        "provider": "Provider/Modell",
+        "runTrigger": "Auslöser",
+        "duration": "Dauer",
+        "tokens": "Token (Ein/Aus)",
+        "cost": "Kosten",
+        "confidence": "Konfidenz",
+        "createdAt": "Erstellt am",
+        "lang": "Sprache",
+        "error": "Fehler",
+        "distSea": "Entfernung Meer (m)",
+        "distMountain": "Entfernung Berg (m)",
+        "distAirport": "Entfernung Flughafen (m)",
+        "computedAt": "Berechnet am",
+        "climateSummer": "Sommer Ø",
+        "climateWinter": "Winter Ø",
+        "climateSourceVersion": "Klimadaten-Quelle",
+        "jobName": "Job",
+        "submittedAt": "Eingereicht am",
+        "kind": "Art",
+        "filename": "Datei",
+        "setVersion": "Dokumentset-Version",
+        "byteSize": "Größe",
+        "capturedAt": "Erfasst am"
+      }
     }
   },
   "localeSwitcher": {
@@ -438,6 +755,14 @@
   },
   "currencySwitcher": {
     "label": "Währung"
+  },
+  "themeSwitcher": {
+    "label": "Design",
+    "options": {
+      "system": "System",
+      "light": "Hell",
+      "dark": "Dunkel"
+    }
   },
   "country": {
     "de": "Deutschland",
@@ -462,7 +787,8 @@
     "si": "Slowenien",
     "gr": "Griechenland",
     "gb": "Vereinigtes Königreich",
-    "us": "USA"
+    "us": "USA",
+    "bg": "Bulgarien"
   },
   "propertyType": {
     "mehrfamilienhaus": "Mehrfamilienhaus",
@@ -503,26 +829,6 @@
     "denkmalschutz": "Denkmalschutz",
     "vermietet": "Vermietet"
   },
-  "usageIdeaType": {
-    "owner-occupation": "Eigennutzung",
-    "owner-occupation-with-sublet": "Eigennutzung mit Untervermietung",
-    "vacation-rental": "Ferienwohnung",
-    "farm": "Bauernhof",
-    "agricultural": "Landwirtschaft",
-    "forestry": "Forstwirtschaft",
-    "warehouse": "Lagerhaus",
-    "other": "Sonstiges"
-  },
-  "renovationCostCategory": {
-    "roof": "Dach",
-    "facade-insulation": "Fassade/Dämmung",
-    "windows": "Fenster",
-    "heating": "Heizung",
-    "electrical": "Elektrik",
-    "plumbing-bathroom": "Bad/Sanitär",
-    "flooring": "Boden",
-    "other": "Sonstiges"
-  },
   "attachmentKind": {
     "announcement": "Bekanntmachung",
     "photo": "Fotos",
@@ -538,9 +844,6 @@
     "regionHint": "Wähle zuerst ein Land, um Regionen zu filtern.",
     "search": "Suche",
     "searchPlaceholder": "Ort, Aktenzeichen, Objekt, Beschreibung …",
-    "authority": "Gericht",
-    "authorityPlaceholder": "Gericht wählen",
-    "allCourts": "Alle Gerichte",
     "marketValue": "Verkehrswert",
     "landArea": "Grundstücksfläche (m²)",
     "livingArea": "Wohnfläche (m²)",
@@ -551,14 +854,16 @@
     "propertyType": "Objektart",
     "propertyTypePlaceholder": "Objektart wählen",
     "allPropertyTypes": "Alle Objektarten",
-    "condition": "Mindestzustand",
-    "conditionPlaceholder": "Mindestzustand wählen",
+    "platform": "Herkunft",
+    "allPlatforms": "Alle Plattformen",
+    "condition": "Zustand",
     "allConditions": "Alle Zustände",
     "features": "Ausstattung",
+    "allFeatures": "Alle Ausstattungsmerkmale",
+    "selectedCount": "{count} ausgewählt",
     "onlyWithPhotos": "Nur mit Fotos",
     "includeCancelled": "Aufgehobene anzeigen",
     "hideRulesOnly": "Nur vollständig verarbeitete Auktionen",
-    "reset": "Zurücksetzen ({count})",
     "reload": "Neu laden",
     "reloading": "Lädt …",
     "field": {
@@ -577,14 +882,56 @@
       "renovationYearMin": "Saniert ab",
       "renovationYearMax": "Saniert bis",
       "category": "Objektart",
-      "condition": "Mindestzustand",
+      "condition": "Zustand",
       "features": "Ausstattung",
       "photos": "Nur mit Fotos",
       "cancelled": "inkl. aufgehobene",
-      "boundToMap": "Kartenbereich",
       "sort": "Sortierung",
       "llmOnly": "vollständig verarbeitet",
-      "view": "Ansicht"
+      "view": "Ansicht",
+      "nearSea": "Nähe zum Meer",
+      "nearLake": "Nähe zum See",
+      "nearRiver": "Nähe zum Fluss",
+      "nearMountain": "Nähe zum Berg",
+      "nearAirport": "Nähe zum Flughafen",
+      "urbanRural": "Umgebungstyp",
+      "nearLat": "Standort (Breite)",
+      "nearLng": "Standort (Länge)",
+      "nearRadius": "Umkreis"
+    }
+  },
+  "searchBar": {
+    "activeCount": "{count} aktiv",
+    "location": {
+      "label": "Ort",
+      "placeholder": "Ort, Region oder Land suchen",
+      "recent": "Zuletzt gesucht",
+      "suggested": "Vorgeschlagene Länder",
+      "nearby": "In der Nähe",
+      "nearbyPending": "Standort wird ermittelt …",
+      "geolocationUnsupported": "Geolocation wird von diesem Browser nicht unterstützt.",
+      "geolocationFailed": "Standort konnte nicht ermittelt werden."
+    },
+    "properties": {
+      "label": "Eigenschaften",
+      "placeholder": "Preis, Fläche, Objektart …"
+    },
+    "environment": {
+      "label": "Umgebung",
+      "placeholder": "Meer, Berge, Flughafen …",
+      "sea": "Nähe zum Meer",
+      "lake": "Nähe zum See",
+      "river": "Nähe zum Fluss",
+      "mountain": "Nähe zu Bergen",
+      "airport": "Nähe zum Flughafen",
+      "skiDownhill": "Nähe zum Skigebiet (Bergabfahrt)",
+      "skiNordic": "Nähe zum Skigebiet (Langlauf)",
+      "withinKm": "bis {km} km",
+      "any": "egal",
+      "urbanRural": "Umgebungstyp",
+      "either": "Egal",
+      "urban": "Urban",
+      "rural": "Ländlich"
     }
   },
   "authStatus": {
@@ -601,13 +948,16 @@
       "submit": "Anmelden",
       "submitting": "Anmelden …",
       "noAccount": "Noch kein Konto?",
-      "signupLink": "Registrieren"
+      "signupLink": "Registrieren",
+      "emailNotConfirmed": "Diese E-Mail-Adresse ist noch nicht bestätigt.",
+      "resendConfirmation": "Bestätigungs-E-Mail erneut senden",
+      "resendSent": "E-Mail wurde erneut gesendet."
     },
     "signup": {
       "title": "Registrieren",
       "submit": "Registrieren",
       "submitting": "Registrieren …",
-      "done": "Konto erstellt.",
+      "done": "Konto erstellt — bitte bestätige deine E-Mail-Adresse über den Link, den wir dir gerade gesendet haben.",
       "hasAccount": "Bereits registriert?",
       "loginLink": "Anmelden"
     }
@@ -615,50 +965,13 @@
   "account": {
     "title": "Mein Konto",
     "loading": "Lädt …",
-    "savedSearches": {
-      "title": "Gespeicherte Suchen",
-      "empty": "Noch keine gespeicherten Suchen.",
-      "allAuctions": "Alle Auktionen",
-      "delete": "Löschen"
-    },
     "watchlist": {
-      "title": "Watchlist",
+      "title": "Favoriten",
       "empty": "Noch keine Favoriten.",
       "added": "Hinzugefügt {date}",
-      "remove": "Entfernen"
-    },
-    "lawyerInquiries": {
-      "title": "Meine Anwalts-Anfragen",
-      "empty": "Noch keine Anfragen gesendet.",
-      "viewAuction": "Auktion ansehen",
-      "commissionStatus": "Provisionsstatus: {status}",
-      "status": {
-        "pending": "Ausstehend",
-        "invoiced": "In Rechnung gestellt",
-        "paid": "Bezahlt",
-        "waived": "Erlassen"
-      }
-    },
-    "apiKeys": {
-      "title": "API-Keys",
-      "intro": "Programmatischer Lesezugriff (Snapshot + Historie) unter {path}, authentifiziert per {header}:",
-      "listAuctions": "aktueller Bestand, filter- und paginierbar",
-      "getAuction": "einzelne Auktion",
-      "observations": "Zeitreihe je Auktion (Quoten-/Preistrends)",
-      "example": "Beispiel:",
-      "labelPlaceholder": "Label, z. B. „Analyse-Skript“",
-      "create": "Key erzeugen",
-      "newKeyNotice": "Neuer Key „{label}“ — wird nur jetzt angezeigt, danach nicht mehr abrufbar:",
-      "copy": "Kopieren",
-      "copied": "Kopiert!",
-      "saveNowNotice": "Jetzt sichern — dieser Key wird aus Sicherheitsgründen nie wieder angezeigt.",
-      "empty": "Noch keine API-Keys.",
-      "revoked": "(widerrufen)",
-      "created": "erzeugt {date}",
-      "lastUsed": "zuletzt genutzt {date}",
-      "neverUsed": "nie",
-      "revoke": "Widerrufen",
-      "revokeConfirm": "Möchten Sie diesen API-Key wirklich widerrufen? Er kann danach nicht mehr verwendet werden."
+      "remove": "Entfernen",
+      "loadError": "Die Favoriten konnten nicht geladen werden.",
+      "updateError": "Die Favoriten konnten nicht geändert werden."
     }
   },
   "objektDetail": {
@@ -666,6 +979,8 @@
     "loading": "Lade …",
     "notFound": "Auktion nicht gefunden.",
     "cancelled": "Aufgehoben",
+    "cancelledNoticeTitle": "Diese Auktion wurde zurückgezogen.",
+    "cancelledNoticeText": "Die zuständige Behörde hat den Verkauf aufgehoben. Deshalb können Originaldokumente oder weitere Angaben nicht mehr verfügbar sein.",
     "untitled": "Zwangsversteigerung",
     "marketValue": "Verkehrswert",
     "original": "Original: {value}",
@@ -673,6 +988,7 @@
     "startingBid": "Startgebot",
     "currentBid": "Aktuelles Gebot",
     "securityDeposit": "Sicherheitsleistung",
+    "propertyType": "Objektart",
     "landArea": "Grundstücksfläche",
     "livingArea": "Wohnfläche",
     "yearBuilt": "Baujahr",
@@ -743,18 +1059,10 @@
     "constructionShort": "Bauweise",
     "authority": "Gericht",
     "caseNumber": "Aktenzeichen",
-    "analysisStatus": {
-      "pending": "Analyse ausstehend",
-      "rules": "Enrich: Regeln",
-      "batch": "LLM läuft",
-      "llm": "LLM analysiert",
-      "failed": "LLM fehlgeschlagen"
-    },
-    "extractionNotice": "Eckdaten automatisch aus dem Gutachten/Exposé extrahiert ({confidence}).",
+    "source": "Quelle",
+    "technicalLink": "Technik",
     "biddingNotes": "Hinweis zum Bietverfahren: {note}",
     "renovationNotes": "Sanierungshinweis: {note}",
-    "confidenceHigh": "hohe Konfidenz",
-    "confidenceLow": "geringe Konfidenz",
     "location": "Standort, Umgebung & Infrastruktur",
     "openDetailPage": "Detailseite öffnen ↗",
     "announcementOriginal": "Bekanntmachung (Original) ↗",
@@ -768,6 +1076,17 @@
     "translationPendingHint": "Übersetzung läuft",
     "translationError": "Die Übersetzung konnte nicht geladen werden.",
     "auctionDataTitle": "Auktionsdaten",
+    "relatedAuctionsTitle": "Zusammenhängende Auktionen",
+    "relatedAuctions": {
+      "same_proceeding": {
+        "title": "Gleiches Verfahren, weitere Quelle",
+        "hint": "Diese Veröffentlichung beschreibt nach Gericht, Aktenzeichen und Termin dasselbe Verfahren. Dokumente und Angaben der einzelnen Quellen bleiben separat verfügbar."
+      },
+      "same_address": {
+        "title": "Weitere Auktionen an derselben Adresse",
+        "hint": "Diese Auktionen teilen eine Adresse. Sie können unterschiedliche Wohnungen, Anteile, Lose oder Verfahren betreffen."
+      }
+    },
     "propertyDataTitle": "Objektdaten",
     "courtInfoTitle": "Gerichtsinformationen",
     "versteigerungstermin": "Versteigerungstermin",
@@ -778,7 +1097,7 @@
     "filesTitle": "Dateien",
     "openFilesMenu": "Dateien",
     "sourcesDisclaimerTitle": "Quellen & Haftungsausschluss",
-    "sourcesDisclaimerText": "Alle gemachten Angaben ohne Gewähr. PropHammer übernimmt keine Haftung für die Richtigkeit und Vollständigkeit der dargestellten Informationen.",
+    "sourcesDisclaimerText": "Alle gemachten Angaben ohne Gewähr. ImmoHammer übernimmt keine Haftung für die Richtigkeit und Vollständigkeit der dargestellten Informationen.",
     "safetyNoticeTitle": "Sicherheitsleistung",
     "safetyNoticeText": "Gemäß §§ 67–70 ZVG kann im Versteigerungstermin für ein Gebot Sicherheit verlangt werden. Die Sicherheit beträgt in der Regel 10 % des Verkehrswertes und ist sofort zu leisten. Barzahlung ist ausgeschlossen; Bietvollmachten müssen öffentlich beglaubigt sein.",
     "neighborhoodCharacter": "Lage",
@@ -821,6 +1140,10 @@
     "roadAccess": "Straße",
     "nearestMajorRoad": "Nächste größere Straße",
     "nearestRail": "Bahn/Tram",
+    "regionalRailConnection": "Regionalzug-Anbindung",
+    "nationalRailConnection": "Fernverkehr (bundesweit)",
+    "railConnectionAvailable": "vorhanden",
+    "railConnectionNotDetected": "nicht kartiert",
     "ferryAccess": "Fähre",
     "ferryRouteNearby": "Fährroute im Umfeld",
     "publicTransportStops": "{near} ÖPNV-Halte im 1-km-Umfeld, {wider} im 3-km-Umfeld.",
@@ -878,6 +1201,34 @@
       "extremely_poor": "extrem schlecht",
       "unknown": "unbekannt"
     },
+    "climateTitle": "Klima",
+    "climateMonth": "Monat",
+    "climateTempMax": "Mittlere Höchsttemperatur",
+    "climateTempMean": "Mitteltemperatur",
+    "climateTempMin": "Mittlere Nachttemperatur",
+    "climatePrecipitation": "Niederschlag",
+    "climateNormalsHint": "Klimanormalwerte ({start}–{end}), je Kalendermonat gemittelt aus dem Open-Meteo-Archiv (ERA5-Land-Reanalyse, ca. 9-11 km Raster) — ein Normalwert, keine Vorhersage, und beschreibt die Umgebung, nicht das Grundstück selbst.",
+    "leisureTourismTitle": "Freizeit & Tourismus",
+    "leisureTourismProfile": {
+      "eigennutzung": "Eigennutzung",
+      "wirtschaftlich": "Wirtschaftliche Nutzung"
+    },
+    "leisureTourismBand": {
+      "sehr_gut": "sehr gut",
+      "gut": "gut",
+      "maessig": "mäßig",
+      "gering": "gering",
+      "keine_angaben": "keine Angaben"
+    },
+    "leisureTourismSki": "Skigebiet",
+    "leisureTourismSea": "Meer",
+    "leisureTourismSwimming": "Badestelle",
+    "leisureTourismWater": "Gewässer",
+    "leisureTourismHiking": "Wanderwege",
+    "leisureTourismDensity": "Touristische Betriebe (10 km)",
+    "leisureTourismAttractions": "Sehenswürdigkeiten (30 km)",
+    "leisureTourismUnavailable": "Für dieses Objekt liegen noch keine Freizeit- und Tourismus-Kennzahlen vor.",
+    "leisureTourismDisclaimer": "Automatisch aus OpenStreetMap-Daten im Umkreis berechnet — kein Ersatz für eine eigene Vor-Ort-Prüfung.",
     "demographicSignalLevel": {
       "low": "schwach",
       "medium": "mittel",
@@ -1110,24 +1461,13 @@
     "developmentCharges": "Erschließungs-/Ausbaubeiträge",
     "redevelopmentArea": "Sanierungsgebiet",
     "conservationArea": "Erhaltungsgebiet",
-    "usageIdeasTitle": "Nutzungsideen",
-    "usageIdeasGenerate": "Nutzungsideen vorschlagen",
-    "usageIdeasPending": "Ideen werden erstellt …",
-    "usageIdeasError": "Nutzungsideen konnten nicht erstellt werden.",
-    "usageIdeasRetry": "Erneut versuchen",
-    "usageIdeasEmpty": "Keine Nutzungsideen erkennbar.",
-    "renovationCostTitle": "Sanierungskosten",
-    "renovationCostGenerate": "Sanierungskosten schätzen",
-    "renovationCostPending": "Schätzung wird erstellt …",
-    "renovationCostError": "Sanierungskosten konnten nicht geschätzt werden.",
-    "renovationCostRetry": "Erneut versuchen",
-    "renovationCostEmpty": "Kein nennenswerter Sanierungsbedarf erkennbar.",
     "gallery": {
       "close": "Schließen"
     }
   },
   "lotPopover": {
     "loadingPhotos": "Lade Fotos …",
+    "loadError": "Objektdetails konnten nicht geladen werden.",
     "untitled": "Objekt",
     "auctionDate": "Termin",
     "marketValue": "Verkehrswert",

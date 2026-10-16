@@ -10,10 +10,9 @@ describe('extractByRules', () => {
     expect(r.propertyType).toBe('einfamilienhaus')
     expect(r.livingAreaSqm).toBe(140)
     expect(r.landAreaSqm).toBe(620)
-    expect(r.confident).toBe(true)
   })
 
-  it('is confident with a known type and a single area (Eigentumswohnung)', () => {
+  it('extracts type, area and rooms for an Eigentumswohnung', () => {
     const r = extractByRules({
       title: 'Eigentumswohnung',
       description: 'Wohnfläche 98 m², 3 Zimmer',
@@ -22,7 +21,6 @@ describe('extractByRules', () => {
     expect(r.livingAreaSqm).toBe(98)
     expect(r.landAreaSqm).toBeNull()
     expect(r.rooms).toBe(3)
-    expect(r.confident).toBe(true)
   })
 
   it('classifies from the description when title is empty', () => {
@@ -34,7 +32,6 @@ describe('extractByRules', () => {
     expect(r.propertyType).toBe('mehrfamilienhaus')
     expect(r.units).toBe(3)
     expect(r.livingAreaSqm).toBe(240)
-    expect(r.confident).toBe(true)
   })
 
   it('prefers the title field over prose in the description', () => {
@@ -42,6 +39,15 @@ describe('extractByRules', () => {
       title: 'Eigentumswohnung',
       description:
         'Eigentumswohnung im 3. OG eines Mehrfamilienhauses, Wohnfläche 75 m²',
+    })
+    expect(r.propertyType).toBe('eigentumswohnung')
+  })
+
+  it('classifies a room-count title over a "Mehrfamilienhaus" mention in the description', () => {
+    const r = extractByRules({
+      title: '2-Zimmerwohnung Nr. 7, Zum Wiegele 20, 74865 Neckarzimmern',
+      description:
+        'Sondereigentum an der Wohnung im Dachgeschoss links, Wohnfläche ca. 68 m², in einem Mehrfamilienhaus.',
     })
     expect(r.propertyType).toBe('eigentumswohnung')
   })
@@ -70,21 +76,18 @@ describe('extractByRules', () => {
     })
     expect(r.propertyType).toBe('land-forst')
     expect(r.landAreaSqm).toBe(25000)
-    expect(r.confident).toBe(true)
   })
 
-  it('is not confident when the type is known but no area is found', () => {
+  it('finds no area when the type is known but none is stated', () => {
     const r = extractByRules({ title: 'Einfamilienhaus', description: null })
     expect(r.propertyType).toBe('einfamilienhaus')
     expect(r.livingAreaSqm).toBeNull()
     expect(r.landAreaSqm).toBeNull()
-    expect(r.confident).toBe(false)
   })
 
-  it('returns null type and not-confident for empty input', () => {
+  it('returns a null type for empty input', () => {
     const r = extractByRules({ title: null, description: null })
     expect(r.propertyType).toBeNull()
-    expect(r.confident).toBe(false)
   })
 
   it('extracts areas from Swedish Kronofogden Markarealen prose', () => {
@@ -121,7 +124,6 @@ describe('extractByRules — unlabeled area fallback', () => {
     const r = extractByRules({ title: 'Einfamilienhaus, 850 m²', description: null })
     expect(r.livingAreaSqm).toBeNull()
     expect(r.landAreaSqm).toBeNull()
-    expect(r.confident).toBe(false)
   })
   it('prefers the labeled area over the bare fallback', () => {
     const r = extractByRules({

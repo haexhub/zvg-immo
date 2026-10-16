@@ -121,7 +121,7 @@ function stubFetch(responses: Record<string, Buffer | string>): void {
       const body = responses[url]
       if (body == null) throw new Error(`unstubbed URL: ${url}`)
       const bytes = typeof body === 'string' ? Buffer.from(body, 'utf8') : body
-      return new Response(bytes, { status: 200 })
+      return new Response(Uint8Array.from(bytes), { status: 200 })
     }),
   )
 }
@@ -140,6 +140,15 @@ describe('pickDocumentImageCandidates', () => {
     ])
 
     expect(candidates.map((a) => a.filename)).toEqual(['Foto.pdf', 'notice.docx', 'page.html'])
+  })
+
+  it('skips attachments flagged as covering multiple auction lots', () => {
+    const candidates = pickDocumentImageCandidates([
+      attachment({ kind: 'brochure', filename: 'katalog.pdf', excludeFromDocumentMining: true }),
+      attachment({ kind: 'appraisal', filename: 'gutachten.pdf' }),
+    ])
+
+    expect(candidates.map((a) => a.filename)).toEqual(['gutachten.pdf'])
   })
 })
 
@@ -223,6 +232,20 @@ describe('extractDocumentPhotos', () => {
 
     expect(files).toHaveLength(1)
     expect(files.every((file) => /^[0-9a-f]{16}\.png$/.test(file))).toBe(true)
+  })
+
+  it('keeps the default image cap for HTML documents when no maxPhotos is given', async () => {
+    const images = Array.from({ length: 14 }, (_, i) => `https://example.test/p${i}.png`)
+    stubFetch({
+      'https://example.test/docs/page.html': images.map((url) => `<img src="${url}">`).join(''),
+      ...Object.fromEntries(images.map((url, i) => [url, png(1200, 800, 20 + i)])),
+    })
+
+    const files = await extractDocumentPhotos([
+      attachment({ kind: 'brochure', filename: 'page.html', proxyUrl: 'https://example.test/docs/page.html' }),
+    ], { destDir })
+
+    expect(files).toHaveLength(12)
   })
 
   it('skips HTML image URLs that resolve to non-public addresses', async () => {

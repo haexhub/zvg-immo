@@ -5,7 +5,8 @@ vi.mock('~/server/utils/llm-batch-jobs', () => ({
   listRecentLlmBatchJobs: vi.fn(),
   getAllLlmBatchCapabilities: vi.fn(),
 }))
-vi.mock('~/server/utils/extraction-cache', () => ({ readExtractionCache: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => ({ readAuctionRecords: vi.fn() }))
+vi.mock('~/server/utils/auction-fetch-state', () => ({ readAuctionFetchStates: vi.fn(async () => new Map()) }))
 vi.mock('~/server/utils/extract/gemini-batch', () => ({ isGeminiBatchTierPaid: vi.fn() }))
 vi.mock('~/server/utils/task-runs', () => ({ getTaskRunStatus: vi.fn() }))
 
@@ -18,6 +19,22 @@ const IDLE_REPROCESS_STATUS = {
   lastWarning: null,
   lastLlmError: null,
   progress: null,
+  progressByCountry: null,
+}
+
+function record(key: string, extraction: Record<string, unknown> | undefined, country = 'de', cancelled = false) {
+  const separator = key.indexOf(':')
+  return {
+    detailsId: 1,
+    detailsVersion: 1,
+    auction: {
+      platform: key.slice(0, separator),
+      externalId: key.slice(separator + 1),
+      country,
+      extraction,
+      cancelled,
+    },
+  } as never
 }
 
 afterEach(() => {
@@ -31,7 +48,8 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readAuctionFetchStates } = await import('~/server/utils/auction-fetch-state')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
@@ -47,6 +65,9 @@ describe('/api/settings/llm-batch-jobs', () => {
         checkedAt: null,
         updatedAt: '2026-07-26T18:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
     ] as const
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([...pendingJobs])
@@ -62,18 +83,29 @@ describe('/api/settings/llm-batch-jobs', () => {
         checkedAt: '2026-07-25T19:00:00.000Z',
         updatedAt: '2026-07-25T19:00:00.000Z',
         errorMessage: null,
+        provider: null,
+        model: null,
+        profileId: null,
       },
     ])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({
       'gemini-native': { ok: false, message: 'FAILED_PRECONDITION: Precondition check failed.', checkedAt: '2026-07-26T18:00:00.000Z', source: 'enrich' },
     })
-    vi.mocked(readExtractionCache).mockResolvedValue({
-      'zvg-portal:1': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:2': { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:3': { at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:4': { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' } as never,
-      'zvg-portal:5': { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' } as never,
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('zvg-portal:1', { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:2', { llmBatchJob: 'msgbatch_abc', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:3', { at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:4', { source: 'rules', confidence: 'low', at: '2026-07-26T18:00:00.000Z' }),
+      record('zvg-portal:5', { llmBatchJob: 'deleted_job', at: '2026-07-26T18:00:00.000Z' }),
+      // Never run through even the rules-only fallback (brand-new crawl) —
+      // must still count toward readyRequests, not be silently dropped.
+      record('zvg-portal:6', undefined, 'se'),
+    ])
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['zvg-portal:1', { llmBatchJob: 'msgbatch_abc', llmFailures: 0 } as never],
+      ['zvg-portal:2', { llmBatchJob: 'msgbatch_abc', llmFailures: 0 } as never],
+      ['zvg-portal:5', { llmBatchJob: 'deleted_job', llmFailures: 0 } as never],
+    ]))
 
     const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
 
@@ -81,13 +113,18 @@ describe('/api/settings/llm-batch-jobs', () => {
       totalJobs: 1,
       totalRequests: 2,
       backlog: {
-        readyRequests: 2,
+        readyRequests: 3,
+        neverExtracted: 1,
         lowConfidenceRules: 1,
         missingLlmFields: 2,
         orphanedBatchMarkers: 1,
         failedLimit: 0,
-        sampleRequestKeys: ['zvg-portal:3', 'zvg-portal:4'],
+        sampleRequestKeys: ['zvg-portal:3', 'zvg-portal:4', 'zvg-portal:6'],
         orphanedRequestKeys: ['zvg-portal:5'],
+      },
+      backlogByCountry: {
+        de: { readyRequests: 2, failedLimit: 0 },
+        se: { readyRequests: 1, failedLimit: 0 },
       },
       jobs: [
         {
@@ -139,24 +176,95 @@ describe('/api/settings/llm-batch-jobs', () => {
       enrichStatus: IDLE_REPROCESS_STATUS,
       externalEnrichmentStatus: IDLE_REPROCESS_STATUS,
       offloadImagesStatus: IDLE_REPROCESS_STATUS,
+      copernicusEffisImportStatus: IDLE_REPROCESS_STATUS,
+      euFloodRiskImportStatus: IDLE_REPROCESS_STATUS,
+      eurostatTourismNutsImportStatus: IDLE_REPROCESS_STATUS,
     })
     expect(getTaskRunStatus).toHaveBeenCalledWith('reprocess')
     expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
     expect(getTaskRunStatus).toHaveBeenCalledWith('external-enrichment')
     expect(getTaskRunStatus).toHaveBeenCalledWith('offload-images')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('import-copernicus-effis-cache')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('import-eu-flood-risk-cache')
+    expect(getTaskRunStatus).toHaveBeenCalledWith('import-eurostat-tourism-nuts-cache')
+  })
+
+  it('excludes a cancelled auction from the backlog counts entirely', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readAuctionFetchStates } = await import('~/server/utils/auction-fetch-state')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('zvg-portal:1', undefined, 'de'), // never extracted, in scope
+      record('zvg-portal:2', undefined, 'de', true), // cancelled — must not inflate the backlog
+    ])
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as {
+      backlog: { readyRequests: number; neverExtracted: number; sampleRequestKeys: string[] }
+      backlogByCountry: Record<string, { readyRequests: number }>
+    }
+
+    expect(result.backlog.readyRequests).toBe(1)
+    expect(result.backlog.neverExtracted).toBe(1)
+    expect(result.backlog.sampleRequestKeys).toEqual(['zvg-portal:1'])
+    expect(result.backlogByCountry.de).toEqual({ readyRequests: 1, failedLimit: 0 })
+  })
+
+  it('maps an "openrouter_"-wrapped jobName to the openrouter provider, not openai', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const job = {
+      jobName: 'openrouter_batch_x',
+      source: 'reprocess',
+      status: 'pending',
+      itemCount: 1,
+      customIdMap: {},
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
+    } as const
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { jobs: Array<{ provider: string }> }
+
+    expect(result.jobs[0]?.provider).toBe('openrouter')
   })
 
   it('synthesizes a config-gated gemini-native capability when the free tier has never been attempted', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(false)
     vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
 
@@ -170,13 +278,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
     vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
 
@@ -190,13 +298,13 @@ describe('/api/settings/llm-batch-jobs', () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
       await import('~/server/utils/llm-batch-jobs')
-    const { readExtractionCache } = await import('~/server/utils/extraction-cache')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
     const { getTaskRunStatus } = await import('~/server/utils/task-runs')
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
     vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
     vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
-    vi.mocked(readExtractionCache).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
     vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
     const runningStatus = {
       status: 'running' as const,
@@ -207,6 +315,7 @@ describe('/api/settings/llm-batch-jobs', () => {
       lastWarning: null,
       lastLlmError: null,
       progress: null,
+      progressByCountry: null,
     }
     vi.mocked(getTaskRunStatus).mockResolvedValue(runningStatus)
 
@@ -214,5 +323,156 @@ describe('/api/settings/llm-batch-jobs', () => {
     const result = (await handler()) as { reprocessStatus: unknown }
 
     expect(result.reprocessStatus).toEqual(runningStatus)
+  })
+
+  it('caches the computed overview so rapid repeat polls skip the underlying scan', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    await handler()
+    await handler()
+
+    expect(readAuctionRecords).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets polls that overlap a running computation share it, and retries after a failure', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockRejectedValueOnce(new Error('db down')).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const failed = await Promise.allSettled([handler(), handler()])
+    expect(failed.map((r) => r.status)).toEqual(['rejected', 'rejected'])
+    expect(listPendingLlmBatchJobs).toHaveBeenCalledTimes(1)
+
+    await Promise.all([handler(), handler(), handler()])
+    expect(listPendingLlmBatchJobs).toHaveBeenCalledTimes(2)
+    expect(readAuctionRecords).toHaveBeenCalledTimes(1)
+  })
+
+  it('recomputes once the cache TTL has elapsed', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+      const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+        await import('~/server/utils/llm-batch-jobs')
+      const { readAuctionRecords } = await import('~/server/utils/auction-record')
+      const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+      const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+      vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+      vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+      vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+      vi.mocked(readAuctionRecords).mockResolvedValue([])
+      vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+      vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+      const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+      await handler()
+      vi.advanceTimersByTime(5000)
+      await handler()
+
+      expect(readAuctionRecords).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('caps the detailed jobs list without undercounting totalJobs/totalRequests', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const manyPendingJobs = Array.from({ length: 60 }, (_, i) => ({
+      jobName: `openrouter_batch_${i}`,
+      source: 'reprocess' as const,
+      status: 'pending' as const,
+      itemCount: 1,
+      customIdMap: {},
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
+    }))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue(manyPendingJobs)
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as { totalJobs: number; totalRequests: number; jobs: unknown[] }
+
+    expect(result.totalJobs).toBe(60)
+    expect(result.totalRequests).toBe(60)
+    expect(result.jobs).toHaveLength(50)
+  })
+
+  it('caps a single job\'s requestKeys without undercounting its pendingCount', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    const customIdMap = Object.fromEntries(
+      Array.from({ length: 500 }, (_, i) => [`request_${i}`, `zvg-portal:${i}`]),
+    )
+    const job = {
+      jobName: 'msgbatch_huge',
+      source: 'reprocess' as const,
+      status: 'pending' as const,
+      itemCount: 500,
+      customIdMap,
+      submittedAt: '2026-08-08T18:00:00.000Z',
+      checkedAt: null,
+      updatedAt: '2026-08-08T18:00:00.000Z',
+      errorMessage: null,
+      provider: null,
+      model: null,
+      profileId: null,
+    }
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([job])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(readAuctionRecords).mockResolvedValue([])
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as {
+      jobs: Array<{ pendingCount: number; requestKeys: string[] }>
+      recentJobs: Array<{ pendingCount: number; requestKeys: string[] }>
+    }
+
+    expect(result.jobs[0]?.pendingCount).toBe(500)
+    expect(result.jobs[0]?.requestKeys).toHaveLength(200)
+    expect(result.recentJobs[0]?.pendingCount).toBe(500)
+    expect(result.recentJobs[0]?.requestKeys).toHaveLength(200)
   })
 })

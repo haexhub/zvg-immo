@@ -12,10 +12,25 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { extname, join } from 'node:path'
 import { promisify } from 'node:util'
+import { maxOf, minOf } from '~/lib/array-math'
 import { fetchPdfBuffer } from './pdf-text'
 import { imageContentHash } from './image-bytes'
 
 const exec = promisify(execFile)
+
+// A malformed PDF can make poppler's CLI tools repeat one stderr line per
+// corrupt object (seen: a single file producing >1MB of "Unknown compression
+// method in flate stream" lines) — execFile's rejection captures that stderr
+// verbatim into err.message, which would otherwise ride along unbounded into
+// task_run_errors / the /settings status overview on every enrich failure.
+const MAX_EXEC_ERROR_MESSAGE_LENGTH = 1000
+
+export function execErrorMessage(err: unknown): string {
+  const message = (err as Error).message
+  if (message.length <= MAX_EXEC_ERROR_MESSAGE_LENGTH) return message
+  const suffix = `… (${message.length} chars total, truncated)`
+  return message.slice(0, MAX_EXEC_ERROR_MESSAGE_LENGTH - suffix.length) + suffix
+}
 
 export const DEFAULT_FILTER = {
   minWidth: 400,
@@ -225,17 +240,17 @@ export function findFragmentedImageClusters(
       const keys = nums.map((num) => imageKey(page.page, num))
       if (!keys.some((key) => wantedKeys.has(key))) continue
 
-      const left = Math.max(0, Math.min(...group.map((img) => img.left)) - CLUSTER_CROP_PADDING)
-      const top = Math.max(0, Math.min(...group.map((img) => img.top)) - CLUSTER_CROP_PADDING)
-      const right = Math.min(page.width, Math.max(...group.map((img) => img.left + img.width)) + CLUSTER_CROP_PADDING)
-      const bottom = Math.min(page.height, Math.max(...group.map((img) => img.top + img.height)) + CLUSTER_CROP_PADDING)
+      const left = Math.max(0, minOf(group.map((img) => img.left)) - CLUSTER_CROP_PADDING)
+      const top = Math.max(0, minOf(group.map((img) => img.top)) - CLUSTER_CROP_PADDING)
+      const right = Math.min(page.width, maxOf(group.map((img) => img.left + img.width)) + CLUSTER_CROP_PADDING)
+      const bottom = Math.min(page.height, maxOf(group.map((img) => img.top + img.height)) + CLUSTER_CROP_PADDING)
       const width = right - left
       const height = bottom - top
       if (width < FRAGMENTED_CLUSTER.minWidth || height < FRAGMENTED_CLUSTER.minHeight) continue
       if (nums.length === 0) continue
       clusters.push({
         page: page.page,
-        num: Math.min(...nums),
+        num: minOf(nums),
         left,
         top,
         width,
@@ -348,7 +363,7 @@ async function renderImageCluster(
     )
     return await readFile(outputPath)
   } catch (err) {
-    throw new Error(`PDF image cluster render failed: ${(err as Error).message}`)
+    throw new Error(`PDF image cluster render failed: ${execErrorMessage(err)}`)
   }
 }
 
@@ -382,7 +397,7 @@ export async function extractPdfPhotos(
       })
       listOut = stdout
     } catch (err) {
-      throw new Error(`pdfimages -list failed: ${(err as Error).message}`)
+      throw new Error(`pdfimages -list failed: ${execErrorMessage(err)}`)
     }
     const imageList = parseImageList(listOut)
     const wanted = filterImages(imageList)
@@ -403,7 +418,7 @@ export async function extractPdfPhotos(
           maxBuffer: 50 * 1024 * 1024,
         })
       } catch (err) {
-        throw new Error(`pdfimages extraction failed: ${(err as Error).message}`)
+        throw new Error(`pdfimages extraction failed: ${execErrorMessage(err)}`)
       }
     }
 
@@ -442,24 +457,28 @@ export async function extractPdfPhotos(
       if (aLandscape !== bLandscape) return aLandscape - bLandscape
       return a.page - b.page || a.num - b.num
     })
+    const maxPhotos = opts.maxPhotos ?? Number.POSITIVE_INFINITY
     const withBytes: { file: string; bytes: Buffer; hash: string }[] = []
+    const seenHashes = new Set<string>()
     let clusterIndex = 0
     for (const entry of sorted) {
+      // Stop reading/rendering once enough distinct photos are buffered.
+      if (seenHashes.size >= maxPhotos) break
+      let file = `cluster-${entry.page}-${entry.num}.jpg`
+      let bytes: Buffer
       if (entry.kind === 'cluster') {
-        const bytes = await renderImageCluster(inputPath, workDir, entry.cluster, clusterIndex)
-        clusterIndex += 1
-        const hash = imageContentHash(bytes)
-        withBytes.push({ file: `cluster-${entry.cluster.page}-${entry.cluster.num}.jpg`, bytes, hash })
+        bytes = await renderImageCluster(inputPath, workDir, entry.cluster, clusterIndex++)
       } else {
-        const info = entry.info
-        const file = fileByPageNum.get(`${info.page}:${info.num}`)
-        if (!file) continue
-        const bytes = await readFile(join(workDir, file))
-        const hash = imageContentHash(bytes)
-        withBytes.push({ file, bytes, hash })
+        const extracted = fileByPageNum.get(`${entry.page}:${entry.num}`)
+        if (!extracted) continue
+        file = extracted
+        bytes = await readFile(join(workDir, file))
       }
+      const hash = imageContentHash(bytes)
+      seenHashes.add(hash)
+      withBytes.push({ file, bytes, hash })
     }
-    const deduped = dedupByHash(withBytes).slice(0, opts.maxPhotos ?? Number.POSITIVE_INFINITY)
+    const deduped = dedupByHash(withBytes).slice(0, maxPhotos)
     if (deduped.length === 0) return []
 
     await mkdir(opts.destDir, { recursive: true })

@@ -7,8 +7,8 @@ vi.mock('h3', () => ({
   setResponseStatus: vi.fn(),
 }))
 
-vi.mock('~/server/utils/auction-snapshot', () => ({
-  readAuctionSnapshot: vi.fn(),
+vi.mock('~/server/utils/auction-record', () => ({
+  readAuctionRecord: vi.fn(),
 }))
 
 vi.mock('~/server/utils/db', () => ({
@@ -28,6 +28,7 @@ vi.mock('~/server/utils/app-settings', () => ({
   getLlmMaxTokens: vi.fn(),
   getLlmProviderOverride: vi.fn(),
   getLlmProviderOverrideChain: vi.fn(),
+  getLlmKillSwitch: vi.fn(),
 }))
 
 vi.mock('~/server/utils/extract/llm', async (importOriginal) => {
@@ -93,8 +94,6 @@ function auction(overrides: Partial<Auction> = {}): Auction {
         conservationArea: null,
         landParcels: [{ label: 'Ljusdal Nor 1:5', areaSqm: 1775, use: 'Småhusenhet, bebyggd' }],
       },
-      documentSetHash: 'doc-hash',
-      documentSetVersion: 1,
     },
     ...overrides,
   }
@@ -108,9 +107,9 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
     trustForwardedFor: '0',
     extractLlm: { provider: 'openai-compatible', baseUrl: 'https://api.example', model: 'gpt' },
   }))
-  vi.stubGlobal('createError', (input: { statusCode: number, statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+  vi.stubGlobal('createError', (input: { statusCode: number, statusMessage?: string, message?: string }) => Object.assign(new Error(input.message ?? input.statusMessage), input))
 
-  const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+  const { readAuctionRecord } = await import('~/server/utils/auction-record')
   const { getPool } = await import('~/server/utils/db')
   const {
     readAuctionTranslation,
@@ -120,10 +119,15 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
     readContentTranslation,
     writeContentTranslation,
   } = await import('~/server/utils/content-translation')
-  const { getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
+  const { getLlmKillSwitch, getLlmMaxTokens, getLlmProviderOverride, getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
   const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
 
-  vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'se-kronofogden:101738': auction() })
+  vi.mocked(readAuctionRecord).mockResolvedValue({
+    auction: auction(),
+    detailsId: 1,
+    detailsVersion: 1,
+    artifactVersionId: null,
+  })
   vi.mocked(getPool).mockReturnValue({} as Pool)
   vi.mocked(readAuctionTranslation).mockResolvedValue(null)
   vi.mocked(claimAuctionTranslation).mockResolvedValue(CLAIM)
@@ -134,6 +138,7 @@ async function loadHandler(query: Record<string, string> = { lang: 'de' }) {
   vi.mocked(getLlmProviderOverride).mockResolvedValue(null)
   vi.mocked(getLlmProviderOverrideChain).mockResolvedValue([])
   vi.mocked(getLlmMaxTokens).mockResolvedValue(8192)
+  vi.mocked(getLlmKillSwitch).mockResolvedValue(false)
   vi.mocked(resolveLlmConfig).mockReturnValue({
     provider: 'openai-compatible',
     baseUrl: 'https://api.example',
@@ -209,6 +214,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       payload,
@@ -219,7 +225,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { readAuctionTranslation, claimAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const cached = {
       contentHash: auctionTranslationContentHash(auction()),
       status: 'completed' as const,
@@ -259,7 +265,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       claimAuctionTranslation,
     } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
-    const { auctionTranslationContentHash } = await import('./translation.post')
+    const { auctionTranslationContentHash } = await import('~/server/utils/auction-translation')
     const expectedContentHash = auctionTranslationContentHash(auction())
     const payload = {
       title: 'Fresh title for changed content',
@@ -293,6 +299,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       expectedContentHash,
     )
@@ -302,6 +309,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       payload,
@@ -328,13 +336,13 @@ describe('/api/auction/:platform/:id/translation', () => {
       extractionTexts: null,
     })
 
-    await expect(handler({
+    const error = await handler({
       context: { params: { platform: 'se-kronofogden', id: '101738' } },
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
-    })).rejects.toMatchObject({
-      statusCode: 502,
-      data: { detail: 'Provider nicht erreichbar' },
-    })
+    }).catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({ statusCode: 502, message: 'Übersetzung fehlgeschlagen.' })
+    expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
     expect(callTranslationLlm).not.toHaveBeenCalled()
@@ -361,13 +369,13 @@ describe('/api/auction/:platform/:id/translation', () => {
       extractionTexts: null,
     })
 
-    await expect(handler({
+    const error = await handler({
       context: { params: { platform: 'se-kronofogden', id: '101738' } },
       node: { req: { socket: { remoteAddress: '127.0.0.1' } } },
-    })).rejects.toMatchObject({
-      statusCode: 502,
-      data: { detail: 'Provider nicht erreichbar' },
-    })
+    }).catch((cause: unknown) => cause)
+
+    expect(error).toMatchObject({ statusCode: 502, message: 'Übersetzung fehlgeschlagen.' })
+    expect(JSON.stringify(error)).not.toContain('Provider nicht erreichbar')
 
     expect(claimAuctionTranslation).not.toHaveBeenCalled()
     expect(callTranslationLlm).not.toHaveBeenCalled()
@@ -433,6 +441,7 @@ describe('/api/auction/:platform/:id/translation', () => {
       expect.anything(),
       'se-kronofogden',
       '101738',
+      1,
       'de',
       CLAIM,
       expect.any(String),
@@ -572,7 +581,8 @@ describe('/api/auction/:platform/:id/translation', () => {
   it('falls back to the next configured model when the primary is unavailable', async () => {
     const { callTranslationLlm } = await import('~/server/utils/extract/text-llm')
     const { getLlmProviderOverrideChain } = await import('~/server/utils/app-settings')
-    const { resolveLlmConfig, LlmProviderError } = await import('~/server/utils/extract/llm')
+    const { resolveLlmConfig } = await import('~/server/utils/extract/llm')
+    const { LlmProviderError } = await import('~/server/utils/extract/llm-errors')
     const { completeAuctionTranslation, failAuctionTranslation } = await import('~/server/utils/content-translation')
     const handler = await loadHandler()
 
@@ -611,7 +621,7 @@ describe('/api/auction/:platform/:id/translation', () => {
     expect((vi.mocked(callTranslationLlm).mock.calls[1]![7] as { model: string }).model).toBe('gemini-3.1-flash-lite')
     expect(failAuctionTranslation).not.toHaveBeenCalled()
     expect(completeAuctionTranslation).toHaveBeenCalledWith(
-      expect.anything(), 'se-kronofogden', '101738', 'de', CLAIM, payload,
+      expect.anything(), 'se-kronofogden', '101738', 1, 'de', CLAIM, payload,
     )
   })
 

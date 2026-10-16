@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildParts,
-  clampExtraction,
   extractByLlm,
-  isRateLimitError,
-  parseExtractionResponse,
   resolveLlmConfig,
+} from './llm'
+import { clampExtraction, coerceRulesHint } from './llm-clamp'
+import {
+  isDailyQuotaError,
+  isRateLimitError,
+} from './llm-errors'
+import {
+  DOCUMENT_SUMMARY_SCHEMA,
+  DOCUMENT_SUMMARY_SCHEMA_NAME,
+  DOCUMENT_SUMMARY_SYSTEM_PROMPT,
   SYSTEM_PROMPT,
   UNIVERSAL_AUCTION_SCHEMA,
   UNIVERSAL_AUCTION_SCHEMA_ID,
   UNIVERSAL_AUCTION_SCHEMA_NAME,
   UNIVERSAL_AUCTION_SCHEMA_VERSION,
-} from './llm'
+} from './llm-schema'
+import { parseExtractionResponse } from './providers/claude-proxy'
 
 describe('isRateLimitError', () => {
   it('recognizes an HTTP 429 $fetch error', () => {
@@ -22,6 +30,51 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError(Object.assign(new Error('http 500'), { response: { status: 500 } }))).toBe(false)
     expect(isRateLimitError(new Error('network error'))).toBe(false)
     expect(isRateLimitError(null)).toBe(false)
+  })
+})
+
+describe('isDailyQuotaError', () => {
+  // Shape observed from the live API on 2026-07-31, when the free tier's
+  // 500-requests-per-day cap was reached.
+  function quotaError(quotaId: string, status = 429) {
+    return Object.assign(new Error(`http ${status}`), {
+      response: { status },
+      data: {
+        error: {
+          code: status,
+          status: 'RESOURCE_EXHAUSTED',
+          details: [
+            { '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId, quotaValue: '500' }] },
+            { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '28s' },
+          ],
+        },
+      },
+    })
+  }
+
+  it('recognizes a per-day quota', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier'))).toBe(true)
+  })
+
+  // A per-minute limit clears within seconds, so retrying it is right and this
+  // must not report it as exhausted for the whole run.
+  it('does not treat a per-minute rate limit as a daily quota', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerMinutePerProjectPerModel-FreeTier'))).toBe(false)
+  })
+
+  it('requires a 429 — the same body on another status is not a quota verdict', () => {
+    expect(isDailyQuotaError(quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier', 503))).toBe(false)
+  })
+
+  // Providers that report no quota details keep their previous retry
+  // behaviour rather than being guessed at.
+  it('stays false for a bare 429 and for malformed bodies', () => {
+    expect(isDailyQuotaError(Object.assign(new Error('http 429'), { response: { status: 429 } }))).toBe(false)
+    expect(isDailyQuotaError(Object.assign(new Error('http 429'), {
+      response: { status: 429 },
+      data: { error: { details: 'nope' } },
+    }))).toBe(false)
+    expect(isDailyQuotaError(null)).toBe(false)
   })
 })
 
@@ -53,11 +106,56 @@ describe('extractByLlm', () => {
     expect(result).toBeNull()
     expect(onProviderError).not.toHaveBeenCalled()
   })
+
+  // Map-reduce (reprocess-map-reduce.ts) calls extractByLlm with a smaller
+  // per-document schema/prompt instead of the universal auction one — this
+  // is the override path that makes that possible without a parallel
+  // extract-call implementation.
+  it('sends an overridden schema/systemPrompt/name instead of the universal defaults', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ propertyType: 'eigentumswohnung' }) } }],
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    const customSchema = { type: 'object', properties: { propertyType: { type: 'string' } } }
+    const result = await extractByLlm(
+      { title: 'Titel', description: 'Beschreibung' },
+      { baseUrl: 'https://openai.example', model: 'gpt' },
+      { schema: customSchema, systemPrompt: 'custom prompt', name: 'document_summary' },
+    )
+    expect(result?.propertyType).toBe('eigentumswohnung')
+    const body = fetchMock.mock.calls[0]![1].body as {
+      messages: { role: string; content: unknown }[]
+      response_format: { json_schema: { name: string; schema: unknown } }
+    }
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'custom prompt' })
+    expect(body.response_format.json_schema.name).toBe('document_summary')
+    expect(body.response_format.json_schema.schema).toBe(customSchema)
+  })
+
+  it('falls back to the universal schema/prompt/name when no override is passed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify({ propertyType: 'eigentumswohnung' }) } }],
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    await extractByLlm(
+      { title: 'Titel', description: 'Beschreibung' },
+      { baseUrl: 'https://openai.example', model: 'gpt' },
+    )
+    const body = fetchMock.mock.calls[0]![1].body as {
+      messages: { role: string; content: unknown }[]
+      response_format: { json_schema: { name: string; schema: unknown } }
+    }
+    expect(body.messages[0]).toEqual({ role: 'system', content: SYSTEM_PROMPT })
+    expect(body.response_format.json_schema.name).toBe(UNIVERSAL_AUCTION_SCHEMA_NAME)
+    expect(body.response_format.json_schema.schema).toBe(UNIVERSAL_AUCTION_SCHEMA)
+  })
 })
 
 describe('universal auction extraction schema', () => {
   it('exposes the canonical schema identity and required fields', () => {
-    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(2)
+    expect(UNIVERSAL_AUCTION_SCHEMA_VERSION).toBe(3)
+    // The provider-facing name carries the version, so the two can't drift.
+    expect(UNIVERSAL_AUCTION_SCHEMA_NAME).toBe(`universal_auction_extraction_v${UNIVERSAL_AUCTION_SCHEMA_VERSION}`)
     expect(UNIVERSAL_AUCTION_SCHEMA_ID).toContain(UNIVERSAL_AUCTION_SCHEMA_NAME)
     expect(UNIVERSAL_AUCTION_SCHEMA).toMatchObject({
       type: 'object',
@@ -66,6 +164,19 @@ describe('universal auction extraction schema', () => {
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('propertyType')
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('documentSummary')
     expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('bathroomHasShower')
+    expect(UNIVERSAL_AUCTION_SCHEMA.required).toContain('ruleCheck')
+    expect(UNIVERSAL_AUCTION_SCHEMA.properties.ruleCheck.required).toEqual([
+      'propertyType',
+      'rooms',
+      'units',
+      'securityDeposit',
+    ])
+    expect(UNIVERSAL_AUCTION_SCHEMA.properties.documentSummary.maxLength).toBe(1200)
+  })
+
+  it('instructs the LLM to verify rules-provided values via ruleCheck', () => {
+    expect(SYSTEM_PROMPT).toContain('ruleCheck')
+    expect(SYSTEM_PROMPT).toContain('Automatisch (regelbasiert) vorermittelte')
   })
 
   it('instructs the LLM to normalize country-specific text into the universal JSON format', () => {
@@ -74,6 +185,35 @@ describe('universal auction extraction schema', () => {
     expect(SYSTEM_PROMPT).toContain('spanisch')
     expect(SYSTEM_PROMPT).toContain('Enum-Werte exakt')
     expect(SYSTEM_PROMPT).toContain('gibst du auf Deutsch zurück')
+  })
+})
+
+describe('document summary schema (map-reduce)', () => {
+  // Drift guard: every property/required field must come from
+  // UNIVERSAL_AUCTION_SCHEMA except the two deliberate omissions, so a future
+  // field added to the universal schema either shows up here too or this
+  // test forces a conscious decision about it.
+  it('mirrors the universal schema minus ruleCheck and photos', () => {
+    const universalKeys = Object.keys(UNIVERSAL_AUCTION_SCHEMA.properties)
+    const summaryKeys = Object.keys(DOCUMENT_SUMMARY_SCHEMA.properties)
+    expect(summaryKeys).toEqual(universalKeys.filter((k) => k !== 'ruleCheck' && k !== 'photos'))
+    expect(DOCUMENT_SUMMARY_SCHEMA.required).toEqual(
+      UNIVERSAL_AUCTION_SCHEMA.required.filter((f) => f !== 'ruleCheck' && f !== 'photos'),
+    )
+    expect(DOCUMENT_SUMMARY_SCHEMA).toMatchObject({ type: 'object', additionalProperties: false })
+    expect(DOCUMENT_SUMMARY_SCHEMA_NAME).toBe('document_summary_v1')
+  })
+
+  it('shrinks documentSummary to a per-document length instead of the whole-auction one', () => {
+    expect(DOCUMENT_SUMMARY_SCHEMA.properties.documentSummary.maxLength).toBe(600)
+    expect(DOCUMENT_SUMMARY_SCHEMA.properties.documentSummary.maxLength).toBeLessThan(
+      UNIVERSAL_AUCTION_SCHEMA.properties.documentSummary.maxLength,
+    )
+  })
+
+  it('tells the model this is one of several documents for the same auction', () => {
+    expect(DOCUMENT_SUMMARY_SYSTEM_PROMPT).toContain('eines von mehreren')
+    expect(DOCUMENT_SUMMARY_SYSTEM_PROMPT).not.toContain('ruleCheck')
   })
 })
 
@@ -131,6 +271,7 @@ describe('clampExtraction', () => {
       heating: 'Gaszentralheizung',
       units: 1,
       securityDeposit: 5000,
+      ruleCheck: null,
       biddingNotes: 'Abweichende Sicherheitsleistung von 5.000 EUR gefordert.',
       condition: 'gepflegt',
       features: ['balkon', 'garage'],
@@ -171,6 +312,7 @@ describe('clampExtraction', () => {
       heating: null,
       units: null,
       securityDeposit: null,
+      ruleCheck: null,
       biddingNotes: null,
       condition: null,
       features: [],
@@ -236,6 +378,50 @@ describe('clampExtraction', () => {
 
   it('keeps a plausible securityDeposit', () => {
     expect(clampExtraction({ securityDeposit: 3000 }).securityDeposit).toBe(3000)
+  })
+
+  it('keeps a ruleCheck verdict with at least one non-null field', () => {
+    expect(clampExtraction({ ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null } }).ruleCheck).toEqual({
+      propertyType: false,
+      rooms: null,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('nulls a ruleCheck object with no boolean fields at all', () => {
+    expect(clampExtraction({ ruleCheck: { propertyType: null, rooms: null, units: null, securityDeposit: null } }).ruleCheck).toBeNull()
+    expect(clampExtraction({ ruleCheck: {} }).ruleCheck).toBeNull()
+  })
+
+  it('keeps a rules hint with at least one usable value', () => {
+    expect(coerceRulesHint({ propertyType: 'eigentumswohnung', rooms: 2, units: null, securityDeposit: null })).toEqual({
+      propertyType: 'eigentumswohnung',
+      rooms: 2,
+      units: null,
+      securityDeposit: null,
+    })
+  })
+
+  it('coerces a rules hint field by field instead of discarding the whole snapshot', () => {
+    expect(coerceRulesHint({ propertyType: 7, rooms: '2', units: 3, securityDeposit: Number.NaN })).toEqual({
+      propertyType: null,
+      rooms: null,
+      units: 3,
+      securityDeposit: null,
+    })
+  })
+
+  it('nulls an empty or non-object rules hint', () => {
+    expect(coerceRulesHint({ propertyType: null, rooms: null, units: null, securityDeposit: null })).toBeNull()
+    expect(coerceRulesHint(null)).toBeNull()
+    expect(coerceRulesHint('eigentumswohnung')).toBeNull()
+    expect(coerceRulesHint([])).toBeNull()
+  })
+
+  it('nulls junk ruleCheck input', () => {
+    expect(clampExtraction({ ruleCheck: 'yes' as unknown as object }).ruleCheck).toBeNull()
+    expect(clampExtraction({ ruleCheck: { propertyType: 'true' as unknown as boolean } }).ruleCheck).toBeNull()
   })
 
   it('rejects a non-positive or absurd marketValueEur', () => {
@@ -384,15 +570,15 @@ describe('clampExtraction', () => {
   it('clamps photo curation entries: keeps valid ones, trims caption, falls back category/isPropertyPhoto', () => {
     const r = clampExtraction({
       photos: [
-        { photoIndex: 0, category: 'aussen', caption: '  Frontansicht  ', isPropertyPhoto: true },
-        { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
-        { photoIndex: 2, category: 'unknown-category', caption: 'x'.repeat(300), isPropertyPhoto: 'yes' },
+        { photoIndex: 0, category: 'aussen', caption: '  Frontansicht  ', isPropertyPhoto: true, appealScore: 92 },
+        { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false, appealScore: 4 },
+        { photoIndex: 2, category: 'unknown-category', caption: 'x'.repeat(300), isPropertyPhoto: 'yes', appealScore: 150 },
       ],
     })
     expect(r.photoCuration).toEqual([
-      { photoIndex: 0, category: 'aussen', caption: 'Frontansicht', isPropertyPhoto: true },
-      { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false },
-      { photoIndex: 2, category: 'sonstiges', caption: 'x'.repeat(200), isPropertyPhoto: false },
+      { photoIndex: 0, category: 'aussen', caption: 'Frontansicht', isPropertyPhoto: true, appealScore: 92 },
+      { photoIndex: 1, category: 'lageplan', caption: null, isPropertyPhoto: false, appealScore: 4 },
+      { photoIndex: 2, category: 'sonstiges', caption: 'x'.repeat(200), isPropertyPhoto: false, appealScore: 100 },
     ])
   })
 
@@ -415,7 +601,7 @@ describe('clampExtraction', () => {
         { photoIndex: 0, category: 'innen', caption: 'second', isPropertyPhoto: false },
       ],
     })
-    expect(r.photoCuration).toEqual([{ photoIndex: 0, category: 'aussen', caption: 'first', isPropertyPhoto: true }])
+    expect(r.photoCuration).toEqual([{ photoIndex: 0, category: 'aussen', caption: 'first', isPropertyPhoto: true, appealScore: 0 }])
   })
 
   it('caps photo curation at 60 entries', () => {
@@ -444,8 +630,48 @@ describe('buildParts', () => {
     ])
   })
 
+  it('keeps both the beginning and end of oversized document text within the extraction budget', () => {
+    const parts = buildParts({
+      title: null,
+      description: null,
+      pdfText: `BEGIN-${'a'.repeat(30_000)}-END`,
+    })
+    const text = (parts[0] as { text: string }).text
+    expect(text).toContain('BEGIN-')
+    expect(text).toContain('-END')
+    expect(text).toContain('[... Dokumentmitte aus Budgetgründen ausgelassen ...]')
+    expect(text.length).toBeLessThan(24_200)
+  })
+
   it('returns no parts for empty input', () => {
     expect(buildParts({ title: null, description: null })).toEqual([])
+  })
+
+  it('renders rulesHint as a labeled block for whichever fields are non-null', () => {
+    const parts = buildParts({
+      title: '2-Zimmerwohnung Nr. 7',
+      description: null,
+      rulesHint: { propertyType: 'mehrfamilienhaus', rooms: null, units: null, securityDeposit: 500 },
+    })
+    expect(parts).toEqual([
+      {
+        type: 'text',
+        text:
+          'Objektbezeichnung: 2-Zimmerwohnung Nr. 7\n\n' +
+          'Automatisch (regelbasiert) vorermittelte Werte zur Prüfung — können falsch sein, z. B. wenn ein ' +
+          'Begriff im Text das umgebende Gebäude statt das tatsächliche Versteigerungsobjekt meint:\n' +
+          'Objektart: mehrfamilienhaus\nSicherheitsleistung: 500',
+      },
+    ])
+  })
+
+  it('omits the rulesHint block entirely when every hinted field is null', () => {
+    const parts = buildParts({
+      title: 'Haus',
+      description: null,
+      rulesHint: { propertyType: null, rooms: null, units: null, securityDeposit: null },
+    })
+    expect(parts).toEqual([{ type: 'text', text: 'Objektbezeichnung: Haus' }])
   })
 
   it('appends one image part per page in pdfPageImages, in order', () => {
@@ -605,5 +831,17 @@ describe('resolveLlmConfig', () => {
 
   it('treats an unknown provider string as openai-compatible', () => {
     expect(resolveLlmConfig({ provider: 'bogus', baseUrl: 'https://api.example' })?.provider).toBe('openai-compatible')
+  })
+
+  it('preserves openrouter rather than collapsing it to openai-compatible — supportsLlmBatch/submitLlmBatch key off this exact value', () => {
+    expect(
+      resolveLlmConfig({ provider: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite' }),
+    ).toEqual({
+      provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-or-test',
+      model: 'google/gemini-3.5-flash-lite',
+      maxTokens: undefined,
+    })
   })
 })

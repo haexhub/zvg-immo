@@ -10,7 +10,17 @@ import type { Auction } from '~/types/auction'
 import { crawlAll } from '../crawlers/registry'
 import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
 import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
-import { geocodeAddress } from '../utils/geocode'
+import { activeGeocoderProvider, geocodeAddress, geocodeStatus } from '../utils/geocode'
+import { writeAuctionDetails } from '../utils/auction-details'
+import { applyAuctionExtraction } from '../utils/auction-extraction'
+import { mergeStoredAuction } from '../utils/auction-merge'
+import {
+  ensureAuctionIdentity,
+  recordGeocodeAttempts,
+  upsertCurrentAuctions,
+  type GeocodeAttempt,
+} from '../utils/current-auctions'
+import { readAuctionRecordMap } from '../utils/auction-record'
 import {
   cacheKey,
   readVerkehrswertCache,
@@ -18,6 +28,11 @@ import {
   type VerkehrswertCache,
 } from '../utils/verkehrswert-cache'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
+
+// Matches recordGeocodeAttempts' own chunk size, so a flush is exactly one
+// UPDATE statement.
+const GEOCODE_ATTEMPT_FLUSH_SIZE = 500
 
 // Guards against overlapping runs: a cold-start bootstrap run can take ~40 min
 // and would otherwise race a cron-triggered run of the same task (duplicate
@@ -28,6 +43,10 @@ export default defineTask({
     description: 'Crawl all registered regions and geocode addresses missing from the cache.',
   },
   async run() {
+    if (!await isAutomaticCrawlingEnabled()) {
+      console.log('[geocode] automatic crawling disabled — skipping scheduled/boot run')
+      return {}
+    }
     return await runExclusiveTask('geocode', runGeocode)
   },
 })
@@ -46,22 +65,47 @@ async function runGeocode(signal: AbortSignal) {
     let processed = 0
     let geocoded = 0
     let failed = 0
+    const provider = activeGeocoderProvider()
+    // Flushed in chunks rather than once at the end: a cold run takes ~40 min
+    // and gets aborted whenever a newer run supersedes it (runExclusiveTask)
+    // or the container redeploys — buffering everything would throw away the
+    // observability for exactly the long runs it exists for.
+    const attempts: GeocodeAttempt[] = []
+    const flushAttempts = async (): Promise<void> => {
+      if (attempts.length === 0) return
+      const pending = attempts.splice(0, attempts.length)
+      await recordGeocodeAttempts(pending, new Date().toISOString())
+    }
     const startGeo = Date.now()
-    for (const a of withAddress) {
-      throwIfTaskAborted(signal)
-      processed++
-      try {
-        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true })
-        if (point) geocoded++
-      } catch {
-        failed++
+    try {
+      for (const a of withAddress) {
+        throwIfTaskAborted(signal)
+        processed++
+        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true }).catch(() => {
+          failed++
+          return null
+        })
+        if (point) {
+          a.lat = point.lat
+          a.lng = point.lng
+          geocoded++
+        }
+        // Recorded regardless of outcome: "never attempted" vs "attempted, still
+        // unresolved" is only distinguishable in the DB once this run stamps it
+        // (see WP-3) — 'pending' means the cache still has un-queried variants
+        // (e.g. the failure cooldown skipped them this run).
+        const status = point ? 'geocoded' : await geocodeStatus(a.address, a.country)
+        attempts.push({ platform: a.platform, externalId: a.externalId, result: status, provider })
+        if (attempts.length >= GEOCODE_ATTEMPT_FLUSH_SIZE) await flushAttempts()
+        if (processed % 100 === 0 || processed === withAddress.length) {
+          const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
+          console.log(
+            `[geocode] ${processed}/${withAddress.length} · ${geocoded} hit · ${failed} err · ${rate.toFixed(1)}/s`,
+          )
+        }
       }
-      if (processed % 100 === 0 || processed === withAddress.length) {
-        const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
-        console.log(
-          `[geocode] ${processed}/${withAddress.length} · ${geocoded} hit · ${failed} err · ${rate.toFixed(1)}/s`,
-        )
-      }
+    } finally {
+      await flushAttempts()
     }
 
     // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the
@@ -78,21 +122,53 @@ async function runGeocode(signal: AbortSignal) {
     const vwErrors = vwAt.errors + vwBe.errors
     if (vwAdded > 0) await writeVerkehrswertCache(vwCache)
 
+    const persistedCoordinates = await persistGeocodedAuctions(
+      result.auctions.filter((a) => a.lat != null && a.lng != null),
+      signal,
+    )
+
     const durationMs = Date.now() - startedAt
     console.log(
-      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
+      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} persisted=${persistedCoordinates} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
     )
 
     return {
       result: {
         processed,
         geocoded,
+        persistedCoordinates,
         failed,
         verkehrswertAdded: vwAdded,
         verkehrswertErrors: vwErrors,
         durationMs,
       },
     }
+}
+
+async function persistGeocodedAuctions(auctions: Auction[], signal: AbortSignal): Promise<number> {
+  if (auctions.length === 0) return 0
+  await ensureAuctionIdentity(auctions)
+  const records = await readAuctionRecordMap()
+  const at = new Date().toISOString()
+  let persisted = 0
+
+  for (const auction of auctions) {
+    throwIfTaskAborted(signal)
+    try {
+      const record = records.get(cacheKey(auction.platform, auction.externalId))
+      if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
+      applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
+      const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
+        artifactVersionId: record?.artifactVersionId ?? null,
+      })
+      if (written?.changed) persisted++
+    } catch (err) {
+      console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
+    }
+  }
+
+  await upsertCurrentAuctions(auctions, at)
+  return persisted
 }
 
 async function enrichAtVerkehrswert(

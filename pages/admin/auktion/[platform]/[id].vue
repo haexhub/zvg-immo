@@ -1,0 +1,482 @@
+<script setup lang="ts">
+// Admin-only technical overview for one auction (docs/plans/2026-08-08-
+// admin-auktions-technikseite.md, WP-3). Same auth pattern as pages/settings.vue
+// — this route deliberately lives outside pages/settings/ (see the plan's
+// routing decision) but calls the same /api/settings/* endpoints, which is
+// what server/middleware/settings-auth.ts actually guards.
+import { ArrowLeft } from 'lucide-vue-next'
+import type { DisplayRunRow } from '~/components/admin/auction/ExtractionVersionsTable.vue'
+import { useSettingsError } from '~/composables/settings/useSettingsError'
+import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
+import { usePollWhileActive } from '~/composables/settings/usePollWhileActive'
+import type { AuctionTechnicalOverview } from '~/server/utils/auction-technical'
+import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
+import { DIFF_FIELDS, displayValue, formatBytes, formatDate as formatDateValue, humanizeFieldKey, type VersionDetail } from '~/lib/auction-technical-helpers'
+
+interface LlmProfilesResponse {
+  profiles: Array<{ id: string; name: string; provider: LlmProvider; baseUrl: string; model: string; executionMode: LlmExecutionMode }>
+}
+const route = useRoute()
+const platform = String(route.params.platform)
+const id = String(route.params.id)
+const { t, locale } = useI18n()
+const formatDate = (value: string | null): string => formatDateValue(value, locale.value)
+useHead({ title: t('settings.auctionTechnical.title', { platform, id }) })
+useSeoMeta({ robots: 'noindex, nofollow' })
+const authed = ref(false)
+const passwordInput = ref('')
+const authError = ref<string | null>(null)
+const authPending = ref(false)
+const overview = ref<AuctionTechnicalOverview | null>(null)
+const overviewPending = ref(false)
+const overviewError = ref<string | null>(null)
+function clearAuthState(): void {
+  authed.value = false
+  // Trial polling would otherwise keep firing 401s until its 3-minute cutoff.
+  trialRunning.value = false
+}
+const { normalizeSettingsError } = useSettingsError(clearAuthState)
+const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
+
+async function probeSession(): Promise<void> {
+  try {
+    const res = await $fetch<{ authed: boolean }>('/api/settings/session', { cache: 'no-store' })
+    authed.value = res.authed
+    if (authed.value) await Promise.all([loadOverview(), loadProfiles()])
+  } catch {
+    authed.value = false
+  }
+}
+
+async function loadProfiles(): Promise<void> {
+  try {
+    const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
+    setLlmProfileOptions(res.profiles)
+  } catch {
+    // The trial picker is just empty if this fails — loadOverview already
+    // surfaces the shared "session expired" case.
+  }
+}
+
+async function login(): Promise<void> {
+  authError.value = null
+  authPending.value = true
+  try {
+    await $fetch('/api/settings/login', { method: 'POST', body: { password: passwordInput.value } })
+    passwordInput.value = ''
+    authed.value = true
+    await Promise.all([loadOverview(), loadProfiles()])
+  } catch (err) {
+    const e = typeof err === 'object' && err !== null
+      ? err as { data?: { statusMessage?: string }; statusMessage?: string; message?: string }
+      : {}
+    authError.value = e.data?.statusMessage || e.statusMessage || e.message || t('settings.login.error')
+  } finally {
+    authPending.value = false
+  }
+}
+
+async function loadOverview(): Promise<void> {
+  overviewPending.value = true
+  overviewError.value = null
+  try {
+    overview.value = await $fetch<AuctionTechnicalOverview>(
+      `/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/technical`,
+    )
+  } catch (err) {
+    // Keep the last good overview: a single failed trial-poll tick must not
+    // hide every card until the next successful refresh.
+    overviewError.value = normalizeSettingsError(err, t('settings.auctionTechnical.loadError'))
+  } finally {
+    overviewPending.value = false
+  }
+}
+
+// Einzellauf mit Profilauswahl (WP-4): kein dedizierter Status-Endpoint, die
+// Seite pollt stattdessen die Technik-Übersicht und erkennt Abschluss (Erfolg
+// oder Fehlschlag) an einer neuen, mit diesem Testlauf markierten Zeile
+// (isTrial) in extractionHistory — die Zeile selbst trägt dann Status/Fehler/
+// Kosten, eine gesonderte Erfolg/Fehler-Anzeige neben dem Button ist nicht
+// mehr nötig (WP-7).
+const trialProfileId = ref<string>('')
+const trialRunning = ref(false)
+const trialStartedAt = ref<string | null>(null)
+const trialTriggerError = ref<string | null>(null)
+let trialBaselineIds = new Set<string>()
+
+const pendingTrialRow = computed<DisplayRunRow | null>(() => {
+  if (!trialRunning.value || !trialStartedAt.value) return null
+  const profile = llmProfileOptions.value.find((p) => p.id === trialProfileId.value)
+  return {
+    id: 'pending-trial',
+    version: null,
+    createdAt: trialStartedAt.value,
+    status: 'pending',
+    isLatest: false,
+    isTrial: true,
+    artifactVersionId: null,
+    extractionSource: null,
+    extractionConfidence: null,
+    llmProvider: profile?.provider ?? null,
+    llmModel: profile?.model ?? null,
+    llmProfileId: trialProfileId.value,
+    runTrigger: 'manual',
+    llmDurationMs: null,
+    llmCostUsd: null,
+    llmInputTokens: null,
+    llmOutputTokens: null,
+    errorMessage: null,
+  }
+})
+
+const extractionRunRows = computed<DisplayRunRow[]>(() => {
+  const rows = overview.value?.extractionHistory ?? []
+  return pendingTrialRow.value ? [pendingTrialRow.value, ...rows] : rows
+})
+
+const { start: startTrialPolling } = usePollWhileActive(
+  () => trialRunning.value,
+  async () => {
+    await loadOverview()
+    const newRun = overview.value?.extractionHistory.find((row) => row.isTrial && !trialBaselineIds.has(row.id))
+    if (newRun) trialRunning.value = false
+  },
+  {
+    intervalMs: 3000,
+    maxAttempts: 60,
+    // Three minutes without either a version or a failed-attempt row: give the
+    // controls back instead of leaving the pending row and the disabled button
+    // in place forever. The run may still land — loadOverview picks it up.
+    onExhausted: () => {
+      trialRunning.value = false
+      trialTriggerError.value = t('settings.auctionTechnical.trial.timeout')
+    },
+  },
+)
+
+async function startTrial(): Promise<void> {
+  if (!trialProfileId.value || !overview.value) return
+  trialTriggerError.value = null
+  trialBaselineIds = new Set(overview.value.extractionHistory.map((row) => row.id))
+  try {
+    await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/reprocess`, {
+      method: 'POST',
+      body: { profileId: trialProfileId.value },
+    })
+    trialStartedAt.value = new Date().toISOString()
+    trialRunning.value = true
+    startTrialPolling()
+  } catch (err) {
+    trialTriggerError.value = normalizeSettingsError(err, t('settings.auctionTechnical.trial.triggerError'))
+  }
+}
+
+// Vergleichen/Promote/Löschen (WP-5). Eine Checkbox-Auswahl bedient beide
+// Mehrfach-Aktionen: genau 2 ausgewählt -> Diff, 1+ ausgewählt -> Löschen.
+// Promote ist dagegen pro Zeile (genau eine Zielversion pro Aufruf).
+const selectedVersions = ref<Set<number>>(new Set())
+const canDiff = computed(() => selectedVersions.value.size === 2)
+const selectedIsLatest = computed(() =>
+  [...selectedVersions.value].some((v) => overview.value?.extractionHistory.find((row) => row.version === v)?.isLatest),
+)
+const canBulkDelete = computed(() => selectedVersions.value.size >= 1 && !selectedIsLatest.value)
+
+function toggleVersionSelected(version: number): void {
+  if (selectedVersions.value.has(version)) selectedVersions.value.delete(version)
+  else selectedVersions.value.add(version)
+  // Reassigning triggers Vue's reactivity for a plain Set mutated in place.
+  selectedVersions.value = new Set(selectedVersions.value)
+  showDiff.value = false
+}
+
+const showDiff = ref(false)
+const diffPending = ref(false)
+const diffError = ref<string | null>(null)
+const diffShowAll = ref(false)
+const diffRows = ref<{ key: string; label: string; left: string; right: string; same: boolean }[]>([])
+
+async function loadDiff(): Promise<void> {
+  if (!canDiff.value) return
+  const [left, right] = [...selectedVersions.value].sort((a, b) => a - b)
+  diffPending.value = true
+  diffError.value = null
+  try {
+    const [leftDetail, rightDetail] = await Promise.all([
+      $fetch<VersionDetail>(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${left}`),
+      $fetch<VersionDetail>(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${right}`),
+    ])
+    diffRows.value = DIFF_FIELDS.map((key) => {
+      const leftValue = displayValue(leftDetail[key])
+      const rightValue = displayValue(rightDetail[key])
+      return { key, label: humanizeFieldKey(key), left: leftValue, right: rightValue, same: leftValue === rightValue }
+    })
+    showDiff.value = true
+  } catch (err) {
+    diffError.value = normalizeSettingsError(err, t('settings.auctionTechnical.diff.loadError'))
+  } finally {
+    diffPending.value = false
+  }
+}
+
+const visibleDiffRows = computed(() => diffShowAll.value ? diffRows.value : diffRows.value.filter((row) => !row.same))
+
+const promotePending = ref<number | null>(null)
+const promoteError = ref<string | null>(null)
+
+async function promoteVersion(version: number): Promise<void> {
+  promotePending.value = version
+  promoteError.value = null
+  try {
+    await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${version}/promote`, {
+      method: 'POST',
+    })
+    await loadOverview()
+  } catch (err) {
+    promoteError.value = normalizeSettingsError(err, t('settings.auctionTechnical.versions.promoteError'))
+  } finally {
+    promotePending.value = null
+  }
+}
+
+const bulkDeletePending = ref(false)
+const bulkDeleteError = ref<string | null>(null)
+
+async function deleteSelected(): Promise<void> {
+  if (!canBulkDelete.value) return
+  if (!window.confirm(t('settings.auctionTechnical.versions.deleteConfirm', { count: selectedVersions.value.size }))) return
+  bulkDeletePending.value = true
+  bulkDeleteError.value = null
+  try {
+    for (const version of selectedVersions.value) {
+      await $fetch(`/api/settings/auction/${encodeURIComponent(platform)}/${encodeURIComponent(id)}/versions/${version}`, {
+        method: 'DELETE',
+      })
+    }
+  } catch (err) {
+    bulkDeleteError.value = normalizeSettingsError(err, t('settings.auctionTechnical.versions.deleteError'))
+  } finally {
+    // Always resync with the DB, even on a partial failure (e.g. a version
+    // deleted mid-loop before a later one 404s) — otherwise the table and the
+    // selection go stale, and retrying would just 404 on the already-deleted
+    // ones instead of reaching the rest.
+    selectedVersions.value = new Set()
+    showDiff.value = false
+    bulkDeletePending.value = false
+    await loadOverview()
+  }
+}
+
+onMounted(probeSession)
+</script>
+
+<template>
+  <main class="px-4 py-6">
+    <div class="mx-auto max-w-6xl space-y-6">
+      <div class="flex items-center justify-between gap-3">
+        <NuxtLink :to="`/objekt/${platform}/${id}`" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ArrowLeft class="h-4 w-4" /> {{ $t('settings.auctionTechnical.back') }}
+        </NuxtLink>
+      </div>
+      <h1 class="text-2xl font-bold tracking-tight">
+        {{ $t('settings.auctionTechnical.heading', { platform, id }) }}
+      </h1>
+
+      <AdminAuctionTechnicalLoginCard
+        v-if="!authed"
+        v-model:password="passwordInput"
+        :pending="authPending"
+        :error="authError"
+        @submit="login"
+      />
+
+      <template v-else>
+        <p v-if="overviewPending" class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.loading') }}</p>
+        <p v-if="overviewError" class="text-sm text-destructive">{{ overviewError }}</p>
+
+        <template v-if="overview">
+          <AdminAuctionTechnicalOverviewCards
+            :overview="overview"
+            :format-date="formatDate"
+          />
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.extractionHistory') }}</CardTitle></CardHeader>
+            <CardContent>
+              <div class="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
+                <Select v-model="trialProfileId" :disabled="trialRunning">
+                  <SelectTrigger class="w-64">
+                    <SelectValue :placeholder="$t('settings.auctionTechnical.trial.profilePlaceholder')" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem v-for="profile in llmProfileOptions" :key="profile.id" :value="profile.id">
+                      {{ profile.name || profile.model }}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button type="button" size="sm" :disabled="!trialProfileId || trialRunning" @click="startTrial">
+                  {{ trialRunning ? $t('settings.auctionTechnical.trial.running') : $t('settings.auctionTechnical.trial.start') }}
+                </Button>
+                <p v-if="trialTriggerError" class="w-full text-sm text-destructive">{{ trialTriggerError }}</p>
+              </div>
+
+              <div class="mb-4 flex flex-wrap items-center gap-2 border-b pb-4">
+                <Button type="button" size="sm" variant="outline" :disabled="!canDiff || diffPending" @click="loadDiff">
+                  {{ diffPending ? $t('settings.auctionTechnical.diff.loading') : $t('settings.auctionTechnical.diff.compare') }}
+                </Button>
+                <Button type="button" size="sm" variant="destructive" :disabled="!canBulkDelete || bulkDeletePending" @click="deleteSelected">
+                  {{ $t('settings.auctionTechnical.versions.deleteSelected', { count: selectedVersions.size }) }}
+                </Button>
+                <span class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.versions.selectHint') }}</span>
+                <p v-if="promoteError" class="w-full text-sm text-destructive">{{ promoteError }}</p>
+                <p v-if="bulkDeleteError" class="w-full text-sm text-destructive">{{ bulkDeleteError }}</p>
+                <p v-if="diffError" class="w-full text-sm text-destructive">{{ diffError }}</p>
+              </div>
+
+              <div v-if="showDiff" class="mb-4 space-y-2 rounded-md border p-3">
+                <div class="flex items-center justify-between">
+                  <p class="text-sm font-medium">{{ $t('settings.auctionTechnical.diff.title') }}</p>
+                  <label class="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox :model-value="diffShowAll" @update:model-value="(v) => diffShowAll = !!v" />
+                    {{ $t('settings.auctionTechnical.diff.showAll') }}
+                  </label>
+                </div>
+                <p v-if="!visibleDiffRows.length" class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.diff.noDifferences') }}</p>
+                <Table v-else>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{{ $t('settings.auctionTechnical.fields.version') }}</TableHead>
+                      <TableHead>{{ [...selectedVersions].sort((a, b) => a - b)[0] }}</TableHead>
+                      <TableHead>{{ [...selectedVersions].sort((a, b) => a - b)[1] }}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    <TableRow v-for="row in visibleDiffRows" :key="row.key" :class="{ 'opacity-50': row.same }">
+                      <TableCell class="font-medium">{{ row.label }}</TableCell>
+                      <TableCell class="max-w-xs truncate">{{ row.left }}</TableCell>
+                      <TableCell class="max-w-xs truncate">{{ row.right }}</TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </div>
+
+              <AdminAuctionExtractionVersionsTable
+                :rows="extractionRunRows"
+                :selected-versions="selectedVersions"
+                :promote-pending="promotePending"
+                :format-date="formatDate"
+                @toggle-version="toggleVersionSelected"
+                @promote="promoteVersion"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.translations') }}</CardTitle></CardHeader>
+            <CardContent>
+              <Table v-if="overview.translations.length">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.lang') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.version') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.status') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.error') }}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="row in overview.translations" :key="`${row.version}-${row.lang}`">
+                    <TableCell>{{ row.lang }}</TableCell>
+                    <TableCell>{{ row.version }}</TableCell>
+                    <TableCell>
+                      <Badge :variant="row.status === 'failed' ? 'destructive' : row.status === 'completed' ? 'default' : 'secondary'">
+                        {{ row.status }}
+                      </Badge>
+                    </TableCell>
+                    <TableCell class="text-destructive">{{ row.errorMessage ?? '—' }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.externalData') }}</CardTitle></CardHeader>
+            <CardContent class="space-y-4 text-sm">
+              <div v-if="overview.externalData.coverage" class="flex flex-wrap gap-2">
+                <Badge
+                  v-for="source in overview.externalData.coverage.sources"
+                  :key="source.id"
+                  :variant="source.covered ? 'default' : 'outline'"
+                >
+                  {{ source.id }}
+                </Badge>
+              </div>
+              <p v-else class="text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
+              <div v-if="overview.externalData.geoMetrics" class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.distSea') }}</div><div>{{ overview.externalData.geoMetrics.distSeaM ?? '—' }}</div></div>
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.distMountain') }}</div><div>{{ overview.externalData.geoMetrics.distMountainM ?? '—' }}</div></div>
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.distAirport') }}</div><div>{{ overview.externalData.geoMetrics.distAirportM ?? '—' }}</div></div>
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.computedAt') }}</div><div>{{ formatDate(overview.externalData.geoMetrics.computedAt) }}</div></div>
+              </div>
+              <div v-if="overview.externalData.climateCell" class="grid grid-cols-2 gap-3 md:grid-cols-4">
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.climateSummer') }}</div><div>{{ overview.externalData.climateCell.summerAvgTempC ?? '—' }} °C</div></div>
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.climateWinter') }}</div><div>{{ overview.externalData.climateCell.winterAvgTempC ?? '—' }} °C</div></div>
+                <div><div class="text-xs text-muted-foreground">{{ $t('settings.auctionTechnical.fields.climateSourceVersion') }}</div><div>{{ overview.externalData.climateCell.sourceVersion ?? '—' }}</div></div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.llmBatchJobs') }}</CardTitle></CardHeader>
+            <CardContent>
+              <Table v-if="overview.llmBatchJobs.length">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.jobName') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.status') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.submittedAt') }}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="job in overview.llmBatchJobs" :key="job.jobName">
+                    <TableCell>{{ job.jobName }}</TableCell>
+                    <TableCell>{{ job.status }}</TableCell>
+                    <TableCell>{{ formatDate(job.submittedAt) }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>{{ $t('settings.auctionTechnical.sections.documents') }}</CardTitle></CardHeader>
+            <CardContent>
+              <Table v-if="overview.documents.length">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.kind') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.filename') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.setVersion') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.byteSize') }}</TableHead>
+                    <TableHead>{{ $t('settings.auctionTechnical.fields.capturedAt') }}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  <TableRow v-for="doc in overview.documents" :key="doc.id">
+                    <TableCell>{{ doc.kind }}</TableCell>
+                    <TableCell>{{ doc.filename ?? doc.label ?? '—' }}</TableCell>
+                    <TableCell>{{ doc.setVersion ?? '—' }}</TableCell>
+                    <TableCell>{{ formatBytes(doc.byteSize) }}</TableCell>
+                    <TableCell>{{ formatDate(doc.capturedAt) }}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+              <p v-else class="text-sm text-muted-foreground">{{ $t('settings.auctionTechnical.noData') }}</p>
+            </CardContent>
+          </Card>
+        </template>
+      </template>
+    </div>
+  </main>
+</template>

@@ -3,13 +3,15 @@ import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
 import type { ArchiveCountryRow } from '~/server/api/settings/archive/countries.get'
 import type { ArchiveRegionRow } from '~/server/api/settings/archive/regions.get'
 import type { ArchiveCaseRow } from '~/server/api/settings/archive/cases.get'
-import type { ArchiveDocumentRow } from '~/server/api/settings/archive/documents.get'
+import type { ArchiveDocumentRow } from '~/server/utils/archive-documents'
 import type { DeleteRawArchiveCountryResult } from '~/server/utils/raw-archive-delete'
+import { useSettingsError } from '~/composables/settings/useSettingsError'
 
 type Level = 'country' | 'region' | 'case' | 'document'
 
 const { t } = useI18n()
 const intlLocale = useIntlLocale()
+const { normalizeSettingsError } = useSettingsError()
 
 const level = ref<Level>('country')
 const selectedCountry = ref<{ code: string; label: string } | null>(null)
@@ -30,16 +32,24 @@ function formatDate(iso: string): string {
   return new Date(iso).toLocaleString(intlLocale.value)
 }
 
+// Drilldown clicks and goBack() don't wait for an in-flight load, so only the
+// latest request may apply its result — a slower earlier response would
+// otherwise show region A's cases under region B's breadcrumb, or jump back
+// to the document list after the user already navigated away.
+let loadRequestId = 0
+
 async function withLoading<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  const requestId = ++loadRequestId
   pending.value = true
   error.value = null
   try {
-    return await fn()
-  } catch {
-    error.value = t('settings.archive.loadError')
+    const result = await fn()
+    return requestId === loadRequestId ? result : undefined
+  } catch (err) {
+    if (requestId === loadRequestId) error.value = normalizeSettingsError(err, t('settings.archive.loadError'))
     return undefined
   } finally {
-    pending.value = false
+    if (requestId === loadRequestId) pending.value = false
   }
 }
 
@@ -77,8 +87,8 @@ async function deleteCountry(row: ArchiveCountryRow): Promise<void> {
       { method: 'DELETE' },
     )
     await loadCountries()
-  } catch {
-    error.value = t('settings.archive.deleteCountryError')
+  } catch (err) {
+    error.value = normalizeSettingsError(err, t('settings.archive.deleteCountryError'))
   } finally {
     deleteCountryPending.value = null
   }
@@ -114,6 +124,8 @@ async function openCase(row: ArchiveCaseRow): Promise<void> {
 }
 
 function goBack(): void {
+  loadRequestId++
+  pending.value = false
   error.value = null
   if (level.value === 'document') level.value = 'case'
   else if (level.value === 'case') level.value = 'region'

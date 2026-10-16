@@ -14,6 +14,26 @@ export interface LlmBatchJobOverviewItem {
   errorMessage?: string | null
 }
 
+// Consecutive recentJobs entries sharing the same status/source/provider/
+// errorMessage get folded into one group — a crash-loop-style burst of
+// identical failures (see reprocess-bootstrap.ts) otherwise renders as N
+// near-duplicate cards instead of one "N× failed" summary.
+export interface LlmBatchJobGroup {
+  key: string
+  status: string
+  source: LlmBatchJobOverviewItem['source']
+  provider: LlmBatchJobOverviewItem['provider']
+  errorMessage: string | null
+  totalItems: number
+  // recentJobs is sorted newest-first, so the first job pushed into a group
+  // is the newest and the last one pushed is the oldest — kept as their own
+  // fields (rather than jobs[0]/jobs.at(-1)) so templates don't need
+  // possibly-undefined array-index checks for a group that's never empty.
+  newestJob: LlmBatchJobOverviewItem
+  oldestJob: LlmBatchJobOverviewItem
+  jobs: LlmBatchJobOverviewItem[]
+}
+
 interface LlmBatchCapability {
   ok: boolean
   source: 'config' | 'attempt'
@@ -30,6 +50,7 @@ interface TaskRunStatus {
   lastWarning?: string | null
   lastLlmError?: string | null
   progress?: Record<string, number | string | null>
+  progressByCountry?: Record<string, Record<string, number | string | null>> | null
 }
 
 export interface LlmBatchJobsOverview {
@@ -39,6 +60,7 @@ export interface LlmBatchJobsOverview {
   recentJobs: LlmBatchJobOverviewItem[]
   backlog: {
     readyRequests: number
+    neverExtracted: number
     lowConfidenceRules: number
     missingLlmFields: number
     orphanedBatchMarkers: number
@@ -46,14 +68,37 @@ export interface LlmBatchJobsOverview {
     sampleRequestKeys: string[]
     orphanedRequestKeys: string[]
   }
+  backlogByCountry: Record<string, { readyRequests: number; failedLimit: number }>
   capabilities: Partial<Record<LlmProvider, LlmBatchCapability>>
   enrichStatus: TaskRunStatus
   reprocessStatus: TaskRunStatus
   externalEnrichmentStatus: TaskRunStatus
   offloadImagesStatus?: TaskRunStatus
+  copernicusEffisImportStatus?: TaskRunStatus
+  euFloodRiskImportStatus?: TaskRunStatus
+  eurostatTourismNutsImportStatus?: TaskRunStatus
 }
 
 let progressPollTimer: ReturnType<typeof setInterval> | null = null
+// A freshly-triggered detached task can take a moment (config lookup, the
+// exclusive-task guard) before it records "running" — if that hasn't landed
+// yet on the first tick, anyTrackedTaskRunning() still reads the old idle
+// status and would stop polling before the run was ever observed. Polling
+// keeps going, up to this grace period, until running has been seen at
+// least once; after that it stops on the next idle tick same as before.
+const PROGRESS_POLL_GRACE_MS = 30_000
+let progressPollObservedRunning = false
+let progressPollStartedAt = 0
+// A failed refresh keeps the last snapshot, whose stale "running" status
+// would otherwise keep a broken endpoint polled every 3 s indefinitely.
+const PROGRESS_POLL_MAX_FAILURES = 10
+let progressPollFailures = 0
+// Module-scope, not useState: several settings cards call loadLlmBatchJobs()
+// from their own onMounted, all firing in the same tick — without this,
+// every /settings page load fired the same expensive endpoint 4x in
+// parallel. Cleared once the in-flight request settles, so a later call
+// still gets a fresh fetch.
+let loadLlmBatchJobsInFlight: Promise<void> | null = null
 
 function formatBatchDate(iso: string | null): string {
   if (!iso) return '-'
@@ -75,11 +120,15 @@ export function useSettingsTaskOverview() {
     return overview.enrichStatus.status === 'running' ||
       overview.reprocessStatus.status === 'running' ||
       overview.externalEnrichmentStatus.status === 'running' ||
-      overview.offloadImagesStatus?.status === 'running'
+      overview.offloadImagesStatus?.status === 'running' ||
+      overview.copernicusEffisImportStatus?.status === 'running' ||
+      overview.euFloodRiskImportStatus?.status === 'running' ||
+      overview.eurostatTourismNutsImportStatus?.status === 'running'
   }
 
   const llmBatchBacklog = computed(() => llmBatchJobs.value?.backlog ?? {
     readyRequests: 0,
+    neverExtracted: 0,
     lowConfidenceRules: 0,
     missingLlmFields: 0,
     orphanedBatchMarkers: 0,
@@ -88,24 +137,84 @@ export function useSettingsTaskOverview() {
     orphanedRequestKeys: [],
   })
 
-  async function loadLlmBatchJobs(): Promise<void> {
-    llmBatchJobsPending.value = true
-    llmBatchJobsError.value = null
-    try {
-      llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
-      if (anyTrackedTaskRunning()) startProgressPolling()
-    } catch (err) {
-      llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
-    } finally {
-      llmBatchJobsPending.value = false
+  const llmBatchBacklogByCountry = computed(() => llmBatchJobs.value?.backlogByCountry ?? {})
+
+  const llmBatchRecentGroups = computed<LlmBatchJobGroup[]>(() => {
+    const groups: LlmBatchJobGroup[] = []
+    for (const job of llmBatchJobs.value?.recentJobs ?? []) {
+      const last = groups[groups.length - 1]
+      if (
+        job.errorMessage &&
+        last?.errorMessage === job.errorMessage &&
+        last.status === job.status &&
+        last.source === job.source &&
+        last.provider === job.provider
+      ) {
+        last.jobs.push(job)
+        last.totalItems += job.itemCount
+        last.oldestJob = job
+        continue
+      }
+      groups.push({
+        key: job.jobName,
+        status: job.status,
+        source: job.source,
+        provider: job.provider,
+        errorMessage: job.errorMessage ?? null,
+        totalItems: job.itemCount,
+        newestJob: job,
+        oldestJob: job,
+        jobs: [job],
+      })
     }
+    return groups
+  })
+
+  async function loadLlmBatchJobs(): Promise<void> {
+    if (loadLlmBatchJobsInFlight) return loadLlmBatchJobsInFlight
+    loadLlmBatchJobsInFlight = (async () => {
+      llmBatchJobsPending.value = true
+      llmBatchJobsError.value = null
+      try {
+        llmBatchJobs.value = await $fetch<LlmBatchJobsOverview>('/api/settings/llm-batch-jobs', { cache: 'no-store' })
+        if (!progressPollTimer && anyTrackedTaskRunning()) {
+          startProgressPolling()
+          // Running was already observed here, so no grace window is needed.
+          progressPollObservedRunning = true
+        }
+      } catch (err) {
+        llmBatchJobsError.value = normalizeSettingsError(err, t('settings.llmBatch.loadError'))
+      } finally {
+        llmBatchJobsPending.value = false
+      }
+    })().finally(() => {
+      loadLlmBatchJobsInFlight = null
+    })
+    return loadLlmBatchJobsInFlight
   }
 
   function startProgressPolling(): void {
+    // Every call announces a freshly-triggered task, so the grace window
+    // restarts even while the timer already polls an earlier run — otherwise
+    // observedRunning left over from that run stops polling on the first idle
+    // tick, before the new task got to record "running".
+    progressPollObservedRunning = false
+    progressPollStartedAt = Date.now()
+    progressPollFailures = 0
     if (progressPollTimer) return
     progressPollTimer = setInterval(async () => {
       await loadLlmBatchJobs()
-      if (!anyTrackedTaskRunning()) stopProgressPolling()
+      if (llmBatchJobsError.value) {
+        if (++progressPollFailures >= PROGRESS_POLL_MAX_FAILURES) stopProgressPolling()
+        return
+      }
+      progressPollFailures = 0
+      if (anyTrackedTaskRunning()) {
+        progressPollObservedRunning = true
+        return
+      }
+      if (!progressPollObservedRunning && Date.now() - progressPollStartedAt < PROGRESS_POLL_GRACE_MS) return
+      stopProgressPolling()
     }, 3000)
   }
 
@@ -114,6 +223,7 @@ export function useSettingsTaskOverview() {
       clearInterval(progressPollTimer)
       progressPollTimer = null
     }
+    progressPollObservedRunning = false
   }
 
   return {
@@ -121,6 +231,8 @@ export function useSettingsTaskOverview() {
     llmBatchJobsPending,
     llmBatchJobsError,
     llmBatchBacklog,
+    llmBatchBacklogByCountry,
+    llmBatchRecentGroups,
     formatBatchDate,
     loadLlmBatchJobs,
     startProgressPolling,

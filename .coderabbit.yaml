@@ -1,0 +1,8 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# Repository additions on top of the organization settings.
+inheritance: true
+reviews:
+  path_filters:
+    # Installed and upgraded by tools; review and fix these upstream instead.
+    - "!.specify/**" # GitHub Spec Kit, managed by the official specify CLI
+    - "!.spaex/**" # spaex: composed constitution, fragments, generated files

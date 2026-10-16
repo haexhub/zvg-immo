@@ -5,6 +5,7 @@
 
 import { generateApiKey } from '../../utils/api-key'
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { ApiKeySummary } from './index.get'
 
 export interface CreatedApiKey extends ApiKeySummary {
@@ -14,7 +15,7 @@ export interface CreatedApiKey extends ApiKeySummary {
 }
 
 export default defineEventHandler(async (event): Promise<CreatedApiKey> => {
-  const body = await readBody<{ label?: unknown }>(event).catch(() => ({}) as { label?: unknown })
+  const body = await readBody<{ label?: unknown }>(event).catch(() => undefined) ?? ({} as { label?: unknown })
   const label = typeof body.label === 'string' ? body.label.trim() : ''
   if (!label) {
     throw createError({ statusCode: 400, statusMessage: 'Label fehlt.' })
@@ -35,7 +36,7 @@ export default defineEventHandler(async (event): Promise<CreatedApiKey> => {
     .select('id, label, key_prefix, active, created_at, last_used_at')
     .single()
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Anlegen fehlgeschlagen.' })
+    throw publicError('POST /api/api-keys', 500, 'Anlegen fehlgeschlagen.', error)
   }
 
   return {

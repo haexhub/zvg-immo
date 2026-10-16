@@ -1,1708 +1,1015 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction, AuctionExtraction } from '~/types/auction'
+import type { ClampedExtraction } from '../utils/extract/llm-clamp'
+import type { ReprocessInput } from '../utils/tasks/reprocess-input'
+import { downloadBlob, listDistinctCaptures } from '../utils/storage-download'
 import { getPool } from '../utils/db'
-import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../utils/storage-download'
+import { readAuctionRecordMap } from '../utils/auction-record'
+import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
+import { readArtifactProcessingState } from '../utils/artifact-version-state'
+import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
+import { readLlmExecutionMode } from '../utils/app-settings'
+import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
 import { extractByLlm } from '../utils/extract/llm'
-import { isLlmBatchProviderBroken, submitLlmBatch } from '../utils/extract/llm-batch'
-import { extractPdfTextFromBuffer } from '../utils/extract/pdf-text'
-import { renderPdfPagesJpeg } from '../utils/extract/pdf-render'
-import { readExtractionCache, writeExtractionCache } from '../utils/extraction-cache'
-import { readAuctionSnapshot, writeAuctionSnapshot } from '../utils/auction-snapshot'
-import { ensureEnabledCountriesLoaded, getEnabledCountryCodes, isCountryEnabled } from '../crawlers/registry'
-import { readExtractionLlmConfigChain } from '../utils/extract/llm-task-config'
-import { readFile } from 'node:fs/promises'
+import { isLlmProviderUnavailable } from '../utils/extract/llm-errors'
+import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
+import { writeAuctionDetails } from '../utils/auction-details'
+import { upsertCurrentAuctions } from '../utils/current-auctions'
+import { recordTaskRunError } from '../utils/task-run-errors'
+import { recordLlmUsage } from '../utils/llm-usage'
+import { recordTaskRunStart } from '../utils/task-runs'
 
-vi.mock('node:fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:fs/promises')>()
-  return { ...actual, readFile: vi.fn(actual.readFile) }
-})
-vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
-vi.mock('../crawlers/registry', () => ({
-  ensureEnabledCountriesLoaded: vi.fn(async () => ['se']),
-  getEnabledCountryCodes: vi.fn(() => ['se']),
-  isCountryEnabled: vi.fn((country: string) => country === 'se'),
-}))
 vi.mock('../utils/storage-download', () => ({
-  findLatestCapture: vi.fn(),
+  listDistinctCaptures: vi.fn(),
   downloadBlob: vi.fn(),
-  readDocumentSetItems: vi.fn(async () => []),
+  readDocumentSet: vi.fn(async () => null),
 }))
-vi.mock('../utils/extract/llm', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/llm')>()
-  return { ...actual, extractByLlm: vi.fn() }
-})
-vi.mock('../utils/extract/llm-batch', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/llm-batch')>()
-  return { ...actual, isLlmBatchProviderBroken: vi.fn(async () => false), submitLlmBatch: vi.fn() }
-})
-// Spy on (not stub out) the real implementations — other tests here rely on
-// actual pdftotext/rendering output (e.g. the scanned-PDF vision-fallback
-// test below); the gemini-native test only needs to assert these were never
-// invoked, not replace their behavior.
-vi.mock('../utils/extract/pdf-text', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/pdf-text')>()
-  return { ...actual, extractPdfTextFromBuffer: vi.fn(actual.extractPdfTextFromBuffer) }
-})
-vi.mock('../utils/extract/pdf-render', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/pdf-render')>()
-  return { ...actual, renderPdfPagesJpeg: vi.fn(actual.renderPdfPagesJpeg) }
-})
-vi.mock('../utils/extraction-cache', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extraction-cache')>()
-  return { ...actual, readExtractionCache: vi.fn(), writeExtractionCache: vi.fn() }
-})
-vi.mock('../utils/extract/llm-task-config', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../utils/extract/llm-task-config')>()
-  return { ...actual, readExtractionLlmConfigChain: vi.fn(actual.readExtractionLlmConfigChain) }
-})
-vi.mock('../utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn(), writeAuctionSnapshot: vi.fn() }))
-// defineTask is a Nitro auto-import, not present in the plain vitest
-// environment — stub it so importing the module (which calls it at the top
-// level for the default export) doesn't throw. Only reprocessAuction/
-// runReprocess are under test here, not the task wrapper itself.
-vi.stubGlobal('defineTask', (def: unknown) => def)
+vi.mock('../utils/db', () => ({ getPool: vi.fn() }))
+vi.mock('../utils/auction-record', () => ({ readAuctionRecordMap: vi.fn() }))
+vi.mock('../utils/auction-fetch-state', () => ({
+  readAuctionFetchStates: vi.fn(),
+  writeAuctionLlmClaim: vi.fn(),
+  writeAuctionLlmPipelineState: vi.fn(),
+}))
+vi.mock('../utils/artifact-version-state', () => ({
+  hasUnparsedArtifactVersion: vi.fn((state) => state.latest != null && state.latest.id !== state.parsedArtifactVersionId),
+  readArtifactProcessingState: vi.fn(),
+}))
+vi.mock('../utils/extract/llm-task-config', () => ({
+  MAX_LLM_FAILURES: 3,
+  LLM_FAILURE_RETRY_COOLDOWN_HOURS: 24,
+  readExtractionChainStrategy: vi.fn(),
+  readExtractionLlmConfigChain: vi.fn(),
+}))
+vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn() }))
+vi.mock('../utils/extract/llm-batch', () => ({
+  isLlmBatchPending: vi.fn(() => false),
+  isLlmBatchProviderBroken: vi.fn(async () => false),
+  submitLlmBatch: vi.fn(),
+  supportsLlmBatch: vi.fn((config) => config != null),
+  supportsNativeBatchDocuments: vi.fn(() => false),
+  batchSupportsMultimodal: vi.fn((config) => config?.provider !== 'openrouter'),
+}))
+vi.mock('../utils/extract/llm', () => ({
+  extractByLlm: vi.fn(),
+}))
+vi.mock('../utils/extract/llm-errors', () => ({
+  isDailyQuotaError: vi.fn(() => false),
+  isLlmProviderError: vi.fn(() => false),
+  isLlmProviderUnavailable: vi.fn(() => false),
+  isRateLimitError: vi.fn(() => false),
+}))
+vi.mock('../utils/extract/llm-documents', () => ({
+  prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
+    input: {},
+    documentSetItems: [],
+    documentSetComplete: true,
+    artifactVersionId: opts.artifactVersionId,
+  })),
+}))
+vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
+vi.mock('../utils/current-auctions', () => ({ upsertCurrentAuctions: vi.fn() }))
+vi.mock('../crawlers/registry', () => ({
+  ensureEnabledCountriesLoaded: vi.fn(),
+  getEnabledCountryCodes: vi.fn(() => ['de']),
+  isCountryEnabled: vi.fn(() => true),
+}))
+vi.mock('../utils/task-runs', () => ({
+  recordTaskRunStart: vi.fn(),
+  recordTaskRunEnd: vi.fn(),
+  recordTaskRunProgress: vi.fn(),
+}))
+vi.mock('../utils/task-run-errors', () => ({
+  recordTaskRunError: vi.fn(),
+}))
+vi.mock('../utils/llm-usage', () => ({
+  recordLlmUsage: vi.fn(),
+}))
+vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticLlmEnabled: vi.fn(async () => true) }))
 
-const { reprocessAuction, runReprocess } = await import('./reprocess')
+vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
-// Minimal one-page PDF with a vector rectangle, no text at all (poppler
-// recovers these via brute-force xref scanning) — pdftotext yields empty
-// output on it, so it stands in for a scanned/image-only Gutachten and
-// naturally exercises the vision fallback. Same fixture as
-// server/utils/extract/pdf-render.test.ts.
-const SCANNED_LIKE_PDF = Buffer.from(
-  [
-    '%PDF-1.1',
-    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
-    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
-    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]/Resources<<>>/Contents 4 0 R>>endobj',
-    '4 0 obj<</Length 41>>stream',
-    '1 0 0 RG 10 10 180 180 re S',
-    'endstream',
-    'endobj',
-    'trailer<</Root 1 0 R/Size 5>>',
-    '%%EOF',
-    '',
-  ].join('\n'),
-)
+const { reprocessAuction, runReprocess, runReprocessTask } = await import('./reprocess')
+const { DOCUMENT_SUMMARY_SCHEMA_NAME } = await import('../utils/extract/llm-schema')
 
-function makeAuction(overrides: Partial<Auction> = {}): Auction {
+const emptyArtifactState = {
+  latest: null,
+  parsedArtifactVersionId: null,
+}
+
+function auction(): Auction {
   return {
     platform: 'zvg-portal',
     country: 'de',
-    region: 'Sachsen',
+    region: 'Berlin',
     externalId: '7265',
     caseNumber: '12 K 34/26',
-    authority: 'AG Musterstadt',
-    title: null,
-    address: 'Musterstraße 1, 01234 Musterstadt',
-    marketValueEur: 100_000,
-    marketValueText: '100.000 EUR',
-    auctionDateIso: '2026-08-01T09:00:00.000Z',
-    auctionDateText: '01.08.2026',
+    authority: 'AG Berlin',
+    title: 'Einfamilienhaus',
+    address: null,
+    marketValueEur: null,
+    marketValueText: null,
+    auctionDateIso: null,
+    auctionDateText: null,
     cancelled: false,
     sourceUpdatedIso: null,
     pdfUrl: null,
-    detailUrl: null,
     pdfUrlUpstream: null,
+    detailUrl: null,
     detailUrlUpstream: null,
     attachments: [],
-    description: null,
+    description: 'Wohnflaeche 120 m2, Grundstueck 500 m2.',
     photoCount: 0,
     thumbnailUrl: null,
-    ...overrides,
   }
 }
 
-function documentSetItem(overrides: {
-  ordinal: number
-  label: string
-  filename: string
-  fileId: string
-  sourceUrl: string
-  contentHash: string
-  contentType?: 'application/pdf' | 'text/html' | 'image/jpeg'
-}) {
+function extraction(overrides: Partial<AuctionExtraction> = {}): AuctionExtraction {
   return {
-    kind: 'document' as const,
-    contentType: overrides.contentType ?? 'application/pdf',
+    propertyType: 'einfamilienhaus',
+    landAreaSqm: 500,
+    livingAreaSqm: 120,
+    rooms: 4,
+    units: 1,
+    source: 'llm',
+    confidence: 'high',
+    at: '2026-08-01T10:00:00.000Z',
     ...overrides,
   }
 }
 
 beforeEach(() => {
-  vi.mocked(readDocumentSetItems).mockResolvedValue([])
+  vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '10' } }))
+  vi.mocked(getPool).mockReturnValue({
+    query: vi.fn(async () => ({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })),
+  } as never)
+  vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+    auction: auction(),
+    detailsId: 7,
+    detailsVersion: 2,
+    artifactVersionId: null,
+  }]]))
+  vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
+  vi.mocked(readArtifactProcessingState).mockResolvedValue(emptyArtifactState)
+  vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([])
+  vi.mocked(readExtractionChainStrategy).mockResolvedValue('fallback')
+  vi.mocked(readLlmExecutionMode).mockResolvedValue('sync')
+  vi.mocked(listDistinctCaptures).mockResolvedValue([{
+    contentHash: 'auction-hash',
+    sourceUrl: null,
+    capturedAt: '2026-08-02T10:00:00.000Z',
+  }])
+  vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction())))
+  vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
 })
 
 afterEach(() => {
+  vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
 
-describe('reprocessAuction', () => {
-  it('returns null when no auction capture is archived', async () => {
-    vi.mocked(findLatestCapture).mockResolvedValue(null)
-    expect(await reprocessAuction('zvg-portal', '7265', undefined, null, '2026-07-22T00:00:00.000Z')).toBeNull()
-  })
+describe('reprocessAuction structured provenance', () => {
+  it('returns null when no archived auction capture exists', async () => {
+    vi.mocked(listDistinctCaptures).mockResolvedValue([])
 
-  it('returns null when the auction capture bytes cannot be read', async () => {
-    vi.mocked(findLatestCapture).mockResolvedValue({ contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' })
-    vi.mocked(downloadBlob).mockResolvedValue(null)
-    expect(await reprocessAuction('zvg-portal', '7265', undefined, null, '2026-07-22T00:00:00.000Z')).toBeNull()
-  })
-
-  it('resolves confidently from rules alone and never touches the LLM or document capture', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-
-    const result = await reprocessAuction('zvg-portal', '7265', undefined, null, '2026-07-22T00:00:00.000Z')
-
-    expect(result).not.toBeNull()
-    expect(result!.llmCalled).toBe(false)
-    expect(result!.entry.source).toBe('rules')
-    expect(result!.entry.propertyType).toBe('einfamilienhaus')
-    expect(result!.entry.livingAreaSqm).toBe(140)
-    expect(result!.entry.confidence).toBe('high')
-    expect(extractByLlm).not.toHaveBeenCalled()
-    // Only the 'auction' capture was looked up — no 'document' lookup when
-    // the LLM branch never runs.
-    expect(vi.mocked(findLatestCapture)).toHaveBeenCalledTimes(1)
-  })
-
-  it('calls the LLM even when rules and the prior entry are already confident, merging yearBuilt/insights without touching rules-derived fields (rules as merge, not gate)', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    const priorEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: 3,
-      bathrooms: 2,
-      floor: 'EG',
-      bathroomHasTub: true,
-      bathroomHasShower: true,
-      heating: 'Gaszentralheizung',
-      units: 1,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      insights: null,
-      source: 'rules',
-      confidence: 'high',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: 4,
-      bathrooms: 1.5,
-      floor: '1. OG',
-      bathroomHasTub: false,
-      bathroomHasShower: true,
-      heating: 'Wärmepumpe',
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: 1998,
-      lastRenovationYear: 2015,
-      renovationNotes: 'Dach erneuert',
-      insights: {
-        defects: [],
-        encumbrances: [],
-        landValueEurPerSqm: null,
-        construction: null,
-        locationCharacter: null,
-        summary: 'Solide Bausubstanz.',
-      },
-      planningNotes: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
-    })
-
-    const result = await reprocessAuction(
+    await expect(reprocessAuction(
       'zvg-portal',
-      '7265',
-      priorEntry,
-      { baseUrl: 'http://proxy', model: 'claude-haiku-4-5' },
-      '2026-07-22T00:00:00.000Z',
-    )
-
-    expect(extractByLlm).toHaveBeenCalledTimes(1)
-    expect(result!.entry.source).toBe('rules')
-    expect(result!.entry.propertyType).toBe('einfamilienhaus')
-    expect(result!.entry.livingAreaSqm).toBe(140)
-    expect(result!.entry.bedrooms).toBe(4)
-    expect(result!.entry.bathrooms).toBe(1.5)
-    expect(result!.entry.floor).toBe('1. OG')
-    expect(result!.entry.bathroomHasTub).toBe(false)
-    expect(result!.entry.bathroomHasShower).toBe(true)
-    expect(result!.entry.heating).toBe('Wärmepumpe')
-    expect(result!.entry.yearBuilt).toBe(1998)
-    expect(result!.entry.lastRenovationYear).toBe(2015)
-    expect(result!.entry.renovationNotes).toBe('Dach erneuert')
-    expect(result!.entry.insights?.summary).toBe('Solide Bausubstanz.')
-  })
-
-  it('tries the next configured model when the primary is rate-limited, instead of failing the auction', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockImplementation(async (_input, config) => {
-      if (config.model === 'primary-model') {
-        throw Object.assign(new Error('http 429'), { response: { status: 429 } })
-      }
-      return {
-        propertyType: null,
-        landAreaSqm: null,
-        livingAreaSqm: null,
-        rooms: null,
-        bedrooms: null,
-        bathrooms: null,
-        floor: null,
-        bathroomHasTub: null,
-        bathroomHasShower: null,
-        heating: null,
-        units: null,
-        securityDeposit: null,
-        biddingNotes: null,
-        condition: null,
-        features: [],
-        yearBuilt: null,
-        lastRenovationYear: null,
-        renovationNotes: null,
-        insights: null,
-        planningNotes: null,
-        photoCuration: [],
-        marketValueEur: null,
-        marketValueText: 'from fallback model',
-      }
-    })
-
-    const result = await reprocessAuction(
-      'zvg-portal',
-      '7265',
+      'missing',
       undefined,
-      { baseUrl: 'http://proxy', model: 'primary-model' },
-      '2026-07-22T00:00:00.000Z',
-      { fallbackConfigs: [{ baseUrl: 'http://proxy', model: 'fallback-model' }] },
-    )
+      null,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState },
+    )).resolves.toBeNull()
 
-    expect(extractByLlm).toHaveBeenCalledTimes(2)
-    expect(vi.mocked(extractByLlm).mock.calls[0]?.[1]?.model).toBe('primary-model')
-    expect(vi.mocked(extractByLlm).mock.calls[1]?.[1]?.model).toBe('fallback-model')
-    expect(result!.llmCalled).toBe(true)
-    expect(result!.entry.marketValueText).toBe('from fallback model')
+    expect(downloadBlob).not.toHaveBeenCalled()
   })
 
-  it('does not try the next configured model for a non-availability error', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockRejectedValue(new Error('boom'))
+  it('returns null when archived auction bytes cannot be loaded', async () => {
+    vi.mocked(listDistinctCaptures).mockResolvedValue([{
+      contentHash: 'missing-blob',
+      sourceUrl: null,
+      capturedAt: '2026-08-02T10:00:00.000Z',
+    }])
+    vi.mocked(downloadBlob).mockResolvedValue(null)
 
     await expect(reprocessAuction(
       'zvg-portal',
       '7265',
       undefined,
-      { baseUrl: 'http://proxy', model: 'primary-model' },
-      '2026-07-22T00:00:00.000Z',
-      { fallbackConfigs: [{ baseUrl: 'http://proxy', model: 'fallback-model' }] },
-    )).rejects.toThrow('boom')
-    expect(extractByLlm).toHaveBeenCalledTimes(1)
+      null,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState },
+    )).resolves.toBeNull()
   })
 
-  it('falls back to the vision path for a scanned appraisal PDF and merges the LLM result', async () => {
-    const auction = makeAuction({
-      attachments: [
-        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
-      ],
+  it('keeps the parsed artifact pointer when only rules run', async () => {
+    vi.mocked(listDistinctCaptures).mockResolvedValue([{
+      contentHash: 'auction-hash',
+      sourceUrl: null,
+      capturedAt: '2026-08-02T10:00:00.000Z',
+    }])
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction())))
+
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      null,
+      '2026-08-02T11:00:00.000Z',
+      {
+        priorLlmFailures: 2,
+        artifactState: {
+          latest: {
+            id: 22,
+            platform: 'zvg-portal',
+            externalId: '7265',
+            version: 2,
+            setHash: 'latest-hash',
+          },
+          parsedArtifactVersionId: 11,
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      llmCalled: false,
+      llmFailures: 2,
+      artifactVersionId: 11,
+      entry: { source: 'rules', confidence: 'high' },
+      llmConfigUsed: null,
+      llmDurationMs: null,
     })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
-      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-      return null
-    })
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
-      documentSetItem({
-        ordinal: 0,
-        label: 'Gutachten',
-        filename: 'gutachten.pdf',
-        fileId: '1',
-        sourceUrl: '/api/zvg-proxy?file_id=1',
-        contentHash: 'doc1',
-      }),
-    ])
-    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
-      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
-      if (hash === 'doc1') return SCANNED_LIKE_PDF
-      return null
-    })
-    const llmResult = {
-      propertyType: 'einfamilienhaus' as const,
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: 2,
-      bathrooms: 1,
-      floor: 'DG',
-      bathroomHasTub: true,
-      bathroomHasShower: false,
-      heating: 'Fernwärme',
-      units: 1,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: 'gepflegt' as const,
-      features: ['garage' as const],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
+  })
+
+  it('records the fallback config that actually answered, not the primary', async () => {
+    const primary = { baseUrl: 'https://api.example.test', apiKey: 'k1', model: 'primary-model', provider: 'openai-compatible' as const }
+    const fallback = {
+      baseUrl: 'https://api.example.test', apiKey: 'k2', model: 'fallback-model', provider: 'openai-compatible' as const, profileId: 'profile-2',
     }
-    vi.mocked(extractByLlm).mockResolvedValue(llmResult)
+    vi.mocked(isLlmProviderUnavailable).mockReturnValueOnce(true)
+    vi.mocked(extractByLlm)
+      .mockRejectedValueOnce(new Error('rate limited'))
+      .mockImplementationOnce(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        return null
+      })
 
-    const result = await reprocessAuction('zvg-portal', '7265', undefined, { baseUrl: 'http://proxy', model: 'claude-haiku-4-5' }, '2026-07-22T00:00:00.000Z')
-
-    expect(result!.llmCalled).toBe(true)
-    expect(result!.entry.source).toBe('llm')
-    expect(result!.entry.propertyType).toBe('einfamilienhaus')
-    expect(result!.entry.condition).toBe('gepflegt')
-    expect(result!.entry.features).toEqual(['garage'])
-
-    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
-    expect(callArgs.pdfPageImages).not.toBeNull()
-    expect(callArgs.pdfPageImages).toHaveLength(1)
-    expect(Buffer.from(callArgs.pdfPageImages![0]!, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]))
-  })
-
-  it('feeds a gemini-native call the raw PDF bytes and skips pdftotext/vision rendering', async () => {
-    const auction = makeAuction({
-      attachments: [
-        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
-      ],
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) => {
-      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-      return null
-    })
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
-      documentSetItem({
-        ordinal: 0,
-        label: 'Gutachten',
-        filename: 'gutachten.pdf',
-        fileId: '1',
-        sourceUrl: '/api/zvg-proxy?file_id=1',
-        contentHash: 'doc1',
-      }),
-    ])
-    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
-      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
-      if (hash === 'doc1') return SCANNED_LIKE_PDF
-      return null
-    })
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: 2,
-      bathrooms: 1,
-      floor: 'DG',
-      bathroomHasTub: true,
-      bathroomHasShower: false,
-      heating: 'Fernwärme',
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: null,
-      features: [],
-      yearBuilt: 1998,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
-    })
-
-    await reprocessAuction(
+    const result = await reprocessAuction(
       'zvg-portal',
       '7265',
       undefined,
-      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' },
-      '2026-07-22T00:00:00.000Z',
+      primary,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, fallbackConfigs: [fallback] },
     )
 
-    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
-    expect(callArgs.pdfText).toBeNull()
-    expect(callArgs.pdfPageImages).toBeNull()
-    expect(callArgs.pdfBytes).toEqual(SCANNED_LIKE_PDF.toString('base64'))
-    expect(extractPdfTextFromBuffer).not.toHaveBeenCalled()
-    expect(renderPdfPagesJpeg).not.toHaveBeenCalled()
+    expect(result?.llmConfigUsed).toEqual(fallback)
+    expect(result?.llmDurationMs).toEqual(expect.any(Number))
   })
 
-  it('feeds every archived document format to native-document LLM providers', async () => {
-    const jpgBytes = Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xd9])
-    const auction = makeAuction({
-      attachments: [
-        { kind: 'appraisal', label: 'Gutachten', filename: 'gutachten.pdf', sizeBytes: 1000, fileId: '1', proxyUrl: '/api/zvg-proxy?file_id=1' },
-        { kind: 'other', label: 'Biethinweise', filename: 'hinweise.pdf', sizeBytes: 500, fileId: '2', proxyUrl: '/api/zvg-proxy?file_id=2' },
-        { kind: 'brochure', label: 'Expose HTML', filename: 'expose.html', sizeBytes: 400, fileId: '3', proxyUrl: 'https://example.test/expose.html' },
-        { kind: 'other', label: 'Scan JPG', filename: 'scan.jpg', sizeBytes: jpgBytes.length, fileId: '4', proxyUrl: 'https://example.test/scan.jpg' },
-      ],
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, _externalId, sourceUrl) => {
-      if (kind === 'auction') return { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-      if (kind === 'detail_html') return { contentHash: 'detail', sourceUrl: 'https://example.test/detail', capturedAt: '2026-07-01T00:00:00.000Z' }
-      return null
-    })
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
-      documentSetItem({
-        ordinal: 0,
-        label: 'Gutachten',
-        filename: 'gutachten.pdf',
-        fileId: '1',
-        sourceUrl: '/api/zvg-proxy?file_id=1',
-        contentHash: 'doc1',
-      }),
-      documentSetItem({
-        ordinal: 1,
-        label: 'Expose HTML',
-        filename: 'expose.html',
-        fileId: '3',
-        sourceUrl: 'https://example.test/expose.html',
-        contentHash: 'doc3',
-        contentType: 'text/html',
-      }),
-      documentSetItem({
-        ordinal: 2,
-        label: 'Scan JPG',
-        filename: 'scan.jpg',
-        fileId: '4',
-        sourceUrl: 'https://example.test/scan.jpg',
-        contentHash: 'doc4',
-        contentType: 'image/jpeg',
-      }),
-      documentSetItem({
-        ordinal: 3,
-        label: 'Biethinweise',
-        filename: 'hinweise.pdf',
-        fileId: '2',
-        sourceUrl: '/api/zvg-proxy?file_id=2',
-        contentHash: 'doc2',
-      }),
-    ])
-    vi.mocked(downloadBlob).mockImplementation(async (hash) => {
-      if (hash === 'abc') return Buffer.from(JSON.stringify(auction))
-      if (hash === 'doc1') return Buffer.from('%PDF-1.4\none\n%%EOF')
-      if (hash === 'doc2') return Buffer.from('%PDF-1.4\ntwo\n%%EOF')
-      if (hash === 'doc3') return Buffer.from('<html><body><h1>Wohnhaus</h1><p>Baujahr 1999</p></body></html>')
-      if (hash === 'doc4') return jpgBytes
-      if (hash === 'detail') return Buffer.from('<html><body><p>Detail HTML: Grundstueck 700 m2</p></body></html>')
-      return null
-    })
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: null,
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
-    })
-
-    await reprocessAuction(
-      'zvg-portal',
-      '7265',
-      undefined,
-      { provider: 'gemini-native', baseUrl: 'http://gemini', model: 'gemini-flash-latest' },
-      '2026-07-22T00:00:00.000Z',
-    )
-
-    const callArgs = vi.mocked(extractByLlm).mock.calls[0]![0]
-    expect(callArgs.pdfBytes).toBeNull()
-    expect(callArgs.pdfDocuments).toEqual([
-      { label: 'Gutachten', data: Buffer.from('%PDF-1.4\none\n%%EOF').toString('base64') },
-      { label: 'Biethinweise', data: Buffer.from('%PDF-1.4\ntwo\n%%EOF').toString('base64') },
-    ])
-    expect(callArgs.documentText).toContain('Wohnhaus')
-    expect(callArgs.documentText).toContain('Detail HTML: Grundstueck 700 m2')
-    expect(callArgs.documentImages).toEqual([
-      { label: 'Scan JPG', mimeType: 'image/jpeg', data: jpgBytes.toString('base64') },
-    ])
-  })
-
-  it('bumps llmFailures and keeps the prior rules-only fields when the LLM request fails', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+  it('leaves provenance empty when extraction bailed out before any provider request', async () => {
+    // extractByLlm returns null *without* calling onProviderAttempt when the
+    // archived snapshot yields no parts at all — attributing that rules-only
+    // version to a model that was never asked would misreport it.
+    const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'never-asked', provider: 'openai-compatible' as const }
     vi.mocked(extractByLlm).mockResolvedValue(null)
 
-    const prior: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: 2,
-      bathrooms: 1,
-      floor: 'DG',
-      bathroomHasTub: true,
-      bathroomHasShower: false,
-      heating: 'Fernwärme',
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      llmFailures: 1,
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    const result = await reprocessAuction('zvg-portal', '7265', prior, { baseUrl: 'http://proxy', model: 'claude-haiku-4-5' }, '2026-07-22T00:00:00.000Z')
+    const result = await reprocessAuction(
+      'zvg-portal',
+      '7265',
+      undefined,
+      config,
+      '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState },
+    )
 
-    expect(result!.entry.source).toBe('rules')
-    expect(result!.entry.llmFailures).toBe(2)
-    expect(result!.entry.bedrooms).toBe(2)
-    expect(result!.entry.bathrooms).toBe(1)
-    expect(result!.entry.floor).toBe('DG')
-    expect(result!.entry.bathroomHasTub).toBe(true)
-    expect(result!.entry.bathroomHasShower).toBe(false)
-    expect(result!.entry.heating).toBe('Fernwärme')
+    expect(result?.llmConfigUsed).toBeNull()
+    expect(result?.llmDurationMs).toBeNull()
+  })
+})
+
+describe('reprocessAuction map-reduce', () => {
+  const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'test-model', provider: 'openai-compatible' as const }
+
+  function clampedExtraction(overrides: Partial<import('../utils/extract/llm-clamp').ClampedExtraction> = {}) {
+    return {
+      propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
+      bedrooms: null, bathrooms: null, floor: null, bathroomHasTub: null, bathroomHasShower: null,
+      heating: null, units: null, securityDeposit: null, ruleCheck: null,
+      biddingNotes: null, condition: null, features: [], yearBuilt: null, lastRenovationYear: null,
+      renovationNotes: null, insights: null, planningNotes: null, documentSummary: null,
+      marketValueEur: null, marketValueText: null, photoCuration: [],
+      ...overrides,
+    }
+  }
+
+  function mapReduceBase(overrides: Partial<ReprocessInput> = {}): ReprocessInput {
+    return {
+      fields: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, securityDeposit: null },
+      input: { title: 'Testauktion', description: 'Beschreibung' },
+      documentSummaryInputs: [
+        { label: 'Gutachten', parts: { pdfText: 'Gutachten Text', pdfPageImages: null, pdfBytes: null } },
+        { label: 'Exposé', parts: { pdfText: 'Exposé Text', pdfPageImages: null, pdfBytes: null } },
+      ],
+      documentSetChanged: false,
+      documentSetComplete: true,
+      artifactVersionId: 5,
+      photoSourceIndices: undefined,
+      auction: auction(),
+      ...overrides,
+    }
+  }
+
+  it('runs every document group plus one reduce call, counted as N+1 real attempts', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return opts?.name === DOCUMENT_SUMMARY_SCHEMA_NAME
+        ? clampedExtraction({ documentSummary: `map:${(input as { pdfText?: string }).pdfText}` })
+        : clampedExtraction({ propertyType: 'eigentumswohnung' })
+    })
+    const onLlmAttempt = vi.fn()
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), onLlmAttempt },
+    )
+
+    expect(result?.llmCalled).toBe(true)
+    expect(result?.llmFailures).toBe(0)
+    expect(result?.entry.propertyType).toBe('eigentumswohnung')
+    expect(extractByLlm).toHaveBeenCalledTimes(3)
+    expect(onLlmAttempt).toHaveBeenCalledTimes(3)
   })
 
-  it('skips the LLM branch entirely when llmConfig is null', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+  it('skips without spending anything when the remaining budget cannot fit a map+reduce sequence', async () => {
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), remainingLlmBudget: 1 },
     )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
 
-    const result = await reprocessAuction('zvg-portal', '7265', undefined, null, '2026-07-22T00:00:00.000Z')
-
-    expect(result!.llmCalled).toBe(false)
+    expect(result).toBeNull()
     expect(extractByLlm).not.toHaveBeenCalled()
   })
 
-  it('keeps prior LLM-only fields when llmConfig is null and only rules run', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    const priorEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: 3,
-      bathrooms: 2,
-      floor: 'EG',
-      bathroomHasTub: true,
-      bathroomHasShower: true,
-      heating: 'Gaszentralheizung',
-      units: 1,
-      source: 'rules',
-      confidence: 'low',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, null, '2026-07-22T00:00:00.000Z')
-
-    expect(result!.llmCalled).toBe(false)
-    expect(result!.entry).toMatchObject({
-      bedrooms: 3,
-      bathrooms: 2,
-      floor: 'EG',
-      bathroomHasTub: true,
-      bathroomHasShower: true,
-      heating: 'Gaszentralheizung',
-    })
-  })
-})
-
-describe('reprocessAuction: archivedDocumentSetHash vs documentSetHash', () => {
-  const llmResult = {
-    propertyType: null,
-    landAreaSqm: null,
-    livingAreaSqm: null,
-    rooms: null,
-    bedrooms: null,
-    bathrooms: null,
-    floor: null,
-    bathroomHasTub: null,
-    bathroomHasShower: null,
-    heating: null,
-    units: null,
-    securityDeposit: null,
-    biddingNotes: null,
-    condition: 'gepflegt' as const,
-    features: ['garage' as const],
-    yearBuilt: null,
-    lastRenovationYear: null,
-    renovationNotes: null,
-    insights: null,
-    planningNotes: null,
-    photoCuration: [],
-    marketValueEur: null,
-    marketValueText: null,
-  }
-
-  it('rebuilds LLM-only fields from scratch instead of merging stale ones when the archived set changed', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockResolvedValue(llmResult)
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-
-    // documentSetHash (last parsed) is stale relative to archivedDocumentSetHash
-    // (enrich.ts's latest archive) — a document changed since the last parse.
-    const priorEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 500,
-      livingAreaSqm: 120,
-      rooms: 4,
-      units: 1,
-      source: 'llm',
-      confidence: 'high',
-      condition: 'sanierungsbeduerftig',
-      features: ['stellplatz'],
-      insights: { summary: 'old insight' } as never,
-      documentSetHash: 'old-hash',
-      documentSetVersion: 1,
-      archivedDocumentSetHash: 'new-hash',
-      archivedDocumentSetVersion: 2,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
-
-    // The stale condition/features/old insight must not survive — only the
-    // fresh LLM result (or nothing) does.
-    expect(result!.entry.condition).toBe('gepflegt')
-    expect(result!.entry.features).toEqual(['garage'])
-    expect(result!.entry.insights).toBeNull()
-  })
-
-  it('marks documentSetHash caught up to archivedDocumentSetHash after a successful parse', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockResolvedValue(llmResult)
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-
-    const priorEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      archivedDocumentSetHash: 'new-hash',
-      archivedDocumentSetVersion: 2,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
-
-    expect(result!.entry.documentSetHash).toBe('new-hash')
-    expect(result!.entry.documentSetVersion).toBe(2)
-    expect(result!.entry.archivedDocumentSetHash).toBe('new-hash')
-    expect(result!.entry.archivedDocumentSetVersion).toBe(2)
-  })
-
-  it('carries archivedDocumentSetHash/Version through unchanged when the LLM is disabled (rules-only path)', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-
-    const priorEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      archivedDocumentSetHash: 'a-hash',
-      archivedDocumentSetVersion: 3,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, null, '2026-07-22T00:00:00.000Z')
-
-    // No LLM attempt happened, so this task hasn't "caught up" — only the
-    // crawl-owned archived* bookkeeping passes through untouched.
-    expect(result!.entry.documentSetHash).toBeNull()
-    expect(result!.entry.archivedDocumentSetHash).toBe('a-hash')
-    expect(result!.entry.archivedDocumentSetVersion).toBe(3)
-  })
-
-  it('does not mark documentSetHash caught up when the LLM request fails', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockResolvedValue(null)
-
-    const priorEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      documentSetHash: 'old-hash',
-      documentSetVersion: 1,
-      archivedDocumentSetHash: 'new-hash',
-      archivedDocumentSetVersion: 2,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
-
-    // The failed request must not be stamped as "parsed" — otherwise the
-    // listing would never become due for reprocessing again.
-    expect(result!.entry.documentSetHash).toBe('old-hash')
-    expect(result!.entry.documentSetVersion).toBe(1)
-    expect(result!.entry.archivedDocumentSetHash).toBe('new-hash')
-  })
-
-  it('does not mark documentSetHash caught up when the archived document set could not be read in full', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(readDocumentSetItems).mockResolvedValueOnce(null)
-    vi.mocked(extractByLlm).mockResolvedValue(llmResult)
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-
-    const priorEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      documentSetHash: 'old-hash',
-      documentSetVersion: 1,
-      archivedDocumentSetHash: 'new-hash',
-      archivedDocumentSetVersion: 2,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
-
-    // The LLM call "succeeded" but only against a partially-read document
-    // set (readDocumentSetItems returned null) — documentSetHash must not
-    // jump to archivedDocumentSetHash, or the missing document(s) would
-    // never be picked up on a later run.
-    expect(result!.entry.documentSetHash).toBe('old-hash')
-    expect(result!.entry.documentSetVersion).toBe(1)
-    expect(result!.entry.archivedDocumentSetHash).toBe('new-hash')
-  })
-})
-
-describe('reprocessAuction: candidate photo tolerance and curation remap', () => {
-  const basePhotos = [
-    { file: 'a.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
-    { file: 'b.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
-    { file: 'c.jpg', category: 'sonstiges' as const, caption: null, isPropertyPhoto: false },
-  ]
-  const llmResult = {
-    propertyType: null,
-    landAreaSqm: null,
-    livingAreaSqm: null,
-    rooms: null,
-    bedrooms: null,
-    bathrooms: null,
-    floor: null,
-    bathroomHasTub: null,
-    bathroomHasShower: null,
-    heating: null,
-    units: null,
-    securityDeposit: null,
-    biddingNotes: null,
-    condition: null,
-    features: [],
-    yearBuilt: null,
-    lastRenovationYear: null,
-    renovationNotes: null,
-    insights: null,
-    planningNotes: null,
-    photoCuration: [],
-    marketValueEur: null,
-    marketValueText: null,
-  }
-
-  it('drops an unreadable candidate photo instead of failing the whole batch, and remaps the LLM curation back onto the original photo positions', async () => {
-    const auction = makeAuction()
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    // b.jpg (original index 1) fails to read — only a.jpg/c.jpg (original
-    // indices 0/2) reach the LLM, as candidateImages[0]/[1].
-    vi.mocked(readFile).mockImplementation(async (path) => {
-      if (String(path).includes('b.jpg')) throw new Error('ENOENT')
-      return Buffer.from('fake-image-bytes')
-    })
-    vi.mocked(extractByLlm).mockResolvedValue({
-      ...llmResult,
-      // Refers to candidateImages[1], i.e. c.jpg — must land on original
-      // index 2, not on b.jpg which never reached the LLM.
-      photoCuration: [{ photoIndex: 1, category: 'aussen', caption: 'Garten', isPropertyPhoto: true }],
-    })
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-
-    const priorEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      photos: basePhotos,
-      at: '2026-06-01T00:00:00.000Z',
-    }
-
-    const result = await reprocessAuction('zvg-portal', '7265', priorEntry, { baseUrl: 'http://proxy' } as never, '2026-07-22T00:00:00.000Z')
-
-    expect(vi.mocked(extractByLlm).mock.calls[0]?.[0].candidateImages).toHaveLength(2)
-    expect(result!.entry.photos?.[0]).toMatchObject({ file: 'a.jpg', category: 'sonstiges' })
-    expect(result!.entry.photos?.[1]).toMatchObject({ file: 'b.jpg', category: 'sonstiges' })
-    expect(result!.entry.photos?.[2]).toMatchObject({
-      file: 'c.jpg',
-      category: 'aussen',
-      caption: 'Garten',
-      isPropertyPhoto: true,
-    })
-  })
-})
-
-describe('runReprocess', () => {
-  beforeEach(() => {
-    vi.mocked(ensureEnabledCountriesLoaded).mockResolvedValue(['se'])
-    vi.mocked(getEnabledCountryCodes).mockReturnValue(['se'])
-    vi.mocked(isCountryEnabled).mockImplementation((country) => country === 'se')
-    vi.mocked(readExtractionCache).mockResolvedValue({})
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({})
-    vi.mocked(writeExtractionCache).mockResolvedValue(true)
-    vi.mocked(writeAuctionSnapshot).mockResolvedValue(undefined)
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: {} }))
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
-
-  it('rejects a forced run with no filter', async () => {
-    await expect(runReprocess({ force: true })).rejects.toThrow(/requires country/)
-  })
-
-  it('allows a forced run scoped to one enabled country', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-
-    await expect(runReprocess({ country: 'SE', force: true })).resolves.toEqual({
-      candidates: 0,
-      processed: 0,
-      skipped: 0,
-      llmCalls: 0,
-      llmErrors: 0,
-      durationMs: expect.any(Number),
-    })
-
-    const [sql, params] = query.mock.calls[0]!
-    expect(sql).toContain('country = $1')
-    expect(params).toEqual(['se'])
-  })
-
-  it('does not overwrite remaining forced candidates with rules-only entries after the LLM cap is reached', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
-    const query = vi.fn().mockResolvedValue({
-      rows: [
-        { platform: 'zvg-portal', external_id: '7265' },
-        { platform: 'zvg-portal', external_id: '2222' },
-      ],
-    })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockResolvedValue({ contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' })
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
-    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+  it('slices document groups to fit the remaining budget instead of overspending it', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
       opts?.onProviderAttempt?.()
-      return null
+      return clampedExtraction()
     })
 
-    const result = await runReprocess({ country: 'SE', force: true })
-
-    expect(result).toMatchObject({ candidates: 2, processed: 1, skipped: 1, llmCalls: 1 })
-    expect(writeExtractionCache).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).toHaveProperty('zvg-portal:7265')
-    expect(vi.mocked(writeExtractionCache).mock.calls[0]?.[0]).not.toHaveProperty('zvg-portal:2222')
-  })
-
-  it('counts every fallback attempt toward the per-platform LLM cap, not just the first', async () => {
-    // Two platforms among the candidates → llmCapPerPlatform = ceil(4/2) = 2.
-    // zvg-portal:1 alone needs 2 attempts (primary unavailable, then the
-    // fallback succeeds), which must exhaust zvg-portal's cap on its own and
-    // leave zvg-portal:2 as rules-only — not trigger a second real LLM call.
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '4' } }))
-    const ineligibleEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: 1,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      marketValueEur: null,
-      marketValueText: null,
-      source: 'llm',
-      confidence: 'high',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    const query = vi.fn().mockResolvedValue({
-      rows: [
-        { platform: 'zvg-portal', external_id: '1' },
-        { platform: 'zvg-portal', external_id: '2' },
-        { platform: 'other-portal', external_id: '9' },
-      ],
-    })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    // Only present to make llmPlatformCount = 2 (its own cap); already-complete
-    // so it consumes no LLM budget itself and can't interfere with the assertion.
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'other-portal:9': ineligibleEntry })
-    // Once — readExtractionLlmConfigChain is called a single time per run
-    // (before the per-candidate loop), and mockResolvedValue would otherwise
-    // leak this fallback chain into later tests (afterEach only clears call
-    // history, not configured implementations).
-    vi.mocked(readExtractionLlmConfigChain).mockResolvedValueOnce([
-      { provider: 'openai-compatible', baseUrl: 'http://proxy', model: 'primary-model' },
-      { provider: 'openai-compatible', baseUrl: 'http://proxy', model: 'fallback-model' },
-    ])
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
+    // 2 document groups available, but only 2 calls of budget — must take
+    // exactly 1 group (+ 1 reduce), never both groups (+ 1 reduce = 3).
+    await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), remainingLlmBudget: 2 },
     )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(makeAuction())))
-    vi.mocked(extractByLlm).mockImplementation(async (_input, config, opts) => {
-      opts?.onProviderAttempt?.()
-      if (config.model === 'primary-model') {
-        throw Object.assign(new Error('http 429'), { response: { status: 429 } })
-      }
-      return {
-        propertyType: null,
-        landAreaSqm: null,
-        livingAreaSqm: null,
-        rooms: null,
-        bedrooms: null,
-        bathrooms: null,
-        floor: null,
-        bathroomHasTub: null,
-        bathroomHasShower: null,
-        heating: null,
-        units: null,
-        securityDeposit: null,
-        biddingNotes: null,
-        condition: null,
-        features: [],
-        yearBuilt: null,
-        lastRenovationYear: null,
-        renovationNotes: null,
-        insights: null,
-        planningNotes: null,
-        photoCuration: [],
-        marketValueEur: null,
-        marketValueText: 'from fallback model',
-      }
-    })
-
-    const result = await runReprocess({ country: 'SE' })
 
     expect(extractByLlm).toHaveBeenCalledTimes(2)
-    expect(result.llmCalls).toBe(2)
   })
 
-  it('returns all-zero without a configured DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
-    const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-  })
-
-  it('scopes the candidate query to enabled countries plus whatever filters were given', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-
-    await runReprocess({ platform: 'zvg-portal', externalId: '7265' })
-
-    const [sql, params] = query.mock.calls[0]!
-    expect(sql).toContain("kind = 'auction'")
-    expect(sql).toContain('country = $1')
-    expect(sql).toContain('platform = $2')
-    expect(sql).toContain('external_id = $3')
-    expect(params).toEqual(['se', 'zvg-portal', '7265'])
-  })
-
-  it('uses all enabled countries when no explicit country is given', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(getEnabledCountryCodes).mockReturnValue(['se', 'dk'])
-
-    await runReprocess({})
-
-    const [sql, params] = query.mock.calls[0]!
-    expect(sql).toContain('country = ANY($1)')
-    expect(params).toEqual([['se', 'dk']])
-  })
-
-  it('uses an explicitly selected country only when that country is enabled', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-
-    await runReprocess({ country: 'SE' })
-
-    const [sql, params] = query.mock.calls[0]!
-    expect(sql).toContain('country = $1')
-    expect(params).toEqual(['se'])
-  })
-
-  it('returns no candidates for an explicitly selected disabled country', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-
-    const result = await runReprocess({ country: 'de' })
-
-    expect(result).toEqual({ candidates: 0, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(query).not.toHaveBeenCalled()
-  })
-
-  it('skips already-complete entries by default and processes them when forced', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-
-    const completeEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: 1,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      marketValueEur: null,
-      marketValueText: null,
-      source: 'llm',
-      confidence: 'high',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': completeEntry })
-
-    const skippedResult = await runReprocess({})
-    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-
-    const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
-    expect(forcedResult.processed).toBe(1)
-    expect(writeExtractionCache).toHaveBeenCalledWith({ 'zvg-portal:7265': expect.objectContaining({ propertyType: 'einfamilienhaus' }) })
-  })
-
-  it('counts a rate limit failure as skipped and leaves the cache entry (and llmFailures) untouched', async () => {
-    // A capacity outage (see llm.ts's isRateLimitError()) must never count
-    // toward MAX_LLM_FAILURES — otherwise a few hours of rate-limiting
-    // permanently downgrades every affected auction to rules-only, with no
-    // recovery even once the outage clears (the prod incident this guards).
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-    const auction = makeAuction()
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+  it('increments llmFailures and reports failure when every map call fails', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
       opts?.onProviderAttempt?.()
-      throw Object.assign(new Error('http 429'), {
-        response: { status: 429 },
-        data: {
-          error: {
-            status: 'RESOURCE_EXHAUSTED',
-            details: [
-              {
-                violations: [
-                  {
-                    quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier',
-                    quotaDimensions: { model: 'gemini-3.6-flash' },
-                    quotaValue: '20',
-                  },
-                ],
-              },
-            ],
-          },
-        },
-      })
-    })
-
-    const prior: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
-      llmFailures: 2,
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': prior })
-
-    const result = await runReprocess({})
-
-    expect(result).toEqual({
-      candidates: 1,
-      processed: 0,
-      skipped: 1,
-      llmCalls: 1,
-      llmErrors: 0,
-      durationMs: expect.any(Number),
-      warning: expect.stringContaining('GenerateRequestsPerDayPerProjectPerModel-FreeTier'),
-    })
-    expect(result.warning).toContain('gemini-3.6-flash')
-    expect(result.warning).toContain('Limit 20')
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-  })
-
-  it('counts a genuine provider request failure toward llmErrors and records the last message, unlike a rate limit', async () => {
-    // The prod incident this covers: a provider request that fails outright
-    // (e.g. 403 from a misconfigured key) was previously indistinguishable
-    // from "the LLM returned nothing" — 69/69 calls failed with zero visible
-    // errors in the reprocess status. onProviderError (see llm.ts) fires only
-    // for this case, never for the rate-limit throw above.
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-    const auction = makeAuction()
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
-      opts?.onProviderAttempt?.()
-      opts?.onProviderError?.(new Error('403 unregistered callers'))
       return null
     })
 
-    const result = await runReprocess({})
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, prebuiltBase: mapReduceBase(), priorLlmFailures: 1 },
+    )
 
-    expect(result).toMatchObject({ candidates: 1, llmCalls: 1, llmErrors: 1 })
-    expect(result.lastLlmError).toContain('zvg-portal:7265')
-    expect(result.lastLlmError).toContain('403 unregistered callers')
+    expect(result?.llmCalled).toBe(true)
+    expect(result?.llmFailures).toBe(2)
+    // Both maps attempted, no reduce call once neither produced anything.
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('runReprocess structured persistence', () => {
+  it('does not re-run a successful extraction merely because optional LLM fields are absent', async () => {
+    const prior = extraction({
+      llmAnalyzedAt: '2026-08-02T10:00:00.000Z',
+      // Deliberately no condition/features/insights/etc.: these are valid
+      // optional omissions in a model response, not unfinished work.
+    })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native',
+    }])
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1, llmCalls: 0 })
+
+    expect(extractByLlm).not.toHaveBeenCalled()
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
   })
 
-  it('stops the current sync run after a provider rate limit instead of spending every candidate', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-    const auction = makeAuction()
-    const query = vi.fn().mockResolvedValue({
-      rows: [
-        { platform: 'zvg-portal', external_id: '1' },
-        { platform: 'zvg-portal', external_id: '2' },
-      ],
+  it('persists a synchronous rules result before updating the current projection', async () => {
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ extraction: expect.objectContaining({ source: 'rules' }) }),
+      expect.objectContaining({ source: 'rules' }),
+      {
+        artifactVersionId: null,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+        llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
+      },
+    )
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmRulesHint: null,
+      llmFailures: 0,
+      llmAttempted: false,
     })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockResolvedValue({
-      contentHash: 'abc',
-      sourceUrl: null,
-      capturedAt: '2026-07-01T00:00:00.000Z',
+    expect(vi.mocked(writeAuctionDetails).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(upsertCurrentAuctions).mock.invocationCallOrder[0]!)
+  })
+
+  it('preserves visible details and records exact artifact provenance for a submitted batch', async () => {
+    const prior = extraction({ condition: 'gepflegt', documentSummary: 'Bisherige Zusammenfassung' })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 2, llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]]))
+    vi.mocked(readArtifactProcessingState).mockResolvedValue({
+      latest: {
+        id: 22, platform: 'zvg-portal', externalId: '7265', version: 3, setHash: 'set-22',
+      },
+      parsedArtifactVersionId: 11,
     })
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'batch-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(submitLlmBatch).mockResolvedValue({
+      jobName: 'batch-22',
+      submitted: [{ key: 'zvg-portal:7265', jobName: 'batch-22' }],
+      retryItems: [],
+    })
+
+    await expect(runReprocess({ country: 'de', batch: true })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ condition: 'gepflegt', documentSummary: 'Bisherige Zusammenfassung' }),
+      {
+        artifactVersionId: 11,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+        llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
+      },
+    )
+    // The rules values shown to the model are snapshotted with the submitted
+    // item, so llm-batch-poll can tell a stale verdict from a current one.
+    expect(writeAuctionLlmPipelineState).toHaveBeenLastCalledWith('zvg-portal', '7265', {
+      llmBatchJob: 'batch-22',
+      llmArtifactVersionId: 22,
+      llmRulesHint: { propertyType: 'einfamilienhaus', rooms: null, units: null, securityDeposit: null },
+      llmFailures: 2,
+      llmAttempted: true,
+    })
+  })
+
+  it('keeps a prior LLM extraction visible and warns when a forced batch submission fails', async () => {
+    const prior = extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: prior },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'batch-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(submitLlmBatch).mockResolvedValue(null)
+
+    const result = await runReprocess({ country: 'de', batch: true, force: true })
+
+    expect(result.warning).toContain('LLM-Batch-Einreichung')
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({ source: 'llm', livingAreaSqm: 120, landAreaSqm: 500, llmAnalyzedAt: prior.llmAnalyzedAt }),
+      expect.any(Object),
+    )
+  })
+
+  it('routes a candidate needing multimodal content to the synchronous path when the configured batch provider is OpenRouter (text-only)', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://openrouter.ai/api/v1', apiKey: 'sk-or-test', model: 'google/gemini-3.5-flash-lite', provider: 'openrouter',
+    }])
+    vi.mocked(prepareArchivedLlmDocuments).mockResolvedValueOnce({
+      input: { pdfPageImages: ['base64page1'] },
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: null,
+    })
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const result = await runReprocess({ country: 'de', batch: true })
+
+    expect(result).toMatchObject({ processed: 1, llmCalls: 1 })
+    expect(submitLlmBatch).not.toHaveBeenCalled()
+    // Handed the input the batch path already built rather than rebuilding it:
+    // preparing the document set downloads every archived blob and re-renders
+    // scanned PDF pages, and this fall-through is the normal case for a
+    // text-only batch provider (every auction carrying photos or a scan).
+    expect(prepareArchivedLlmDocuments).toHaveBeenCalledTimes(1)
+    expect(extractByLlm).toHaveBeenCalledWith(
+      expect.objectContaining({ pdfPageImages: ['base64page1'] }),
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+
+  it("records the winning model's provenance, run trigger and duration on the written version", async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
     vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
       opts?.onProviderAttempt?.()
-      throw Object.assign(new Error('http 429'), { response: { status: 429 } })
-    })
-    vi.mocked(readExtractionCache).mockResolvedValue({})
-
-    const result = await runReprocess({})
-
-    expect(result).toEqual({
-      candidates: 2,
-      processed: 0,
-      skipped: 1,
-      llmCalls: 1,
-      llmErrors: 0,
-      durationMs: expect.any(Number),
-      warning: expect.stringContaining('LLM-Rate-Limit'),
-    })
-    expect(extractByLlm).toHaveBeenCalledTimes(1)
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-  })
-
-  it('reprocesses an otherwise-complete entry without force when enrich.ts archived a newer document set', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-
-    const completeButStaleEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      units: 1,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      marketValueEur: null,
-      marketValueText: null,
-      source: 'llm',
-      confidence: 'high',
-      documentSetHash: 'old-hash',
-      documentSetVersion: 1,
-      archivedDocumentSetHash: 'new-hash',
-      archivedDocumentSetVersion: 2,
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': completeButStaleEntry })
-
-    const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-  })
-
-  it('backfills an entry whose only missing LLM field is renovationNotes', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: 'Dach erneuert',
-      insights: null,
-      planningNotes: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
+      return null
     })
 
-    const missingRenovationNotesEntry: AuctionExtraction = {
-      propertyType: 'einfamilienhaus',
-      landAreaSqm: 850,
-      livingAreaSqm: 140,
-      rooms: 5,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: 1,
-      condition: 'gepflegt',
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      insights: null,
-      source: 'llm',
-      confidence: 'high',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': missingRenovationNotesEntry })
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
 
-    const result = await runReprocess({})
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(writeExtractionCache).toHaveBeenCalledWith({
-      'zvg-portal:7265': expect.objectContaining({ renovationNotes: 'Dach erneuert' }),
-    })
-  })
-
-  it('submits a batch probe instead of falling back to sync when batch is explicitly requested despite a known-broken provider', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({
-      extractLlm: {
-        provider: 'gemini-native',
-        baseUrl: 'https://generativelanguage.googleapis.com',
-        apiKey: 'test-key',
-        model: 'gemini-flash-latest',
-        // Free tier's static gate (supportsLlmBatch → isGeminiBatchTierPaid)
-        // is unrelated to what this test targets — the known-broken bypass —
-        // so pin the tier to paid to isolate that behavior.
-        geminiBatchTier: 'paid',
-      },
-    }))
-    vi.mocked(submitLlmBatch).mockResolvedValueOnce(null)
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(readExtractionCache).mockResolvedValue({})
-
-    // opts.batch === true is the /settings "Submit via Batch API" checkbox —
-    // an explicit recovery probe that must reach the provider even though
-    // isLlmBatchProviderBroken would say it's known-broken, or the
-    // capability could never clear back to ok:true. Only the
-    // executionMode-derived automatic default defers to the known-broken
-    // gate and falls back to sync.
-    await runReprocess({ batch: true })
-
-    expect(isLlmBatchProviderBroken).not.toHaveBeenCalled()
-    expect(submitLlmBatch).toHaveBeenCalled()
-    expect(extractByLlm).not.toHaveBeenCalled()
-  })
-
-  it('does not select entries only missing LLM-only fields when no LLM provider is configured', async () => {
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(readExtractionCache).mockResolvedValue({
-      'zvg-portal:7265': {
-        propertyType: 'einfamilienhaus',
-        landAreaSqm: 850,
-        livingAreaSqm: 140,
-        rooms: 5,
-        units: 1,
-        source: 'llm',
-        confidence: 'high',
-        at: '2026-07-01T00:00:00.000Z',
-      },
-    })
-
-    const result = await runReprocess({})
-
-    expect(result).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(findLatestCapture).not.toHaveBeenCalled()
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-  })
-
-  it('backfills an entry whose only missing LLM field is marketValueEur', async () => {
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy' } }))
-    const auction = makeAuction({
-      marketValueEur: null,
-      marketValueText: null,
-      title: 'Gutshaus',
-      description: 'Verkehrswert: 78.000,00 €',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: null,
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      photoCuration: [],
-      marketValueEur: 78_000,
-      marketValueText: '78.000,00 €',
-    })
-
-    const missingMarketValueEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      condition: null,
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      documentSummary: null,
-      source: 'llm',
-      confidence: 'low',
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({
-      'zvg-portal:7265': missingMarketValueEntry,
-    })
-
-    const result = await runReprocess({})
-
-    expect(result).toEqual({ candidates: 1, processed: 1, skipped: 0, llmCalls: 1, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(writeExtractionCache).toHaveBeenCalledWith({
-      'zvg-portal:7265': expect.objectContaining({
-        marketValueEur: 78_000,
-        marketValueText: '78.000,00 €',
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({
+        llmProvider: 'gemini-native',
+        llmModel: 'vision-model',
+        llmProfileId: 'profile-a',
+        runTrigger: 'manual',
+        llmDurationMs: expect.any(Number),
       }),
+    )
+  })
+
+  it('claims the item before the sync LLM call and clears the claim once it resolves', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionLlmClaim).toHaveBeenCalledWith('zvg-portal', '7265', expect.any(String))
+    expect(vi.mocked(writeAuctionLlmClaim).mock.calls).toHaveLength(1)
+    // writeAuctionLlmPipelineState is the real writer's unconditional
+    // llm_claimed_at = NULL — asserting this call actually happened is what
+    // proves the claim was cleared, not just that it was set beforehand.
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmRulesHint: null,
+      llmFailures: 1,
+      llmAttempted: true,
     })
   })
 
-  it('syncs auction_snapshot only for auctions present in the snapshot', async () => {
-    const auction = makeAuction({
-      title: 'Einfamilienhaus',
-      description: 'Einfamilienhaus mit Wohnfläche ca. 140 m² und Grundstücksfläche 850 m².',
-    })
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'zvg-portal:7265': auction })
-
-    await runReprocess({})
-
-    expect(writeAuctionSnapshot).toHaveBeenCalledTimes(1)
-    const [written] = vi.mocked(writeAuctionSnapshot).mock.calls[0]!
-    expect(written[0]!.extraction).toMatchObject({ propertyType: 'einfamilienhaus' })
+  it('does not claim a candidate that never reaches a real LLM call (rules-only, no config)', async () => {
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+    expect(writeAuctionLlmClaim).not.toHaveBeenCalled()
   })
 
-  it('skips entries that already hit MAX_LLM_FAILURES unless forced', async () => {
-    const auction = makeAuction()
-    const query = vi.fn().mockResolvedValue({ rows: [{ platform: 'zvg-portal', external_id: '7265' }] })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind) =>
-      kind === 'auction' ? { contentHash: 'abc', sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' } : null,
-    )
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auction)))
+  it('records token usage/cost for the winning model when the provider reports it', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      opts?.onUsage?.({ inputTokens: 800, outputTokens: 120 })
+      return null
+    })
 
-    const exhaustedEntry: AuctionExtraction = {
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      source: 'rules',
-      confidence: 'low',
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(recordLlmUsage).toHaveBeenCalledWith({
+      task: 'extraction',
+      executionMode: 'sync',
+      source: 'reprocess',
+      provider: 'gemini-native',
+      model: 'vision-model',
+      profileId: 'profile-a',
+      platform: 'zvg-portal',
+      externalId: '7265',
+      usage: { inputTokens: 800, outputTokens: 120 },
+      status: 'failed',
+      errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
+      durationMs: expect.any(Number),
+    })
+  })
+
+  it('writes the provider-reported cost on the version when the synchronous call reports one', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      opts?.onUsage?.({ inputTokens: 800, outputTokens: 120, costUsd: 0.0042 })
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ llmCostUsd: 0.0042 }),
+    )
+  })
+
+  it('records a failed call even when the provider did not report token counts', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'vision-model', provider: 'gemini-native', profileId: 'profile-a',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de', trigger: 'manual' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(recordLlmUsage).toHaveBeenCalledWith(expect.objectContaining({
+      usage: null,
+      status: 'failed',
+      errorMessage: 'Keine gültige Extraktion in der Provider-Antwort',
+    }))
+  })
+})
+
+describe('runReprocessTask', () => {
+  it('skips a scheduled run while a manual run is active instead of superseding it', async () => {
+    const records = await readAuctionRecordMap()
+    let releaseManual!: () => void
+    const manualBlocks = new Promise<void>((resolve) => { releaseManual = resolve })
+    vi.mocked(readAuctionRecordMap).mockImplementationOnce(async () => {
+      await manualBlocks
+      return records
+    })
+
+    const manual = runReprocessTask({ trigger: 'manual' })
+    await vi.waitFor(() => expect(readAuctionRecordMap).toHaveBeenCalledTimes(2))
+    // The cron payload carries no trigger.
+    const scheduled = runReprocessTask({})
+
+    releaseManual()
+    await expect(scheduled).resolves.toStrictEqual({})
+    await expect(manual).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(recordTaskRunStart).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('runReprocess llm_failures cooldown', () => {
+  function lockedOutFetchState(llmLastAttemptedAt: string | null) {
+    return new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 3, llmLastAttemptedAt, llmClaimedAt: null, photosCheckedAt: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]])
+  }
+
+  it('stays locked out within the cooldown window after MAX_LLM_FAILURES', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago
+    )
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+    expect(writeAuctionLlmClaim).not.toHaveBeenCalled()
+  })
+
+  it('ignoreCooldown bypasses the lockout immediately, without waiting for the 24h window', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago — still locked normally
+    )
+
+    await expect(runReprocess({ country: 'de', ignoreCooldown: true })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('becomes eligible again once the cooldown has elapsed', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago
+    )
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('openOnly keeps a cooled-down locked-out candidate excluded — "Retry open" must never silently retry a past failure', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago — past cooldown
+    )
+
+    await expect(runReprocess({ country: 'de', openOnly: true })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('openOnly still processes a genuinely open (never-attempted) candidate', async () => {
+    // Default beforeEach state: no fetch state at all — llm_failures=0, the
+    // country's ordinary open/never-attempted bucket. openOnly must not be
+    // stricter than plain eligibility for the case it's actually meant for.
+    await expect(runReprocess({ country: 'de', openOnly: true })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('treats a never-attempted timestamp as elapsed (rows predating this column)', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(lockedOutFetchState(null))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('records the attempt when a cooldown-triggered retry throws instead of resolving to null', async () => {
+    // isLlmProviderUnavailable is mocked to false above, so reprocessAuction's
+    // per-config loop always rethrows immediately — the same shape a real
+    // rate-limit/unparseable-response error takes once it's the last
+    // configured model. That propagates past persistEntry entirely, so
+    // without the catch-block fix the cooldown timestamp would never
+    // advance and this record would retry every run instead of once/24h.
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // past cooldown
+    )
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      throw new Error('provider unavailable')
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmRulesHint: null,
       llmFailures: 3,
-      at: '2026-07-01T00:00:00.000Z',
-    }
-    vi.mocked(readExtractionCache).mockResolvedValue({ 'zvg-portal:7265': exhaustedEntry })
-
-    const skippedResult = await runReprocess({})
-    expect(skippedResult).toEqual({ candidates: 1, processed: 0, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(writeExtractionCache).not.toHaveBeenCalled()
-
-    const forcedResult = await runReprocess({ platform: 'zvg-portal', force: true })
-    expect(forcedResult.processed).toBe(1)
-  })
-
-  it('isolates a per-candidate failure so one bad candidate does not drop already-processed results', async () => {
-    const auctionA = makeAuction({ externalId: '1' })
-    const query = vi.fn().mockResolvedValue({
-      rows: [
-        { platform: 'zvg-portal', external_id: '1' },
-        { platform: 'zvg-portal', external_id: '2' },
-      ],
+      llmAttempted: true,
     })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, externalId) => {
-      if (kind !== 'auction') return null
-      if (externalId === '2') throw new Error('boom')
-      return { contentHash: externalId, sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-    })
-    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify(auctionA)))
-
-    const result = await runReprocess({})
-
-    expect(result).toEqual({ candidates: 2, processed: 1, skipped: 1, llmCalls: 0, llmErrors: 0, durationMs: expect.any(Number) })
-    expect(writeExtractionCache).toHaveBeenCalledWith({
-      'zvg-portal:1': expect.objectContaining({ propertyType: null }),
+    // A throw past onLlmAttempt still has to clear the claim explicitly — it
+    // never reaches persistEntry's writeAuctionLlmPipelineState call.
+    expect(writeAuctionLlmClaim).toHaveBeenLastCalledWith('zvg-portal', '7265', null)
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      platform: 'zvg-portal',
+      externalId: '7265',
+      category: 'llm',
+      message: 'provider unavailable',
     })
   })
 
-  it('caps LLM calls per run and still caches a rules-only result for candidates beyond the cap', async () => {
-    const auctionA = makeAuction({ externalId: '1' })
-    const auctionB = makeAuction({ externalId: '2' })
-    const query = vi.fn().mockResolvedValue({
-      rows: [
-        { platform: 'zvg-portal', external_id: '1' },
-        { platform: 'zvg-portal', external_id: '2' },
-      ],
-    })
-    vi.mocked(getPool).mockReturnValue({ query } as never)
-    vi.mocked(findLatestCapture).mockImplementation(async (kind, _platform, externalId) => {
-      if (kind !== 'auction') return null
-      return { contentHash: externalId, sourceUrl: null, capturedAt: '2026-07-01T00:00:00.000Z' }
-    })
-    vi.mocked(downloadBlob).mockImplementation(async (hash) =>
-      hash === '1' ? Buffer.from(JSON.stringify(auctionA)) : Buffer.from(JSON.stringify(auctionB)),
+  it('failedOnly skips an open candidate below MAX_LLM_FAILURES even though it would otherwise be eligible', async () => {
+    // Default beforeEach state: no fetch state at all, i.e. llm_failures=0 —
+    // the country's ordinary open/never-attempted bucket, not 'error'. The
+    // /settings "Retry failed" action must never touch this (see
+    // reprocess-retry-failed.post.ts).
+    await expect(runReprocess({ country: 'de', failedOnly: true, ignoreCooldown: true }))
+      .resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('failedOnly still processes a genuinely locked-out candidate', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(
+      lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()), // 1h ago — locked without ignoreCooldown
     )
-    vi.mocked(extractByLlm).mockResolvedValue({
-      propertyType: null,
-      landAreaSqm: null,
-      livingAreaSqm: null,
-      rooms: null,
-      bedrooms: null,
-      bathrooms: null,
-      floor: null,
-      bathroomHasTub: null,
-      bathroomHasShower: null,
-      heating: null,
-      units: null,
-      securityDeposit: null,
-      biddingNotes: null,
-      condition: null,
-      features: [],
-      yearBuilt: null,
-      lastRenovationYear: null,
-      renovationNotes: null,
-      insights: null,
-      planningNotes: null,
-      photoCuration: [],
-      marketValueEur: null,
-      marketValueText: null,
+
+    await expect(runReprocess({ country: 'de', failedOnly: true, ignoreCooldown: true }))
+      .resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('manual failed-only retries bypass the per-run budget for every failed candidate', async () => {
+    const firstState = lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()).get('zvg-portal:7265')!
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async () => ({ rows: [
+        { platform: 'zvg-portal', external_id: '7265', country: 'de' },
+        { platform: 'zvg-portal', external_id: '7266', country: 'de' },
+      ] })),
+    } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['zvg-portal:7265', { auction: auction(), detailsId: 7, detailsVersion: 2, artifactVersionId: null }],
+      ['zvg-portal:7266', { auction: { ...auction(), externalId: '7266' }, detailsId: 8, detailsVersion: 2, artifactVersionId: null }],
+    ]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['zvg-portal:7265', firstState],
+      ['zvg-portal:7266', { ...firstState, externalId: '7266' }],
+    ]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
     })
-    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { baseUrl: 'http://proxy', maxPerRun: '1' } }))
 
-    const result = await runReprocess({})
+    await expect(runReprocess({
+      country: 'de', failedOnly: true, ignoreCooldown: true, ignoreLlmBudget: true,
+    })).resolves.toMatchObject({ processed: 2, llmCalls: 2 })
+    expect(extractByLlm).toHaveBeenCalledTimes(2)
+  })
 
-    expect(result.processed).toBe(2)
-    expect(result.llmCalls).toBe(1)
-    expect(extractByLlm).toHaveBeenCalledTimes(1)
+  it('manual failed-only retries give map-reduce candidates an unlimited remaining budget', async () => {
+    const firstState = lockedOutFetchState(new Date(Date.now() - 60 * 60 * 1000).toISOString()).get('zvg-portal:7265')!
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async () => ({ rows: [
+        { platform: 'zvg-portal', external_id: '7265', country: 'de' },
+        { platform: 'zvg-portal', external_id: '7266', country: 'de' },
+      ] })),
+    } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['zvg-portal:7265', { auction: auction(), detailsId: 7, detailsVersion: 2, artifactVersionId: null }],
+      ['zvg-portal:7266', { auction: { ...auction(), externalId: '7266' }, detailsId: 8, detailsVersion: 2, artifactVersionId: null }],
+    ]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['zvg-portal:7265', firstState],
+      ['zvg-portal:7266', { ...firstState, externalId: '7266' }],
+    ]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(prepareArchivedLlmDocuments).mockResolvedValue({
+      input: {
+        documentSummaryInputs: [{
+          label: 'Gutachten',
+          parts: { pdfText: 'Gutachten Text', pdfPageImages: null, pdfBytes: null },
+        }],
+      },
+      documentSetItems: [],
+      documentSetComplete: true,
+      artifactVersionId: null,
+    } as never)
+    const llmResult: ClampedExtraction = {
+      propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null,
+      bedrooms: null, bathrooms: null, floor: null, bathroomHasTub: null, bathroomHasShower: null,
+      heating: null, units: null, securityDeposit: null, ruleCheck: null,
+      biddingNotes: null, condition: null, features: [], yearBuilt: null, lastRenovationYear: null,
+      renovationNotes: null, insights: null, planningNotes: null, documentSummary: 'summary',
+      marketValueEur: null, marketValueText: null, photoCuration: [],
+    }
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return llmResult
+    })
+
+    await expect(runReprocess({
+      country: 'de', failedOnly: true, ignoreCooldown: true, ignoreLlmBudget: true,
+    })).resolves.toMatchObject({ processed: 2, llmCalls: 4 })
+    expect(extractByLlm).toHaveBeenCalledTimes(4)
+  })
+})
+
+describe('runReprocess isLlmBatchPending gate', () => {
+  function batchPendingFetchState() {
+    return new Map([['zvg-portal:7265', {
+      platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
+      detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null,
+      llmBatchJob: 'openrouter_batch-stuck', llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 0,
+      llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
+      photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
+      updatedAt: '2026-08-02T10:00:00.000Z',
+    }]])
+  }
+
+  it('skips a candidate still carrying an unresolved batch-job marker', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(batchPendingFetchState())
+    vi.mocked(isLlmBatchPending).mockReturnValueOnce(true)
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+  })
+
+  it('ignoreBatchPending bypasses a stuck/failed batch marker so the open backlog can retry immediately', async () => {
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(batchPendingFetchState())
+
+    await expect(runReprocess({ country: 'de', ignoreBatchPending: true }))
+      .resolves.toMatchObject({ processed: 1, skipped: 0 })
+    // Short-circuited by opts.ignoreBatchPending — never even asks whether
+    // the marker is actually still pending.
+    expect(isLlmBatchPending).not.toHaveBeenCalled()
+  })
+})
+
+describe('runReprocess task_run_errors categorization', () => {
+  it('categorizes a persistEntry (DB write) failure as persist, not llm', async () => {
+    vi.mocked(writeAuctionDetails).mockRejectedValue(new Error('connection terminated unexpectedly'))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 1 })
+
+    expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
+      platform: 'zvg-portal',
+      externalId: '7265',
+      category: 'persist',
+      message: 'connection terminated unexpectedly',
+    })
+  })
+})
+
+// WP-3 SE root cause: record.auction is reconstructed from a LEFT JOIN
+// LATERAL onto auction_details (auction-record.ts) — for an identity with no
+// auction_details row yet (detailsId null; e.g. a fresh identity, or one
+// whose details were wiped by rebuildCountry), every crawl-owned field on it
+// is null/0 even though the crawler found real data, because this task never
+// crawls live. Confirmed on prod: 96/96 se-kronofogden auctions got a v1
+// auction_details row with address/description/market_value/photo_count all
+// empty, while the artifact_captures snapshot archived minutes earlier for
+// the same identities had the full crawled address, price and photos.
+describe('runReprocess crawl-owned field recovery (WP-3 SE root cause)', () => {
+  it('seeds address/description/price/photos from the archived capture on the very first auction_details row', async () => {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: {
+        ...auction(),
+        address: null,
+        description: null,
+        marketValue: null,
+        marketValueText: null,
+        photoCount: 0,
+        thumbnailUrl: null,
+      },
+      detailsId: null,
+      detailsVersion: null,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify({
+      ...auction(),
+      address: 'Ringvägen 65, 932 61 Lövånger',
+      description: 'Fastighet bebyggd med ett bostadshus.',
+      marketValue: 400000,
+      marketValueText: '400000:- SEK',
+      photoCount: 5,
+      thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/1.jpg',
+    })))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({
+        address: 'Ringvägen 65, 932 61 Lövånger',
+        description: 'Fastighet bebyggd med ett bostadshus.',
+        marketValue: 400000,
+        marketValueText: '400000:- SEK',
+        photoCount: 5,
+        thumbnailUrl: 'https://auktionstorget.kronofogden.se/images/1.jpg',
+      }),
+      expect.anything(),
+      {
+        artifactVersionId: null,
+        llmProvider: null,
+        llmModel: null,
+        llmProfileId: null,
+        runTrigger: 'cron',
+        llmDurationMs: null,
+        llmCostUsd: null,
+        llmInputTokens: null,
+        llmOutputTokens: null,
+      },
+    )
+  })
+
+  it('does not let a stale archived capture overwrite an auction_details row that already exists', async () => {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), address: 'Real DB address 1', photoCount: 3 },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }]]))
+    vi.mocked(downloadBlob).mockResolvedValue(Buffer.from(JSON.stringify({
+      ...auction(),
+      address: 'Outdated archived address',
+      photoCount: 0,
+    })))
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1 })
+
+    expect(writeAuctionDetails).toHaveBeenCalledWith(
+      expect.objectContaining({ address: 'Real DB address 1', photoCount: 3 }),
+      expect.anything(),
+      expect.anything(),
+    )
   })
 })

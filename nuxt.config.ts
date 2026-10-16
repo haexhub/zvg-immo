@@ -9,6 +9,11 @@ export default defineNuxtConfig({
   vite: {
     plugins: [tailwindcss()],
   },
+  // .claude/worktrees and .worktrees hold full checkouts (each with its own
+  // node_modules) created alongside this repo — without this, Nuxt's
+  // watcher recurses into every one of them and can exhaust the system's
+  // inotify watch limit before the dev server even starts.
+  ignore: ['.claude/', '.worktrees/'],
   shadcn: {
     prefix: '',
     componentDir: '~/components/ui',
@@ -30,6 +35,15 @@ export default defineNuxtConfig({
       // Persists the switcher choice; overridden after login by the account
       // preference sync in composables/useLocalePreference.ts.
       alwaysRedirect: false,
+    },
+    experimental: {
+      // v10's Nitro-side detection has a known cold-start race: the first
+      // SSR request to any given route can hit useI18nContext() before the
+      // "request" hook that populates it has run, throwing "Nuxt I18n
+      // server context has not been set up yet" (nuxt-modules/i18n#3901).
+      // We use strategy: 'no_prefix' with no path-based locale routing, so
+      // this feature buys us nothing — disabling it avoids the crash.
+      nitroContextDetection: false,
     },
   },
   app: {
@@ -72,12 +86,11 @@ export default defineNuxtConfig({
       baseUrl: '',
       apiKey: '',
       model: 'claude-haiku-4-5',
-      // Overrides enrich.ts's MAX_LLM_PER_RUN default (300). Meant to be
-      // bumped temporarily while only one country is being crawled (see
-      // server/crawlers/registry.ts's ENABLED_COUNTRIES) to clear its backlog
-      // in a handful of runs instead of trickling in over weeks, then lowered
-      // again once more countries are re-enabled and share the budget.
-      //   NUXT_EXTRACT_LLM_MAX_PER_RUN=2000
+      // Overrides reprocess's safe default of one LLM call per run. Raise
+      // only after measuring the subscription budget: scheduled runs are
+      // hourly, so a large cap can consume an entire weekly allowance in a
+      // single day.
+      //   NUXT_EXTRACT_LLM_MAX_PER_RUN=5
       maxPerRun: '',
       // Gemini Batch safety rail. The Gemini API doesn't expose a reliable
       // "am I Free/Paid Tier?" endpoint to API-key callers; AI Studio remains
@@ -101,6 +114,17 @@ export default defineNuxtConfig({
       geminiFreeBatchMaxEstimatedTokens: 100_000,
       geminiFreeBatchPollIntervalHours: 6,
       geminiPaidBatchMaxItems: 300,
+    },
+    // Optional dga-ag.de account (server/crawlers/dga-ag/session.ts). Logged
+    // in, the object detail page swaps its "Objektunterlagen" login-prompt
+    // for a real per-object PDF (Energieausweis/Grundriss/Flurkarte) — the
+    // public path only ever exposes the shared multi-lot auction catalog.
+    // Empty → the crawler stays on that public-only path, unchanged.
+    //   NUXT_DGA_AG_USERNAME=...
+    //   NUXT_DGA_AG_PASSWORD=...
+    dgaAg: {
+      username: '',
+      password: '',
     },
     // Sibling haex-claude-proxy container's own address — always deployed
     // regardless of which provider extractLlm.baseUrl currently points at
@@ -134,10 +158,15 @@ export default defineNuxtConfig({
     //   NUXT_TRUST_FORWARDED_FOR=1
     trustForwardedFor: '',
     // Direct `pg` connection to the self-hosted Supabase `db` service, used
-    // by server/utils/db.ts to run server/db/schema.sql on boot. Empty →
+    // by server/utils/db.ts to run server/db/migrations/ on boot. Empty →
     // migrations are skipped (see db.ts) rather than failing hard.
     //   NUXT_DATABASE_URL=postgres://postgres:<pw>@db:5432/postgres
     databaseUrl: '',
+    // Canonical server-side origin for links in outbound mail. Never derive
+    // those links from the request Host header, which an untrusted proxy/client
+    // can influence. Matches i18n.baseUrl above but remains server-only.
+    //   NUXT_APP_ORIGIN=https://zvg.haex.cloud
+    appOrigin: 'https://zvg.haex.cloud',
     // External market/risk datasets are ingested out-of-band into local or
     // Postgres-backed caches; detail pages only read location_enrichment.
     // Empty values keep the external-enrichment task inert unless overridden
@@ -148,18 +177,17 @@ export default defineNuxtConfig({
     //   NUXT_EXTERNAL_DATA_FR_DVF_CACHE_PATH=/app/.cache_zvg/external/fr-dvf.json
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_GEO_JSON_PATH=/app/.cache_zvg/external/eu-flood-risk.geojson
     //   NUXT_EXTERNAL_DATA_EU_FLOOD_RISK_MAX_CACHE_AGE_DAYS=400
-    //   NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT=https://overpass-api.de/api/interpreter
-    // Leave the OSM endpoint empty unless your deployment cadence is polite
-    // enough for the selected Overpass instance or you run your own mirror.
     //   NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL=https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_CACHE_PATH=/app/.cache_zvg/external/copernicus-effis.json
     //   NUXT_EXTERNAL_DATA_COPERNICUS_EFFIS_MAX_CACHE_AGE_DAYS=400
+    //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL=https://archive-api.open-meteo.com/v1/archive
+    //   NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_TIMEOUT_MS=30000
+    //   NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_CACHE_PATH=/app/.cache_zvg/external/eurostat-tourism-nuts.json
+    //   NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_MAX_CACHE_AGE_DAYS=400
     externalData: {
       frDvfCachePath: '',
       euFloodRiskGeoJsonPath: '',
       euFloodRiskMaxCacheAgeDays: 400,
-      osmContextEndpoint: '',
-      osmContextTimeoutMs: 120_000,
       eeaNoiseServiceBaseUrl: '',
       eeaNoiseTimeoutMs: 10_000,
       // Public, unauthenticated API, so unlike the entries above this one
@@ -168,6 +196,11 @@ export default defineNuxtConfig({
       camsAirQualityTimeoutMs: 10_000,
       copernicusEffisCachePath: '',
       copernicusEffisMaxCacheAgeDays: 400,
+      // Same public/unauthenticated shape as camsAirQualityServiceUrl above.
+      openMeteoClimateServiceUrl: 'https://archive-api.open-meteo.com/v1/archive',
+      openMeteoClimateTimeoutMs: 30_000,
+      eurostatTourismNutsCachePath: '',
+      eurostatTourismNutsMaxCacheAgeDays: 400,
     },
     // G1 Roh-Archiv (WP-3): Supabase Storage bucket for archived crawl
     // snapshots (server/utils/raw-archive.ts, storage-uploader.ts). Empty →
@@ -175,8 +208,8 @@ export default defineNuxtConfig({
     // uploads) — same graceful-degrade pattern as extractLlm.baseUrl above.
     // Uploads via the same service-role client as supabaseUrl/
     // supabaseServiceRoleKey below (server/utils/supabase.ts). Also requires
-    // databaseUrl (the raw_blobs/raw_captures index lives in Postgres, see
-    // server/db/schema.sql).
+    // databaseUrl (the artifact_blobs/artifact_captures index lives in Postgres, see
+    // server/db/schema/core.ts).
     //   NUXT_STORAGE_BUCKET=zvg-immo-raw-archive
     storageBucket: '',
     // WP-4: Supabase Storage bucket for extracted auction photos (public-read;
@@ -198,12 +231,13 @@ export default defineNuxtConfig({
     supabaseUrl: '',
     //   NUXT_SUPABASE_SERVICE_ROLE_KEY=<from scripts/generate-supabase-keys.mjs>
     supabaseServiceRoleKey: '',
-    // App-level mailer for alert emails (server/utils/mailer.ts, nodemailer
-    // over this connection string), used by server/utils/alert-matching.ts.
+    // App-level mailer for alert and lawyer-inquiry emails
+    // (server/utils/mailer.ts, nodemailer over this connection string), used
+    // by the outbound_deliveries worker (server/utils/outbound-delivery.ts).
     // Distinct from GoTrue's own separate SMTP config (docker-compose.yml's
     // `auth` service, GOTRUE_SMTP_*) for GoTrue's own transactional mail.
-    // Empty → sendMail() logs instead of sending (dev fallback, same
-    // graceful-degrade pattern as extractLlm.baseUrl).
+    // Empty → sendMail() is a no-op in dev only; in production every delivery
+    // fails with `smtp_not_configured` and stays visible in the outbox.
     //   NUXT_SMTP_URL=smtps://user:pass@smtp.example.com:465
     smtpUrl: '',
     public: {
@@ -231,6 +265,10 @@ export default defineNuxtConfig({
   nitro: {
     experimental: {
       tasks: true,
+      // Without this, vue-i18n's SSR composer context (unctx-based) can leak
+      // or drop across concurrent requests under load, throwing "Nuxt I18n
+      // server context has not been set up yet" for unrelated requests.
+      asyncContext: true,
     },
     scheduledTasks: {
       // Every 6 hours: re-crawl and fill in missing geocodes. After the first
@@ -247,6 +285,9 @@ export default defineNuxtConfig({
       // robust portals refresh hourly while rate-limited ones stay on a longer
       // interval — an always-on background watch for new/updated auctions.
       '0 * * * *': ['refresh'],
+      // Every five minutes: retry durable mail deliveries. The worker locks
+      // rows with SKIP LOCKED, so overlapping app instances are safe.
+      '*/5 * * * *': ['outbound-delivery'],
       // Hourly, offset 15 min from refresh: runs regex rules + the LLM against
       // whatever 'enrich' has archived so far, scoped to the enabled admin
       // data sources — independent of enrich's own schedule (see
@@ -258,18 +299,39 @@ export default defineNuxtConfig({
       // completed results — jobs often finish well under the 24h SLA, so a
       // shorter tick than enrich's own 6h cadence gets results merged sooner.
       '*/30 * * * *': ['llm-batch-poll'],
-      // Daily: refresh cached external market/risk overlays. With no configured
-      // externalData adapters this is a cheap no-op; detail pages never fetch
-      // providers live.
-      '15 3 * * *': ['external-enrichment'],
+      // Every 15 minutes: refresh cached external market/risk/location
+      // overlays, one small batch (DEFAULT_BATCH_LIMIT in external-enrichment.
+      // ts) at a time — a full unscoped sweep measured ~16h against
+      // osm_local_elements' 25 queries/auction plus several HTTP adapters, far
+      // longer than the 24h until the next run and than a manual Settings
+      // trigger takes to collide with it via the shared runExclusiveTask
+      // lock. Batches process the longest-stale auctions first, so newly
+      // crawled or previously-superseded auctions are never stuck behind a
+      // fixed scan order.
+      '*/15 * * * *': ['external-enrichment'],
+      // Daily: update only missing or re-geocoded auction_geo_metrics rows
+      // against the current, complete geo_features epoch.  The task's
+      // candidate query is incremental; keeping the epoch stable means a
+      // normal run touches only newly changed auctions, never every listing.
+      // A full geo_features rebuild is deliberately *not* scheduled: it scans
+      // tens of millions of OSM rows and invalidates every metrics row. Run
+      // the explicit /settings geo-metrics rebuild chain only after an OSM
+      // import has actually changed the source data.
+      '0 5 * * *': ['build-auction-geo-metrics'],
+      // Daily, offset 30 min from build-auction-geo-metrics: rebuild the
+      // search-map tourism-intensity grid (server/tasks/build-tourism-grid.ts)
+      // from geo_features. Cheap enough to run unconditionally every day
+      // (aggregates a few hundred thousand already-normalized rows, not a
+      // full OSM scan) — no incremental logic needed, unlike the metrics job
+      // above.
+      '30 5 * * *': ['build-tourism-grid'],
       // Monthly: refresh the local EU Flood Risk Areas polygon cache (see
       // server/tasks/import-eu-flood-risk-cache.ts) from the EEA's published
       // service, into whatever path the eu-flood-risk-areas source resolves to
       // — and stay inert while it has none, so this never paginates the whole
       // EU layer into a file no adapter opens. The Floods Directive reporting
       // cycle itself is six-yearly, so monthly is just a courtesy re-pull to
-      // catch source corrections — nowhere near a rate-limit concern for this
-      // source, unlike the OSM Overpass endpoint above.
+      // catch source corrections.
       '30 4 1 * *': ['import-eu-flood-risk-cache'],
       // Monthly, offset from the flood importer: refresh the local Copernicus
       // EFFIS MODIS burnt-area polygon cache (see server/tasks/import-
@@ -278,24 +340,55 @@ export default defineNuxtConfig({
       // New fire seasons land in the source roughly annually, so monthly is
       // a courtesy re-pull, not a rate-limit concern.
       '0 5 1 * *': ['import-copernicus-effis-cache'],
+      // Monthly, offset from the two importers above: refresh the Eurostat
+      // regional tourism nights (NUTS2) + GISCO boundary cache backing the
+      // search map's visitor-intensity overlay (see server/tasks/import-
+      // eurostat-tourism-nuts-cache.ts) — stays inert while unconfigured,
+      // same contract. Eurostat updates the underlying statistic at most a
+      // couple of times a year, so monthly is a courtesy re-pull, not a
+      // rate-limit concern; unlike the two importers above, this is a plain
+      // unpaginated fetch, not a multi-minute crawl.
+      '30 5 1 * *': ['import-eurostat-tourism-nuts-cache'],
       // Daily at a quiet hour: move ended auctions' cached photos into the
       // images bucket and drop the local copies (server/tasks/offload-images.ts).
       // The local image cache is by far the largest thing on the server volume,
       // and it only ever grows — every past auction keeps its photos forever.
       // Inert until NUXT_IMAGES_BUCKET is configured.
       '45 4 * * *': ['offload-images'],
+      // Daily after the busy pipeline windows: persist the exact country-card
+      // counts so Settings can compare today's work with prior days.
+      '50 23 * * *': ['status-snapshot'],
     },
     routeRules: {
+      // Baseline hardening for every response; nothing in front of the app is
+      // known to add these. frame-ancestors/X-Frame-Options stop clickjacking
+      // of /settings and the lawyer inquiry form.
+      // ponytail: no script-src/connect-src CSP yet — the app talks to
+      // Supabase, MapTiler/OSM/Esri tiles and inlines Nuxt payload scripts, so
+      // a restrictive policy needs nonce support and an origin allow-list
+      // tested against every map/auth flow before it can be enforced; start it
+      // as Content-Security-Policy-Report-Only.
+      '/**': {
+        headers: {
+          'Content-Security-Policy': "frame-ancestors 'none'",
+          'X-Frame-Options': 'DENY',
+          'X-Content-Type-Options': 'nosniff',
+          'Referrer-Policy': 'strict-origin-when-cross-origin',
+        },
+      },
       // /api/auctions and /api/auctions-geo query Postgres per request and send
       // no-store themselves: their results depend on the full filter/pagination
       // query and, for the geo endpoint, on a geocode cache that grows while the
       // client polls — an SWR route rule would freeze geocodedCount after the
       // first hit.
-      // /api/regions and /api/stats depend on the admin-enabled country scope
-      // and must reflect changes immediately; those handlers send no-store.
+      // /api/regions depends on the admin-enabled country scope and must
+      // reflect changes immediately; that handler sends no-store.
       // WP-7: rate table refreshes at most every 24h anyway (exchange-rate.ts's
       // own TTL); swr avoids re-doing that disk-cache read on every request.
       '/api/exchange-rates': { swr: 86400 },
+      // Every auction URL in one query; search engines re-fetch it far less often
+      // than hourly, and the anonymous route must not hit Postgres per request.
+      '/sitemap.xml': { swr: 3600 },
     },
   },
 })

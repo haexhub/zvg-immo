@@ -12,3 +12,19 @@ amtsgericht-open.png
 no-filters-map.png
 .claude/
 graphify-out/
+# Spec Kit agent skills are generated per developer by `spaex install`.
+.agents/skills/speckit-*/
+.specify/integrations/claude.manifest.json
+.specify/integrations/codex.manifest.json
+
+# spaex advisory manifest lock
+.spaex/manifest.json.lock
+.spaex/install.lock
+.spaex/composer.log
+
+# direnv's per-checkout cache (flake profile symlinks). Every worktree gets
+# its own on `direnv allow`; never meant to be committed.
+.direnv/
+
+# Repository-local git worktrees
+.worktrees/

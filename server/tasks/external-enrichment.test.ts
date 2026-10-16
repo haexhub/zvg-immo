@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 
-vi.mock('~/server/utils/auction-snapshot', () => ({ readAuctionSnapshot: vi.fn() }))
+vi.mock('~/server/utils/auction-record', () => ({
+  readAuctionRecord: vi.fn(),
+  readAuctionRecords: vi.fn(),
+}))
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
 vi.mock('~/server/utils/external-data/location-enrichment', () => ({
+  readLocationEnrichment: vi.fn(),
   readLocationEnrichmentCache: vi.fn(),
   writeLocationEnrichmentCache: vi.fn(),
 }))
@@ -41,6 +45,15 @@ function auction(overrides: Partial<Auction> = {}): Auction {
     lng: 2.3522,
     ...overrides,
   }
+}
+
+function records(...auctions: Auction[]) {
+  return auctions.map((value) => ({
+    auction: value,
+    detailsId: null,
+    detailsVersion: null,
+    artifactVersionId: null,
+  }))
 }
 
 const marketComparison: MarketComparison = {
@@ -180,11 +193,58 @@ afterEach(async () => {
 })
 
 describe('runExternalEnrichment', () => {
+  it('reads only the requested auction for per-auction runs', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecord, readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichment, readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecord).mockResolvedValue({
+      auction: auction({ platform: 'zvg-portal', externalId: '123' }),
+      detailsId: null,
+      detailsVersion: null,
+      artifactVersionId: null,
+    })
+    vi.mocked(readLocationEnrichment).mockResolvedValue(null)
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      platform: 'zvg-portal',
+      externalId: '123',
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(readAuctionRecord).toHaveBeenCalledWith('zvg-portal', '123')
+    expect(readAuctionRecords).not.toHaveBeenCalled()
+    expect(readLocationEnrichment).toHaveBeenCalledWith('zvg-portal', '123')
+    expect(readLocationEnrichmentCache).not.toHaveBeenCalled()
+    expect(summary).toMatchObject({ processed: 1, written: 1 })
+  })
+
+  it('aborts instead of overwriting stored enrichment when the previous entries cannot be read', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockRejectedValue(new Error('query_timeout'))
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await expect(runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })).rejects.toThrow('query_timeout')
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
+  })
+
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -239,12 +299,10 @@ describe('runExternalEnrichment', () => {
 
   it('uses cache-only geocoding and skips auctions without coordinates', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { geocodeAddress } = await import('~/server/utils/geocode')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'test:42': auction({ lat: undefined, lng: undefined }),
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction({ lat: undefined, lng: undefined })))
     vi.mocked(geocodeAddress).mockResolvedValue(null)
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
@@ -255,14 +313,14 @@ describe('runExternalEnrichment', () => {
     expect(geocodeAddress).toHaveBeenCalledWith('Paris', 'fr', { fetchMissing: false })
     expect(summary.skippedMissingCoordinates).toBe(1)
     expect(summary.processed).toBe(0)
-    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({})
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
   })
 
   it('counts provider failures and continues with other adapters', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -298,9 +356,9 @@ describe('runExternalEnrichment', () => {
         euFloodRiskGeoJsonPath: join(process.cwd(), 'server/utils/external-data/fixtures/eu-flood-risk-zones.fixture.geojson'),
       },
     }))
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -337,9 +395,9 @@ describe('runExternalEnrichment', () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       externalData: { frDvfCachePath: '', euFloodRiskGeoJsonPath: join(process.cwd(), 'nonexistent.geojson') },
     }))
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -373,9 +431,9 @@ describe('runExternalEnrichment', () => {
     vi.stubGlobal('useRuntimeConfig', () => ({
       externalData: { euFloodRiskGeoJsonPath: join(process.cwd(), 'nonexistent.geojson') },
     }))
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -407,9 +465,9 @@ describe('runExternalEnrichment', () => {
         copernicusEffisCachePath: join(process.cwd(), 'server/utils/external-data/fixtures/copernicus-effis-burnt-area.fixture.json'),
       },
     }))
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -435,11 +493,37 @@ describe('runExternalEnrichment', () => {
     })
   })
 
+  it('records a failure when the configured EFFIS cache is missing', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    vi.stubGlobal('useRuntimeConfig', () => ({
+      externalData: {
+        frDvfCachePath: '',
+        copernicusEffisCachePath: join(process.cwd(), 'nonexistent-effis.json'),
+      },
+    }))
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary).toMatchObject({ processed: 1, written: 1, hazards: 0, providerFailures: 1 })
+    expect(summary.errors).toHaveLength(1)
+    expect(summary.errors[0]).toContain('nonexistent-effis.json')
+  })
+
   it('counts stale hazard results separately', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -461,9 +545,9 @@ describe('runExternalEnrichment', () => {
 
   it('writes location context from adapter and preserves it in the source version', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({ 'test:42': auction() })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -492,12 +576,12 @@ describe('runExternalEnrichment', () => {
 
   it('can scope location enrichment to one country', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'se-kronofogden:1': auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
-      'fr-test:2': auction({ platform: 'fr-test', country: 'fr', externalId: '2' }),
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
+      auction({ platform: 'fr-test', country: 'fr', externalId: '2' }),
+    ))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -523,7 +607,7 @@ describe('runExternalEnrichment', () => {
       platform: 'se-kronofogden',
       country: 'se',
       externalId: '1',
-    }))
+    }), null)
     expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
       'se-kronofogden:1': expect.objectContaining({
         locationContext,
@@ -533,11 +617,56 @@ describe('runExternalEnrichment', () => {
 
   it('queues overlapping task triggers instead of dropping the later scope', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'se-kronofogden:1': auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    let releaseFirst!: () => void
+    const firstRunBlocks = new Promise<void>((resolve) => { releaseFirst = resolve })
+    const contextAdapter = {
+      id: 'osm-fixture',
+      sourceVersion: 'v1',
+      supports: vi.fn(() => true),
+      context: vi.fn(async () => {
+        if (contextAdapter.context.mock.calls.length === 1) await firstRunBlocks
+        return locationContext
+      }),
+    }
+
+    const task = (await import('./external-enrichment')).default as {
+      run(event?: { payload?: Record<string, unknown> }): Promise<{ result: unknown }>
+    }
+    const payload = {
+      country: 'se',
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [contextAdapter],
+      trigger: 'manual',
+    }
+    const first = task.run({ payload })
+    await vi.waitFor(() => expect(contextAdapter.context).toHaveBeenCalledTimes(1))
+    const second = task.run({ payload })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(contextAdapter.context).toHaveBeenCalledTimes(1)
+
+    releaseFirst()
+    await expect(first).rejects.toThrow('external-enrichment wurde durch einen neueren Lauf beendet')
+    await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(contextAdapter.context).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips a scheduled run while a manual run is active instead of superseding it', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ platform: 'se-kronofogden', country: 'se', externalId: '1' }),
+    ))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -563,26 +692,65 @@ describe('runExternalEnrichment', () => {
       hazardAdapters: [],
       locationContextAdapters: [contextAdapter],
     }
-    const first = task.run({ payload })
+    const first = task.run({ payload: { ...payload, trigger: 'manual' } })
     await vi.waitFor(() => expect(contextAdapter.context).toHaveBeenCalledTimes(1))
-    const second = task.run({ payload })
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(contextAdapter.context).toHaveBeenCalledTimes(1)
+    // The cron payload carries no trigger.
+    await expect(task.run({ payload: { scheduledTime: Date.now() } })).resolves.toStrictEqual({})
 
     releaseFirst()
-    await expect(first).rejects.toThrow('external-enrichment wurde durch einen neueren Lauf beendet')
-    await expect(second).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
-    expect(contextAdapter.context).toHaveBeenCalledTimes(2)
+    await expect(first).resolves.toMatchObject({ result: expect.objectContaining({ processed: 1 }) })
+    expect(contextAdapter.context).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists each auction as it finishes, so an abort mid-run keeps already-processed results', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: '1' }),
+      auction({ externalId: '2' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+
+    const controller = new AbortController()
+    // Simulates a newer trigger superseding this run (runExclusiveTask) right
+    // after auction #1's result lands — before auction #2 is even looked at.
+    vi.mocked(writeLocationEnrichmentCache).mockImplementation(async (entries) => {
+      if ('test:1' in entries) controller.abort(new Error('external-enrichment wurde durch einen neueren Lauf beendet'))
+      return true
+    })
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await expect(runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async () => locationContext),
+      }],
+    }, controller.signal)).rejects.toThrow('neueren Lauf')
+
+    // The old batch-at-the-end write would have discarded auction #1's result
+    // along with the abort — it must already be persisted by the time we get here.
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:1': expect.objectContaining({ locationContext }),
+    })
+    expect(writeLocationEnrichmentCache).not.toHaveBeenCalledWith(
+      expect.objectContaining({ 'test:2': expect.anything() }),
+    )
   })
 
   it('can limit processed auctions for manual spot runs', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { readAuctionSnapshot } = await import('~/server/utils/auction-snapshot')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
-    vi.mocked(readAuctionSnapshot).mockResolvedValue({
-      'test:1': auction({ externalId: '1' }),
-      'test:2': auction({ externalId: '2' }),
-    })
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: '1' }),
+      auction({ externalId: '2' }),
+    ))
     vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
@@ -599,5 +767,314 @@ describe('runExternalEnrichment', () => {
 
     expect(summary.processed).toBe(1)
     expect(summary.written).toBe(1)
+  })
+
+  it('defaults to a bounded batch instead of an unscoped sweep when no limit is given', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      ...Array.from({ length: 41 }, (_, i) => auction({ externalId: String(i) })),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [{
+        id: 'working',
+        sourceVersion: 'v1',
+        supports: () => true,
+        compare: vi.fn(async () => marketComparison),
+      }],
+    })
+
+    expect(summary.processed).toBe(40)
+  })
+
+  it('processes a never-checked auction ahead of an already-checked one when capped by limit', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'checked-yesterday' }),
+      auction({ externalId: 'never-checked' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({
+      'test:checked-yesterday': {
+        platform: 'test',
+        externalId: 'checked-yesterday',
+        lat: 48.8566,
+        lng: 2.3522,
+        checkedAt: '2026-08-01T00:00:00.000Z',
+        sourceVersion: 'v1',
+      },
+    })
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const contextAdapter = {
+      id: 'osm-fixture',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => locationContext),
+    }
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await runExternalEnrichment({
+      limit: 1,
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [contextAdapter],
+    })
+
+    expect(contextAdapter.context).toHaveBeenCalledWith(
+      expect.objectContaining({ externalId: 'never-checked' }),
+      null,
+    )
+  })
+
+  it('does not scan past the limit even when leading auctions lack coordinates', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'uncoded-1', lat: undefined, lng: undefined }),
+      auction({ externalId: 'uncoded-2', lat: undefined, lng: undefined }),
+      auction({ externalId: 'coded' }),
+    ))
+    vi.mocked(geocodeAddress).mockResolvedValue(null)
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const marketAdapter = {
+      id: 'working',
+      sourceVersion: 'v1',
+      supports: () => true,
+      compare: vi.fn(async () => marketComparison),
+    }
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({ limit: 1, marketAdapters: [marketAdapter] })
+
+    expect(summary.skippedMissingCoordinates).toBe(1)
+    expect(summary.processed).toBe(0)
+    expect(marketAdapter.compare).not.toHaveBeenCalled()
+  })
+
+  it('persists checkedAt when every adapter finds nothing, so the auction does not stay first forever', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction()))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      now: new Date('2026-07-26T00:00:00.000Z'),
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary.processed).toBe(1)
+    expect(summary.written).toBe(1)
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:42': expect.objectContaining({
+        marketComparison: null,
+        landValueBaseline: null,
+        hazards: null,
+        locationContext: null,
+        checkedAt: '2026-07-26T00:00:00.000Z',
+      }),
+    })
+  })
+
+  it('keeps previous results only while the auction stays at the position they were computed for', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'same' }),
+      auction({ externalId: 'moved' }),
+    ))
+    const stored = (externalId: string, lat: number) => ({
+      platform: 'test',
+      externalId,
+      lat,
+      lng: 2.3522,
+      marketComparison,
+      hazards: [hazard],
+      locationContext,
+      checkedAt: '2026-07-01T00:00:00.000Z',
+      sourceVersion: 'old',
+    })
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({
+      'test:same': stored('same', 48.8566),
+      // ~11 km away: the geocode was corrected since the last run.
+      'test:moved': stored('moved', 48.7566),
+    })
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+    const previousSeen: Array<LocationContext | null | undefined> = []
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [{
+        id: 'osm-fixture',
+        sourceVersion: 'v1',
+        supports: () => true,
+        context: vi.fn(async (_auction: Auction, previous?: LocationContext | null) => {
+          previousSeen.push(previous)
+          return null
+        }),
+      }],
+    })
+
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:same': expect.objectContaining({ marketComparison, hazards: [hazard], locationContext }),
+    })
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:moved': expect.objectContaining({ marketComparison: null, hazards: null, locationContext: null }),
+    })
+    expect(previousSeen).toContain(null)
+    expect(previousSeen).toContain(locationContext)
+  })
+})
+
+describe('withLocationContextEnhancers', () => {
+  it('keeps context from earlier enhancers when a later one throws, and records the failure', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { withLocationContextEnhancers } = await import('./external-enrichment')
+    const summary = {
+      processed: 0,
+      written: 0,
+      skippedMissingCoordinates: 0,
+      marketComparisons: 0,
+      landValueBaselines: 0,
+      hazards: 0,
+      locationContexts: 0,
+      staleResults: 0,
+      providerFailures: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    }
+    const baseAdapter = {
+      id: 'base',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => locationContext),
+    }
+    const firstEnhancer = {
+      id: 'first',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async (_auction: Auction, context: LocationContext) => ({ ...context, checkedAt: 'first-applied' })),
+    }
+    const secondEnhancer = {
+      id: 'second',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async () => {
+        throw new Error('rate limited')
+      }),
+    }
+
+    const adapter = withLocationContextEnhancers(baseAdapter, [firstEnhancer, secondEnhancer], summary)
+    const result = await adapter.context(auction())
+
+    expect(result?.checkedAt).toBe('first-applied')
+    expect(secondEnhancer.enhance).toHaveBeenCalledTimes(1)
+    expect(summary.providerFailures).toBe(1)
+    expect(summary.errors).toHaveLength(1)
+    expect(summary.errors[0]).toContain('second')
+  })
+
+  it('restores air quality, climate normals and noise from the previous run when this run cannot refresh them', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { withLocationContextEnhancers } = await import('./external-enrichment')
+    const summary = {
+      processed: 0,
+      written: 0,
+      skippedMissingCoordinates: 0,
+      marketComparisons: 0,
+      landValueBaselines: 0,
+      hazards: 0,
+      locationContexts: 0,
+      staleResults: 0,
+      providerFailures: 0,
+      errors: [] as string[],
+      durationMs: 0,
+    }
+    const previousContext: LocationContext = {
+      ...locationContext,
+      environment: {
+        ...locationContext.environment,
+        airQuality: {
+          index: 30,
+          level: 'fair',
+          particulateMatter10: 12,
+          particulateMatter25: 8,
+          nitrogenDioxide: 15,
+          ozone: 40,
+          observedAt: '2026-08-01T00:00:00.000Z',
+          sourceLabel: 'CAMS',
+          sourceUrl: 'https://example.test/cams',
+          checkedAt: '2026-08-01T00:00:00.000Z',
+        },
+        climateNormals: {
+          periodStartYear: 1991,
+          periodEndYear: 2020,
+          months: [],
+          sourceLabel: 'Open-Meteo',
+          sourceUrl: 'https://example.test/climate',
+          checkedAt: '2026-07-01T00:00:00.000Z',
+        },
+        reportedNoise: [{
+          source: 'road',
+          indicator: 'lden',
+          level: 'medium',
+          bandLabel: '60-64 dB Lden',
+          minDb: 60,
+          maxDb: 64,
+          value: 2,
+          sourceLayerName: null,
+          sourceLabel: 'EEA',
+          sourceUrl: 'https://example.test/eea',
+          checkedAt: '2026-06-01T00:00:00.000Z',
+        }],
+      },
+    }
+    // This run's OSM rebuild has none of the previous run's enhancer fields yet.
+    const freshContext: LocationContext = {
+      ...locationContext,
+      environment: { ...locationContext.environment, airQuality: null, climateNormals: null, reportedNoise: undefined },
+    }
+    const baseAdapter = {
+      id: 'base',
+      sourceVersion: 'v1',
+      supports: () => true,
+      context: vi.fn(async () => freshContext),
+    }
+    const failingEnhancer = {
+      id: 'cams-air-quality',
+      sourceVersion: 'v1',
+      supports: () => true,
+      enhance: vi.fn(async () => {
+        throw new Error('rate limited')
+      }),
+    }
+
+    const adapter = withLocationContextEnhancers(baseAdapter, [failingEnhancer], summary)
+    const result = await adapter.context(auction(), previousContext)
+
+    expect(result?.environment.airQuality).toEqual(previousContext.environment.airQuality)
+    expect(result?.environment.climateNormals).toEqual(previousContext.environment.climateNormals)
+    expect(result?.environment.reportedNoise).toEqual(previousContext.environment.reportedNoise)
   })
 })

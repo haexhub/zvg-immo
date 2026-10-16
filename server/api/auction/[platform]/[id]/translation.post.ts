@@ -9,11 +9,10 @@
 
 import { setResponseHeader, setResponseStatus } from 'h3'
 import type { Pool } from 'pg'
-import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readAuctionRecord } from '~/server/utils/auction-record'
 import { isSafePathSegment } from '~/server/utils/path-segment'
-import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from '~/server/utils/db'
-import { sha256Hex } from '~/server/utils/raw-archive'
+import { publicError } from '~/server/utils/public-error'
 import {
   claimAuctionTranslation,
   completeAuctionTranslation,
@@ -22,33 +21,24 @@ import {
   readContentTranslation,
   writeContentTranslation,
 } from '~/server/utils/content-translation'
-import { isLlmProviderUnavailable, type LlmConfig } from '~/server/utils/extract/llm'
-import { callTranslationLlm, type TranslationResult } from '~/server/utils/extract/text-llm'
+import type { LlmConfig } from '~/server/utils/extract/llm'
+import { isLlmProviderUnavailable } from '~/server/utils/extract/llm-errors'
+import type { TranslationResult } from '~/server/utils/extract/text-llm'
 import { fingerprintConfigChain, resolveActiveLlmConfigChain } from '~/server/utils/translation-llm-chain'
-import { countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
-import { extractTranslatableExtractionTexts, translationContentSource } from '~/lib/extraction-translation'
+import { recordLlmUsage } from '~/server/utils/llm-usage'
+import { CONTENT_TARGET_LANGS, countryContentLanguage, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { extractTranslatableExtractionTexts } from '~/lib/extraction-translation'
 import {
   checkInMemoryRateLimit,
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
 } from '~/server/utils/in-memory-rate-limit'
 import { requestClientIp } from '~/server/utils/request-client-ip'
-import type { Auction } from '~/types/auction'
+import { auctionTranslationContentHash, translationSourceAuction, tryTranslate } from '~/server/utils/auction-translation'
 
-const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(['de', 'en'])
-
-const LANG_NAMES: Record<ContentTargetLang, string> = { de: 'German', en: 'English' }
-const LANGUAGE_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'language' })
-
-function languageName(code: string): string {
-  return LANGUAGE_DISPLAY_NAMES.of(code) ?? code
-}
-
-const SYSTEM_PROMPT =
-  'Du bist ein präziser Übersetzer für Anzeigen von Immobilien-Zwangsversteigerungen. ' +
-  'Übersetze wörtlich und originalgetreu — keine Ausschmückung, keine Zusammenfassung. ' +
-  'Alle vollständigen Sätze müssen in der Zielsprache stehen. Fach- und Rechtsbegriffe nur dann unverändert lassen, ' +
-  'wenn es wirklich kein zuverlässiges Äquivalent gibt; keine Originalbegriffe mit Klammerübersetzung ausgeben.'
+// Exported so the /settings per-auction retry trigger (translation-retry.post.ts)
+// validates the same language set.
+export const SUPPORTED_TARGET_LANGS = new Set<ContentTargetLang>(CONTENT_TARGET_LANGS)
 
 // Dedupe concurrent misses for the same content+language and cap total
 // concurrent LLM work.
@@ -56,62 +46,6 @@ const inflight = new Map<string, Promise<TranslationResult>>()
 const MAX_INFLIGHT = 4
 const TRANSLATION_RATE_LIMIT = { max: 30, windowMs: 60 * 60 * 1000, maxKeys: 10_000 }
 const translationRateLimit = createInMemoryRateLimitState()
-
-/** Builds a labelled prompt so nullable fields retain their identity. */
-function buildPrompt(
-  title: string | null,
-  address: string | null,
-  description: string | null,
-  documentSummary: string | null,
-  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
-  targetLang: ContentTargetLang,
-  sourceLang: string | null,
-): string {
-  const sourceHint = sourceLang
-    ? `The source portal normally publishes this auction in ${languageName(sourceLang)}. If an individual field is in another language, detect it and still translate it into ${LANG_NAMES[targetLang]}.`
-    : `Detect the source language of each field and translate it into ${LANG_NAMES[targetLang]}.`
-  const lines = [
-    `Translate the following real-estate foreclosure auction text fields into ${LANG_NAMES[targetLang]}.`,
-    sourceHint,
-    'Return the same JSON shape. Translate every string value. Keep nulls, array order, array lengths, identifiers, dates, numbers and currencies unchanged.',
-    'Do not leave whole source-language sentences unchanged. Do not write source terms followed by target-language translations in parentheses; use the target-language term directly.',
-    'ADDRESS is a property address, not prose: localize administrative terms/abbreviations (street, square, district, house-number sign, place-name prefixes) into the target-language convention, and transliterate non-Latin-script proper nouns into Latin script. Keep the same component order; do not invent or drop components.',
-    'EXTRACTION_TEXTS_JSON contains short structured labels shown in the property detail UI. Translate heating and insights.construction as user-facing amenity text, including material, roof, window, foundation and building-services terms. Keep an original specialist term only when there is no reliable target-language equivalent.',
-    '',
-    `TITLE: ${title ?? ''}`,
-    `ADDRESS: ${address ?? ''}`,
-    `DESCRIPTION:\n${description ?? ''}`,
-    `DOCUMENT_SUMMARY:\n${documentSummary ?? ''}`,
-    `EXTRACTION_TEXTS_JSON:\n${JSON.stringify(extractionTexts ?? null, null, 2)}`,
-  ]
-  return lines.join('\n')
-}
-
-async function tryTranslate(
-  title: string | null,
-  address: string | null,
-  description: string | null,
-  documentSummary: string | null,
-  extractionTexts: ReturnType<typeof extractTranslatableExtractionTexts>,
-  targetLang: ContentTargetLang,
-  sourceLang: string | null,
-  config: Parameters<typeof callTranslationLlm>[7],
-): Promise<TranslationResult | null> {
-  return await callTranslationLlm(
-    SYSTEM_PROMPT,
-    buildPrompt(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang),
-    title,
-    address,
-    description,
-    documentSummary,
-    extractionTexts,
-    config,
-  )
-}
-
-export function auctionTranslationContentHash(auction: Pick<Auction, 'title' | 'address' | 'description' | 'extraction'>): string {
-  return sha256Hex(Buffer.from(JSON.stringify(translationContentSource(auction))))
-}
 
 export default defineEventHandler(async (event) => {
   const platform = String(event.context.params?.platform ?? '')
@@ -127,12 +61,11 @@ export default defineEventHandler(async (event) => {
   const targetLang = lang as ContentTargetLang
   const cacheOnly = String(getQuery(event).cacheOnly ?? '') === '1'
 
-  const key = cacheKey(platform, id)
-  const snapshot = await readAuctionSnapshot()
-  const auction = snapshot[key]
-  if (!auction) {
+  const record = await readAuctionRecord(platform, id)
+  if (!record) {
     throw createError({ statusCode: 404, statusMessage: 'auction not found' })
   }
+  const auction = translationSourceAuction(record.auction)
 
   const { title, address, description } = auction
   const documentSummary = auction.extraction?.documentSummary ?? null
@@ -157,7 +90,14 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 503, statusMessage: 'translation cache not configured' })
   }
 
-  const stored = await readAuctionTranslation(db, platform, id, targetLang)
+  // Translations hang off a concrete extraction version (WP-4). An auction
+  // with no auction_details row yet has nothing versioned to translate.
+  if (record.detailsVersion == null) {
+    throw createError({ statusCode: 404, statusMessage: 'auction not found' })
+  }
+  const detailsVersion = record.detailsVersion
+
+  const stored = await readAuctionTranslation(db, platform, id, detailsVersion, targetLang)
   if (stored?.status === 'completed' && stored.contentHash === contentHash) {
     setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
     return {
@@ -185,11 +125,12 @@ export default defineEventHandler(async (event) => {
     // unchanged" — otherwise every pre-existing failed row would bypass the
     // backoff the first time it's touched after this ships.
     if (stored.failedConfig == null || stored.failedConfig === currentFingerprint) {
-      throw createError({
-        statusCode: 502,
-        statusMessage: 'Übersetzung fehlgeschlagen',
-        data: { detail: stored.errorMessage ?? 'Unbekannter Übersetzungsfehler' },
-      })
+      throw publicError(
+        'POST /api/auction/:platform/:id/translation',
+        502,
+        'Übersetzung fehlgeschlagen.',
+        stored.errorMessage ?? 'Unbekannter Übersetzungsfehler',
+      )
     }
   }
   if (stored?.status === 'pending' && !stored.claimStale) {
@@ -224,7 +165,7 @@ export default defineEventHandler(async (event) => {
   }
   recordInMemoryRateLimitHit(translationRateLimit, requester, now, TRANSLATION_RATE_LIMIT)
 
-  const claim = await claimAuctionTranslation(db, platform, id, targetLang, contentHash)
+  const claim = await claimAuctionTranslation(db, platform, id, detailsVersion, targetLang, contentHash)
   if (!claim) {
     throw createError({ statusCode: 409, statusMessage: 'Übersetzung wurde bereits angestoßen' })
   }
@@ -237,7 +178,7 @@ export default defineEventHandler(async (event) => {
     try {
       const cached = await readContentTranslation(db, contentHash, targetLang)
       if (cached) {
-        await completeAuctionTranslation(db, platform, id, targetLang, claim, cached)
+        await completeAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, cached)
         setResponseHeader(event, 'x-zvg-translation-cache', 'hit')
         return cached
       }
@@ -255,7 +196,19 @@ export default defineEventHandler(async (event) => {
       let result: TranslationResult | null = null
       for (const [index, config] of configs.entries()) {
         try {
-          result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config)
+          result = await tryTranslate(title, address, description, documentSummary, extractionTexts, targetLang, sourceLang, config, (usage) => {
+            void recordLlmUsage({
+              task: 'translation',
+              executionMode: 'sync',
+              source: null,
+              provider: config.provider ?? 'openai-compatible',
+              model: config.model,
+              profileId: config.profileId ?? null,
+              platform,
+              externalId: id,
+              usage,
+            })
+          })
           break
         } catch (err) {
           const isLast = index === configs.length - 1
@@ -278,18 +231,14 @@ export default defineEventHandler(async (event) => {
         result.documentSummary,
         result.extractionTexts,
       )
-      await completeAuctionTranslation(db, platform, id, targetLang, claim, result)
+      await completeAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, result)
       setResponseHeader(event, 'x-zvg-translation-cache', 'generated')
       return result
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       const failedFingerprint = attemptedConfigs.length > 0 ? fingerprintConfigChain(attemptedConfigs) : null
-      await failAuctionTranslation(db, platform, id, targetLang, claim, message, failedFingerprint)
-      throw createError({
-        statusCode: 502,
-        statusMessage: 'Übersetzung fehlgeschlagen',
-        data: { detail: message },
-      })
+      await failAuctionTranslation(db, platform, id, detailsVersion, targetLang, claim, message, failedFingerprint)
+      throw publicError('POST /api/auction/:platform/:id/translation', 502, 'Übersetzung fehlgeschlagen.', message)
     }
   })()
 

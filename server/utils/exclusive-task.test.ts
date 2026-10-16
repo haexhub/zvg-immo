@@ -1,5 +1,9 @@
-import { describe, expect, it, vi } from 'vitest'
-import { runExclusiveTask, TaskSupersededError, throwIfTaskAborted } from './exclusive-task'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { holdTasksUntilMigrated, isTaskActive, runExclusiveTask, TaskSupersededError, throwIfTaskAborted } from './exclusive-task'
+
+afterEach(() => {
+  holdTasksUntilMigrated(Promise.resolve())
+})
 
 describe('runExclusiveTask', () => {
   it('aborts the active run and starts its replacement only after cleanup', async () => {
@@ -92,5 +96,51 @@ describe('runExclusiveTask', () => {
 
     expect(refresh).toBe('refresh')
     expect(enrich).toBe('enrich')
+  })
+
+  it('reports a run as active until it settles, so scheduled triggers can yield to it', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    expect(isTaskActive('active-test')).toBe(false)
+
+    const run = runExclusiveTask('active-test', async () => {
+      await gate
+      return 'done'
+    })
+    expect(isTaskActive('active-test')).toBe(true)
+    expect(isTaskActive('other-task')).toBe(false)
+
+    release()
+    await expect(run).resolves.toBe('done')
+    expect(isTaskActive('active-test')).toBe(false)
+  })
+
+  it('starts a run only after the registered migrations finished', async () => {
+    let finishMigrations!: () => void
+    holdTasksUntilMigrated(new Promise<void>((resolve) => {
+      finishMigrations = resolve
+    }))
+    const operation = vi.fn(async () => 'done')
+
+    const run = runExclusiveTask('migration-wait-test', operation)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(operation).not.toHaveBeenCalled()
+
+    finishMigrations()
+    await expect(run).resolves.toBe('done')
+  })
+
+  it('fails a run without starting it when the migrations failed', async () => {
+    const migrationError = new Error('relation missing')
+    const migrations = Promise.reject(migrationError)
+    migrations.catch(() => undefined)
+    holdTasksUntilMigrated(migrations)
+    const operation = vi.fn(async () => 'done')
+
+    await expect(runExclusiveTask('migration-failed-test', operation))
+      .rejects.toMatchObject({ cause: migrationError })
+    expect(operation).not.toHaveBeenCalled()
   })
 })

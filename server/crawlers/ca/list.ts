@@ -373,15 +373,23 @@ export function mapProperty(
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
   const salePages = await discoverSalePages()
-  if (salePages.length === 0) return { auctions: [], total: 0 }
+  // Ontario always has upcoming municipal tax sales, so an empty index means
+  // the link markup/slug pattern changed. Reporting a successful crawl of
+  // nothing would hide every stored listing instead of letting it go stale.
+  if (salePages.length === 0) {
+    throw new Error('ontariotaxsales.ca: index yielded no sale pages — markup changed?')
+  }
 
   // Fetch first, parse afterwards. The sale pages are large (up to ~650 KB of
   // Divi markup) and cheerio's synchronous parse would otherwise block the
   // event loop mid-crawl, delaying the other workers' in-flight fetches enough
   // to trip their abort timers.
   const html: (string | null)[] = new Array(salePages.length).fill(null)
+  // A sale page that failed to fetch or parse drops its listings from this
+  // run, so the run must not count as complete.
+  let failedPages = 0
   let cursor = 0
   async function worker() {
     while (cursor < salePages.length) {
@@ -392,6 +400,7 @@ export async function fetchAllListings(
         html[i] = await htmlFetch(url)
       } catch (err) {
         html[i] = null
+        failedPages++
         console.warn(`ontariotaxsales.ca: fetch failed for ${url}`, err)
       }
     }
@@ -406,6 +415,7 @@ export async function fetchAllListings(
     try {
       parsedPage = parseSalePage(page, url)
     } catch (err) {
+      failedPages++
       console.warn(`ontariotaxsales.ca: parse failed for ${url}`, err)
       continue
     }
@@ -414,5 +424,5 @@ export async function fetchAllListings(
       auctions.push(mapProperty(prop, url, municipality, parsedPage.dateTime, platformId))
     }
   }
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete: failedPages === 0 }
 }

@@ -27,6 +27,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   if (mapEntries.length === 0) {
     return {
       platform: PLATFORM_ID,
+      platformsSucceeded: [PLATFORM_ID],
       source: AGI_BASE,
       countries: [COUNTRY],
       regions: [regionName],
@@ -37,7 +38,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   }
 
   const ids = mapEntries.map((e) => e.idLotto)
-  const details = await fetchAllDetails(ids, cookies)
+  const { details, failedBatches } = await fetchAllDetails(ids, cookies)
   const auctions = buildAuctions(mapEntries, details, regionName, PLATFORM_ID)
 
   if (enrichDetails && auctions.length > 0) {
@@ -49,13 +50,17 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     }
   }
 
+  // Lots of a failed detail batch are missing from `auctions`; recording the
+  // run as a success would hide those still-active lots as "gone" (agi has no
+  // auction date to fall back on, last_seen_at is its only expiry signal).
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: failedBatches === 0 ? [PLATFORM_ID] : [],
     source: AGI_BASE,
     countries: [COUNTRY],
     regions: [regionName],
     fetchedAt: new Date().toISOString(),
-    totalReported: auctions.length,
+    totalReported: mapEntries.length,
     auctions,
   }
 }

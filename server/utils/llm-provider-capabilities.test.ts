@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { llmProviderRequiresApiKey } from './llm-provider-capabilities'
+import { llmProviderRequiresApiKey, supportsLlmProviderExecutionMode } from './llm-provider-capabilities'
 
 describe('llmProviderRequiresApiKey', () => {
   it('always requires a key for gemini-native, whose endpoint is Google-hosted', () => {
@@ -39,5 +39,25 @@ describe('llmProviderRequiresApiKey', () => {
 
   it('does not require a key when the baseUrl is unparseable', () => {
     expect(llmProviderRequiresApiKey('openai-compatible', 'not a url')).toBe(false)
+  })
+})
+
+describe('supportsLlmProviderExecutionMode', () => {
+  it('allows sync for every provider regardless of key/baseUrl', () => {
+    expect(supportsLlmProviderExecutionMode('openrouter', 'sync')).toBe(true)
+    expect(supportsLlmProviderExecutionMode('openai-compatible', 'sync')).toBe(true)
+  })
+
+  it('gates OpenRouter batch on having an API key, same as the Claude proxy', () => {
+    expect(supportsLlmProviderExecutionMode('openrouter', 'batch', 'sk-or-test', 'https://openrouter.ai/api/v1')).toBe(true)
+    expect(supportsLlmProviderExecutionMode('openrouter', 'batch', '', 'https://openrouter.ai/api/v1')).toBe(false)
+    expect(supportsLlmProviderExecutionMode('claude-proxy', 'batch', 'proxy-token', 'http://proxy')).toBe(true)
+    expect(supportsLlmProviderExecutionMode('claude-proxy', 'batch', '', 'http://proxy')).toBe(false)
+  })
+
+  it('gemini-native always supports batch, openai-compatible only on api.openai.com/v1 with a key', () => {
+    expect(supportsLlmProviderExecutionMode('gemini-native', 'batch')).toBe(true)
+    expect(supportsLlmProviderExecutionMode('openai-compatible', 'batch', 'sk-test', 'https://api.openai.com/v1')).toBe(true)
+    expect(supportsLlmProviderExecutionMode('openai-compatible', 'batch', 'sk-test', 'https://api.moonshot.ai/v1')).toBe(false)
   })
 })

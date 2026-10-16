@@ -1,98 +1,77 @@
 <script setup lang="ts">
 import type { AuctionSearchResponse, AuctionSummary } from '~/server/api/auctions.get'
 import type { GeoAuction, GeoCrawlResult } from '~/server/api/auctions-geo.get'
-import type { CountryEntry } from '~/server/crawlers/registry'
 import { ALL_SCOPE, isAllScope } from '~/lib/auction-constants'
 import { auctionKey } from '~/lib/auction-key'
-import type { SavedSearch } from '~/server/api/saved-searches/index.get'
 import { useMediaQuery } from '@vueuse/core'
 import { apiErrorMessage } from '~/lib/api-error'
-import { useAuctionSearchState } from '~/composables/useAuctionSearchState'
+import { AUCTION_SEARCH_STATE_KEY } from '~/composables/useAuctionSearchState'
+import { AUCTION_SEARCH_RESULT_KEY } from '~/composables/useAuctionSearchResult'
 import { useAuctionWatchlist } from '~/composables/useAuctionWatchlist'
+import { activeAuctionSearchFilterCount, parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 definePageMeta({ layout: 'search' })
 
-const route = useRoute()
 const { user } = useAuth()
-const { t, locale } = useI18n()
-const intlLocale = useIntlLocale()
-const { currency, eurToDisplay, displayToEur } = useCurrencyDisplay()
-const propertyTypeLabel = usePropertyTypeLabel()
+const { t } = useI18n()
+
+const route = useRoute()
+// Filtered result pages are near-duplicates of the base search experience —
+// keep link equity flowing without letting every filter combination get indexed.
+const hasActiveFilters = computed(() => activeAuctionSearchFilterCount(parseAuctionSearchFilters(route.query)) > 0)
+const canonicalUrl = `${useRequestURL().origin}/search`
+useSeoMeta({
+  title: () => t('site.searchTitle'),
+  description: () => t('site.searchDescription'),
+  ogTitle: () => t('site.searchTitle'),
+  ogDescription: () => t('site.searchDescription'),
+  ogType: 'website',
+  ogUrl: canonicalUrl,
+  twitterCard: 'summary',
+  robots: () => (hasActiveFilters.value ? 'noindex, follow' : 'index, follow'),
+})
+useHead({ link: [{ rel: 'canonical', href: canonicalUrl }] })
 
 // Desktop shows list + map side by side; below this breakpoint they collapse
-// into the two SearchTabs panes (see template) — matches SiteHeader's own
-// `md:` breakpoint. useMediaQuery reads matchMedia synchronously during setup
-// on the client, i.e. before the first hydration pass — gating it behind
+// into the two SearchTabs panes (see template) — matches the search bar's own
+// `md:` popover/sheet breakpoint. useMediaQuery reads matchMedia synchronously
+// during setup on the client, i.e. before the first hydration pass — gating it behind
 // `mounted` keeps that first client render identical to the SSR-safe mobile
 // markup, so the desktop swap happens as a normal post-hydration update
 // instead of a hydration mismatch (which otherwise corrupts the DOM).
 const mediaIsDesktop = useMediaQuery('(min-width: 768px)')
 
-const { data: countries } = await useFetch<CountryEntry[]>('/api/regions', {
-  cache: 'no-store',
-  default: () => [],
-})
-
-// Admin-configured default for the hideRulesOnly filter below (/settings'
-// "Dashboard-Anzeige" — see server/utils/app-settings.ts's
-// getHideRulesOnlyAuctions). Public endpoint outside /api/settings/ since
-// every visitor, not just an admin, needs this default.
-const { data: displaySettings } = await useFetch<{ hideRulesOnlyAuctions: boolean }>('/api/display-settings', {
-  default: () => ({ hideRulesOnlyAuctions: true }),
-})
-const hideRulesOnlyServerDefault = computed(() => displaySettings.value?.hideRulesOnlyAuctions ?? true)
-
+// layouts/search.vue owns the single useAuctionSearchState instance — its
+// header slot and this page both read/write the same reactive filters.
+const injectedSearchState = inject(AUCTION_SEARCH_STATE_KEY)
+if (!injectedSearchState) {
+  throw new Error('pages/search.vue requires the auction search state provided by layouts/search.vue')
+}
 const {
   mounted,
   selectedCountries,
   selectedRegionKeys,
-  filtersOpen,
-  availableRegions,
   queryParams,
   view,
-  search,
   debouncedSearch,
-  includeCancelled,
   authorityFilter,
-  priceMinDisplay,
-  priceMaxDisplay,
-  landAreaMin,
-  landAreaMax,
-  livingAreaMin,
-  livingAreaMax,
-  yearBuiltMin,
-  yearBuiltMax,
-  renovationYearMin,
-  renovationYearMax,
   categoryFilter,
-  conditionFilter,
-  featuresFilter,
-  onlyWithPhotos,
-  hideRulesOnly,
-  boundToMap,
-  sortBy,
-  headerLabel,
-  activeFilterCount,
-  toggleCountry,
-  toggleRegion,
-  setPriceBucket,
-  clearAllFilters,
-  initializeMountedState,
-} = useAuctionSearchState({
-  countries,
-  hideRulesOnlyServerDefault,
-  eurToDisplay,
-  displayToEur,
-})
+  mapLat,
+  mapLng,
+  mapZoom,
+  updateMapView,
+} = injectedSearchState
 const isDesktop = computed(() => mounted.value && mediaIsDesktop.value)
 
-// Search results are filtered and paginated in Postgres. Only compact card
-// summaries reach the browser; detail text, documents and galleries stay on
-// the per-auction endpoint.
-const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | null>('/api/auctions', {
-  query: queryParams,
-  default: () => null,
-})
+// The main /api/auctions fetch (+ its derived courts/categories facets) lives
+// in layouts/search.vue — the header's Properties popover needs the same
+// facets the results list does, and a layout is the only common ancestor of
+// header and page content (see useAuctionSearchResult.ts).
+const injectedSearchResult = inject(AUCTION_SEARCH_RESULT_KEY)
+if (!injectedSearchResult) {
+  throw new Error('pages/search.vue requires the auction search result provided by layouts/search.vue')
+}
+const { data, pending, courts, categories: kategorienMitCount } = injectedSearchResult
 
 // The map pane is visible whenever it's actually on screen: always on
 // desktop, or only during the "map" mobile tab. Drives both the geo-fetch
@@ -101,9 +80,8 @@ const { data, pending, error, refresh } = useLazyFetch<AuctionSearchResponse | n
 const mapVisible = computed(() => isDesktop.value || view.value === 'map')
 
 // Geo-fetch is gated behind the map being visible but reacts to country/region
-// changes. The first request stays cache-only so the map appears instantly; a
-// narrowed single-country view then lets the poller ask the server to resolve
-// missing coordinates in the background.
+// changes. Requests stay cache-only; a narrowed single-country view polls the
+// progress written by the exclusive scheduled/admin geocode task.
 const shouldFetchMissingGeo = computed(() => selectedCountries.value.length === 1)
 const {
   data: geoData,
@@ -136,6 +114,7 @@ const geocodingInProgress = computed(() => {
 
 let geoPollTimer: ReturnType<typeof setInterval> | null = null
 let pollInFlight = false
+let geoPollAbortController: AbortController | null = null
 const geoBackgroundError = ref<{ message: string } | null>(null)
 async function pollGeoOnce(): Promise<void> {
   // Direct $fetch bypasses the useFetch payload cache that holds the first
@@ -143,27 +122,29 @@ async function pollGeoOnce(): Promise<void> {
   // Snapshot the selection so a stale response never overwrites data the
   // user requested for a different country/region mid-flight.
   const requestQuery = { ...queryParams.value }
-  const fetchParam = shouldFetchMissingGeo.value ? '1' : '0'
   pollInFlight = true
+  const abortController = new AbortController()
+  geoPollAbortController = abortController
   geoBackgroundError.value = null
   try {
     const fresh = await $fetch<GeoCrawlResult>('/api/auctions-geo', {
       query: {
         ...requestQuery,
-        fetch: fetchParam,
+        fetch: '0',
       },
       // Bypass the HTTP cache so each poll sees the growing geocode cache.
       cache: 'no-store',
+      signal: abortController.signal,
     })
     if (
       JSON.stringify(requestQuery) === JSON.stringify(queryParams.value)
-      && fetchParam === (shouldFetchMissingGeo.value ? '1' : '0')
     ) {
       geoData.value = fresh
     }
   } catch (err) {
     geoBackgroundError.value = { message: apiErrorMessage(err, t('search.geoError')) }
   } finally {
+    if (geoPollAbortController === abortController) geoPollAbortController = null
     pollInFlight = false
   }
 }
@@ -191,72 +172,42 @@ function stopGeoPoll(): void {
     clearInterval(geoPollTimer)
     geoPollTimer = null
   }
+  geoPollAbortController?.abort()
+  geoPollAbortController = null
 }
 watch([geocodingInProgress, mapVisible, shouldFetchMissingGeo], ([running, visible, shouldFetch]) => {
   if (running && visible && shouldFetch) startGeoPoll()
   else stopGeoPoll()
 }, { immediate: true })
 
-onMounted(initializeMountedState)
-
-onDeactivated(() => stopGeoPoll())
-onActivated(() => {
-  if (geocodingInProgress.value && mapVisible.value) startGeoPoll()
-})
 onBeforeUnmount(() => stopGeoPoll())
 
-const courts = computed<string[]>(() => {
-  return data.value?.facets.authorities ?? []
-})
-
-// Counts of normalized Objektart categories. Sorted by descending count so
-// the most common categories show up first in the dropdown.
-const kategorienMitCount = computed<{ id: string; label: string; count: number }[]>(() => {
-  return (data.value?.facets.categories ?? [])
-    .map(({ id, count }) => ({ id, label: propertyTypeLabel(id), count }))
-    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, locale.value))
-})
-
 const filtered = computed<AuctionSummary[]>(() => data.value?.auctions ?? [])
-
-// Lets the map popover show grid data (photos included) instantly for any
-// marker whose auction the grid has already loaded, instead of a fallback
-// fetch — see components/LotPopover.vue.
-const auctionSummaries = computed(() => new Map(filtered.value.map((a) => [auctionKey(a), a])))
 
 const filteredGeo = computed<GeoAuction[]>(() => {
   if (!geoData.value) return []
   return geoData.value.auctions
 })
 
-// "Kartenbereich": when on, the list is restricted to auctions whose
-// coordinates fall inside the map's visible viewport (emitted by AuctionMap on
-// moveend). Only geocoded auctions can be placed, so ungeocoded ones drop out
-// of the list while this is active.
+// The grid is always restricted to what's inside the map's visible viewport
+// (emitted by AuctionMap on moveend), once the map has reported one. Before
+// that (initial render, or mobile's list tab before the map tab was ever
+// opened) it falls back to the unscoped fetch above.
 type MapBounds = { north: number; south: number; east: number; west: number }
 const mapBounds = ref<MapBounds | null>(null)
-
-const listBase = computed<AuctionSummary[]>(() => {
-  if (boundToMap.value && mapBounds.value) {
-    const b = mapBounds.value
-    const visibleKeys = new Set(filteredGeo.value
-      .filter((a) => a.lat >= b.south && a.lat <= b.north && a.lng >= b.west && a.lng <= b.east)
-      .map(auctionKey))
-    return filtered.value.filter((auction) => visibleKeys.has(auctionKey(auction)))
-  }
-  return filtered.value
-})
-const sortedList = computed<AuctionSummary[]>(() => listBase.value)
+const usingBoundedList = computed(() => mapBounds.value !== null)
 
 // The list view used to render every filtered auction as a full card in one
 // go — with the "all countries" default that's ~14.7k cards (~45MB of SSR
 // HTML) before the client even hydrates and switches to the map. Page it
 // instead: render a bounded slice and grow it on demand.
 const LIST_PAGE_SIZE = 30
-const loadMorePending = ref(false)
 const listActionError = ref<string | null>(null)
-const visibleAuctions = computed<AuctionSummary[]>(() => sortedList.value)
-async function loadMore(): Promise<void> {
+
+// Fallback pagination over the unscoped fetch — same page/offset paging this
+// page has always done. Only exercised while mapBounds is still null.
+const loadMorePending = ref(false)
+async function loadMoreUnbounded(): Promise<void> {
   if (!data.value || loadMorePending.value || data.value.auctions.length >= data.value.total) return
   loadMorePending.value = true
   listActionError.value = null
@@ -271,11 +222,109 @@ async function loadMore(): Promise<void> {
       auctions: [...data.value.auctions, ...next.auctions],
     }
   } catch (err) {
-    listActionError.value = apiErrorMessage(err, 'Weitere Auktionen konnten nicht geladen werden.')
+    listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
   } finally {
     loadMorePending.value = false
   }
 }
+
+// Bounds-scoped pagination — /api/auctions filters server-side on a.lat/lng
+// once north/south/east/west are present, so page 1 always matches what's on
+// screen instead of hoping a relevance/date/price-ordered page happens to.
+// skipFacets suppresses the courts/categories facet queries: the header's
+// Properties popover already gets those from the unscoped fetch above, and
+// re-deriving them on every pan/zoom would double a request that already
+// opens four DB connections.
+//
+// Plain $fetch behind a manual watch, not useFetch: bounds only ever exist
+// client-side after the map's first moveend, so there's nothing here for SSR
+// to prefetch, and useFetch's own built-in reactivity to its `query` option
+// would fire a second, redundant request alongside a manual one triggered
+// off the same change. boundedRequestKey guards against a slow page-1
+// request completing after a newer bounds/filter change already started —
+// same shape as pollGeoOnce's requestQuery snapshot above.
+const boundedQuery = computed(() => {
+  const b = mapBounds.value
+  return {
+    ...queryParams.value,
+    pageSize: LIST_PAGE_SIZE,
+    skipFacets: '1',
+    ...(b ? { north: b.north, south: b.south, east: b.east, west: b.west } : {}),
+  }
+})
+const boundedData = ref<AuctionSearchResponse | null>(null)
+const boundedPending = ref(false)
+let boundedRequestKey: string | null = null
+
+watch(boundedQuery, async (query) => {
+  if (!mapBounds.value) return
+  const key = JSON.stringify(query)
+  boundedRequestKey = key
+  boundedPending.value = true
+  listActionError.value = null
+  try {
+    const result = await $fetch<AuctionSearchResponse>('/api/auctions', {
+      query: { ...query, page: 1 },
+      cache: 'no-store',
+    })
+    if (boundedRequestKey === key) boundedData.value = result
+  } catch (err) {
+    if (boundedRequestKey === key) listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
+  } finally {
+    if (boundedRequestKey === key) boundedPending.value = false
+  }
+}, { immediate: true })
+
+const boundedLoadMorePending = ref(false)
+async function loadMoreBounded(): Promise<void> {
+  if (!boundedData.value || boundedLoadMorePending.value || boundedData.value.auctions.length >= boundedData.value.total) return
+  const key = boundedRequestKey
+  const requestQuery = { ...boundedQuery.value }
+  boundedLoadMorePending.value = true
+  listActionError.value = null
+  try {
+    const nextPage = Math.floor(boundedData.value.auctions.length / LIST_PAGE_SIZE) + 1
+    const next = await $fetch<AuctionSearchResponse>('/api/auctions', {
+      query: { ...requestQuery, page: nextPage },
+      cache: 'no-store',
+    })
+    if (boundedRequestKey === key && boundedData.value) {
+      boundedData.value = {
+        ...next,
+        auctions: [...boundedData.value.auctions, ...next.auctions],
+      }
+    }
+  } catch (err) {
+    listActionError.value = apiErrorMessage(err, t('search.loadMoreError'))
+  } finally {
+    boundedLoadMorePending.value = false
+  }
+}
+
+const visibleAuctions = computed<AuctionSummary[]>(() =>
+  usingBoundedList.value ? (boundedData.value?.auctions ?? []) : filtered.value)
+const listTotalCount = computed<number>(() =>
+  usingBoundedList.value ? (boundedData.value?.total ?? 0) : (data.value?.total ?? 0))
+const canLoadMore = computed<boolean>(() =>
+  usingBoundedList.value
+    ? !!boundedData.value && boundedData.value.auctions.length < boundedData.value.total
+    : !!data.value && data.value.auctions.length < data.value.total)
+const listPending = computed<boolean>(() => usingBoundedList.value ? boundedPending.value : pending.value)
+
+async function loadMore(): Promise<void> {
+  if (usingBoundedList.value) await loadMoreBounded()
+  else await loadMoreUnbounded()
+}
+
+// Lets the map popover show grid data (photos included) instantly for any
+// marker whose auction the grid has already loaded, instead of a fallback
+// fetch — see components/LotPopover.vue. Merges both fetches since either
+// can hold the auction the popover is asking about.
+const auctionSummaries = computed(() => {
+  const map = new Map(filtered.value.map((a) => [auctionKey(a), a]))
+  for (const a of boundedData.value?.auctions ?? []) map.set(auctionKey(a), a)
+  return map
+})
 
 const hoveredAuctionKey = ref<string | null>(null)
 const selectedAuctionKey = ref<string | null>(null)
@@ -302,8 +351,8 @@ function handleMapAuctionSelect(key: string): void {
   revealAuctionInList(key)
 }
 
-watch(sortedList, () => {
-  if (activeAuctionKey.value && !sortedList.value.some((a) => auctionKey(a) === activeAuctionKey.value)) {
+watch(visibleAuctions, () => {
+  if (activeAuctionKey.value && !visibleAuctions.value.some((a) => auctionKey(a) === activeAuctionKey.value)) {
     hoveredAuctionKey.value = null
     selectedAuctionKey.value = null
     scrollTargetKey.value = null
@@ -315,14 +364,18 @@ watch(sortedList, () => {
 // and region selections still recentre too.
 const geoFitKey = computed(() => `${selectedCountries.value.join(',')}:${selectedRegionKeys.value.join(',')}:${debouncedSearch.value}`)
 
-const totals = computed(() => {
-  if (!data.value) return { gesamt: 0, aktiv: 0, cancelled: 0 }
-  return {
-    gesamt: data.value.total,
-    aktiv: data.value.active,
-    cancelled: data.value.cancelled,
-  }
-})
+// URL-restored map viewport (shared link or back-navigation from an auction
+// detail page). Read once by the map on mount — see Map.client.vue's
+// initialView prop — not kept in sync afterwards, so the user's own pan/zoom
+// takes over immediately.
+const initialMapView = computed(() => (
+  mapLat.value != null && mapLng.value != null && mapZoom.value != null
+    ? { lat: mapLat.value, lng: mapLng.value, zoom: mapZoom.value }
+    : null
+))
+function handleMapViewChange(mapView: { lat: number; lng: number; zoom: number }): void {
+  updateMapView(mapView.lat, mapView.lng, mapView.zoom)
+}
 
 // Validate URL-restored authorityFilter / categoryFilter once data has loaded.
 // Invalid values produce silent 0-result filtering otherwise.
@@ -335,30 +388,6 @@ watch(data, () => {
   }
 })
 
-// "Suche speichern" — POSTs the current URL query params as-is (same shape
-// saved_searches.filters mirrors, see lib/auction-filters.ts) under a
-// user-chosen name.
-const savingSearch = ref(false)
-async function saveCurrentSearch(): Promise<void> {
-  if (!user.value) return
-  const name = window.prompt(t('search.saveSearchPrompt'))?.trim()
-  if (!name) return
-  savingSearch.value = true
-  try {
-    await authFetch<SavedSearch>('/api/saved-searches', {
-      method: 'POST',
-      body: { name, filters: route.query },
-    })
-  } catch (err: unknown) {
-    const msg = (err as { statusMessage?: string; message?: string })?.statusMessage
-      ?? (err as { message?: string })?.message
-      ?? t('search.saveSearchError')
-    window.alert(msg)
-  } finally {
-    savingSearch.value = false
-  }
-}
-
 const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   onError: (message) => {
     listActionError.value = message
@@ -368,47 +397,6 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
 
 <template>
   <main class="h-full flex flex-col px-4 py-3">
-    <header class="shrink-0 mb-3">
-      <div class="flex items-baseline gap-x-5 gap-y-1 flex-wrap">
-        <h1 class="text-2xl font-bold tracking-tight">{{ $t('search.titleWithLabel', { label: headerLabel }) }}</h1>
-        <div v-if="data" class="flex flex-wrap items-center gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-          <span><span class="font-semibold text-foreground">{{ totals.gesamt }}</span> {{ $t('search.total') }}</span>
-          <span><span class="font-semibold text-emerald-600 dark:text-emerald-500">{{ totals.aktiv }}</span> {{ $t('search.active') }}</span>
-          <span><span class="font-semibold">{{ totals.cancelled }}</span> {{ $t('search.cancelled') }}</span>
-          <span v-if="data">{{ $t('search.asOf', { date: new Date(data.fetchedAt).toLocaleString(intlLocale) }) }}</span>
-        </div>
-      </div>
-    </header>
-
-    <SearchToolbar
-      v-model:search="search"
-      v-model:sort-by="sortBy"
-      v-model:bound-to-map="boundToMap"
-      :filtered-count="data?.total ?? 0"
-      :geo-data="geoData"
-      :filtered-geo-count="filteredGeo.length"
-      :geocoding-in-progress="geocodingInProgress"
-      :logged-in="!!user"
-      :saving-search="savingSearch"
-      :active-filter-count="activeFilterCount"
-      @save-search="saveCurrentSearch"
-      @open-filters="filtersOpen = true"
-    />
-
-    <p v-if="pending && !data" class="py-12 text-center text-muted-foreground">{{ $t('search.loadingData') }}</p>
-    <p v-else-if="error" class="py-12 text-center text-destructive">
-      {{ $t('search.loadError', { msg: error.statusMessage || error.message }) }}
-    </p>
-    <p v-if="listActionError" role="alert" class="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-      {{ listActionError }}
-    </p>
-    <p
-      v-if="selectedCountries.length === 0 && pending"
-      class="mb-4 text-xs text-muted-foreground text-center"
-    >
-      {{ $t('search.initialLoadHint') }}
-    </p>
-
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
         <AuctionMapPane
@@ -417,19 +405,22 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           :auction-summaries="auctionSummaries"
           :selected-countries="selectedCountries"
           :fit-key="geoFitKey"
+          :initial-view="initialMapView"
           :geo-pending="geoPending"
           :has-geo-data="!!geoData"
           :geo-error="geoError ?? geoBackgroundError"
           :active-auction-key="activeAuctionKey"
           @bounds-change="mapBounds = $event"
+          @view-change="handleMapViewChange"
           @auction-hover="handleMapAuctionHover"
           @auction-select="handleMapAuctionSelect"
         />
         <AuctionListPane
           class="flex-1 min-h-0"
           :auctions="visibleAuctions"
-          :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
-          :pending="pending"
+          :total-count="listTotalCount"
+          :can-load-more="canLoadMore"
+          :pending="listPending"
           :logged-in="!!user"
           :watchlist-ids="watchlistIds"
           :active-auction-key="activeAuctionKey"
@@ -443,8 +434,9 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         v-else
         v-model="view"
         :auctions="visibleAuctions"
-        :total-count="boundToMap ? sortedList.length : (data?.total ?? 0)"
-        :pending="pending"
+        :total-count="listTotalCount"
+        :can-load-more="canLoadMore"
+        :pending="listPending"
         :logged-in="!!user"
         :watchlist-ids="watchlistIds"
         :active-auction-key="activeAuctionKey"
@@ -452,53 +444,17 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         :geo-auctions="filteredGeo"
         :selected-countries="selectedCountries"
         :geo-fit-key="geoFitKey"
+        :initial-map-view="initialMapView"
         :geo-pending="geoPending"
         :geo-data="geoData"
         :geo-error="geoError ?? geoBackgroundError"
         @toggle-watchlist="toggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
+        @view-change="handleMapViewChange"
         @auction-hover="handleMapAuctionHover"
         @auction-select="handleMapAuctionSelect"
       />
     </div>
-
-    <Sheet v-model:open="filtersOpen">
-      <SheetContent side="right" class="flex flex-col gap-0 p-0 w-full sm:max-w-md">
-        <SearchFilters
-          v-model:authority-filter="authorityFilter"
-          v-model:price-min-display="priceMinDisplay"
-          v-model:price-max-display="priceMaxDisplay"
-          v-model:land-area-min="landAreaMin"
-          v-model:land-area-max="landAreaMax"
-          v-model:living-area-min="livingAreaMin"
-          v-model:living-area-max="livingAreaMax"
-          v-model:year-built-min="yearBuiltMin"
-          v-model:year-built-max="yearBuiltMax"
-          v-model:renovation-year-min="renovationYearMin"
-          v-model:renovation-year-max="renovationYearMax"
-          v-model:category-filter="categoryFilter"
-          v-model:condition-filter="conditionFilter"
-          v-model:features-filter="featuresFilter"
-          v-model:only-with-photos="onlyWithPhotos"
-          v-model:include-cancelled="includeCancelled"
-          v-model:hide-rules-only="hideRulesOnly"
-          :countries="countries ?? []"
-          :selected-countries="selectedCountries"
-          :available-regions="availableRegions"
-          :selected-region-keys="selectedRegionKeys"
-          :courts="courts"
-          :categories="kategorienMitCount"
-          :currency="currency"
-          :pending="pending"
-          :active-filter-count="activeFilterCount"
-          @toggle-country="toggleCountry"
-          @toggle-region="toggleRegion"
-          @set-price-bucket="setPriceBucket"
-          @clear-filters="clearAllFilters"
-          @reload="refresh()"
-        />
-      </SheetContent>
-    </Sheet>
   </main>
 </template>

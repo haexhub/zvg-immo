@@ -1,22 +1,42 @@
-import type { Pool } from 'pg'
+import { and, eq, exists, sql } from 'drizzle-orm'
+import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres'
 import { createError } from 'h3'
 import type { CrawlResult } from '~/types/auction'
 import { crawlSingle, ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '../crawlers/registry'
+import {
+  auctionDetails,
+  auctionFetchState,
+  auctionObservations,
+  auctions,
+  auctionTranslations,
+  crawlState,
+  locationEnrichment,
+} from '../db/schema'
 import { matchAlerts } from './alert-matching'
 import { archiveAuction } from './raw-archive'
+import { deleteRawArchiveCountry } from './raw-archive-delete'
 import { recordObservations } from './history'
-import { getPool } from './db'
-import { writeListCache } from './list-cache'
-import { invalidateAuctionSnapshot } from './auction-snapshot'
-import { invalidateExtractionCache } from './extraction-cache'
+import { getDb } from './db'
+import { ensureAuctionIdentity } from './current-auctions'
+import { writeAuctionCrawlFetchState } from './auction-fetch-state'
+import { recordCrawlScope } from './crawl-state'
+import { invalidateLocationEnrichmentCache } from './external-data/location-enrichment'
 
 export interface CountryRebuildResult {
   country: string
   deleted: {
-    listCache: number
-    auctionSnapshot: number
-    extractionCache: number
-    currentAuctions: number
+    crawlState: number
+    observations: number
+    auctions: number
+    auctionDetails: number
+    fetchState: number
+    locationEnrichment: number
+    auctionTranslations: number
+    artifactCaptures: number
+    artifactVersions: number
+    artifactVersionItems: number
+    artifactBlobs: number
   }
   crawled: {
     ok: number
@@ -27,45 +47,64 @@ export interface CountryRebuildResult {
   errors: Array<{ region: string; message: string }>
 }
 
-let runningCountry: string | null = null
+// One slot per country: a single shared slot let a rebuild of another country
+// overwrite (or its end clear) the guard, so a second rebuild of a country
+// still crawling could delete the rows the first run was writing.
+const runningCountries = new Set<string>()
 
-function platformIdsForCountry(country: string): string[] {
-  const entry = listRegisteredCountries().find((candidate) => candidate.code === country)
-  if (!entry) return []
-  return [
-    ...new Set(entry.regions.flatMap((region) => region.platforms.map((platform) => platform.id))),
-  ]
-}
+export async function deleteCountryCurrentData<TSchema extends Record<string, unknown>>(
+  db: NodePgDatabase<TSchema>,
+  country: string,
+): Promise<CountryRebuildResult['deleted']> {
+  // Archive queries need the auction rows for country scoping, so archive/blob
+  // deletion must happen first. File removal cannot join the SQL transaction;
+  // if the relational delete fails, rerun rebuildCountry to recover.
+  const archive = await deleteRawArchiveCountry(country)
+  const deleted = await db.transaction(async (tx) => {
+    // These four tables don't carry their own `country` column — they key off
+    // (platform, external_id) — so scoping to a country goes through the
+    // `auctions` row for that identity, mirroring the old `USING auctions a`
+    // join.
+    const belongsToCountry = (platform: AnyPgColumn, externalId: AnyPgColumn) =>
+      exists(
+        tx.select({ one: sql`1` }).from(auctions).where(and(
+          eq(auctions.platform, platform),
+          eq(auctions.externalId, externalId),
+          eq(auctions.country, country),
+        )),
+      )
 
-export async function deleteCountryCurrentData(db: Pool, country: string): Promise<CountryRebuildResult['deleted']> {
-  const platformIds = platformIdsForCountry(country)
-  const [
-    listCache,
-    currentAuctions,
-    auctionSnapshot,
-    extractionCache,
-  ] = await Promise.all([
-    db.query('DELETE FROM list_cache WHERE country = $1', [country]),
-    db.query('DELETE FROM auctions WHERE country = $1', [country]),
-    db.query(
-      `DELETE FROM auction_snapshot
-       WHERE auction->>'country' = $1 OR platform = ANY($2::text[])`,
-      [country, platformIds],
-    ),
-    platformIds.length > 0
-      ? db.query('DELETE FROM extraction_cache WHERE platform = ANY($1::text[])', [platformIds])
-      : Promise.resolve({ rowCount: 0 }),
-  ])
+    const auctionTranslationsResult = await tx.delete(auctionTranslations)
+      .where(belongsToCountry(auctionTranslations.platform, auctionTranslations.externalId))
+    const auctionDetailsResult = await tx.delete(auctionDetails)
+      .where(belongsToCountry(auctionDetails.platform, auctionDetails.externalId))
+    const fetchStateResult = await tx.delete(auctionFetchState)
+      .where(belongsToCountry(auctionFetchState.platform, auctionFetchState.externalId))
+    const locationEnrichmentResult = await tx.delete(locationEnrichment)
+      .where(belongsToCountry(locationEnrichment.platform, locationEnrichment.externalId))
+    const observationsResult = await tx.delete(auctionObservations).where(eq(auctionObservations.country, country))
+    const crawlStateResult = await tx.delete(crawlState).where(eq(crawlState.country, country))
+    const auctionsResult = await tx.delete(auctions).where(eq(auctions.country, country))
 
-  invalidateAuctionSnapshot()
-  invalidateExtractionCache()
-
-  return {
-    listCache: listCache.rowCount ?? 0,
-    auctionSnapshot: auctionSnapshot.rowCount ?? 0,
-    extractionCache: extractionCache.rowCount ?? 0,
-    currentAuctions: currentAuctions.rowCount ?? 0,
-  }
+    return {
+      crawlState: crawlStateResult.rowCount ?? 0,
+      observations: observationsResult.rowCount ?? 0,
+      auctions: auctionsResult.rowCount ?? 0,
+      auctionDetails: auctionDetailsResult.rowCount ?? 0,
+      fetchState: fetchStateResult.rowCount ?? 0,
+      locationEnrichment: locationEnrichmentResult.rowCount ?? 0,
+      auctionTranslations: auctionTranslationsResult.rowCount ?? 0,
+      artifactCaptures: archive.deleted.captures,
+      artifactVersions: archive.deleted.documentSets,
+      artifactVersionItems: archive.deleted.documentSetItems,
+      artifactBlobs: archive.deleted.blobs,
+    }
+  })
+  // After the commit, not inside the callback: a concurrent request that
+  // repopulated the cache from rows this transaction had not removed yet would
+  // otherwise leave enrichment entries for deleted auctions behind.
+  invalidateLocationEnrichmentCache()
+  return deleted
 }
 
 export async function rebuildCountry(countryInput: string): Promise<CountryRebuildResult> {
@@ -78,16 +117,16 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
   if (!isCountryEnabled(country)) {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
-  if (runningCountry === country) {
+  if (runningCountries.has(country)) {
     throw createError({ statusCode: 409, statusMessage: `${registered.name} wird bereits neu gecrawlt.` })
   }
 
-  const db = getPool()
+  const db = getDb()
   if (!db) {
     throw createError({ statusCode: 503, statusMessage: 'Postgres ist nicht konfiguriert.' })
   }
 
-  runningCountry = country
+  runningCountries.add(country)
   const startedAt = Date.now()
   const capturedAt = new Date(startedAt).toISOString()
   try {
@@ -103,7 +142,9 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
           immobilienOnly: true,
           enrichDetails: false,
         })
-        await writeListCache(country, region.code, result)
+        await ensureAuctionIdentity(result.auctions)
+        await recordCrawlScope(country, region.code, result, capturedAt)
+        await writeAuctionCrawlFetchState(result.auctions)
         await recordObservations(result, capturedAt)
         await matchAlerts(country, region.code, result)
         for (const auction of result.auctions) {
@@ -130,6 +171,6 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
       errors,
     }
   } finally {
-    runningCountry = null
+    runningCountries.delete(country)
   }
 }

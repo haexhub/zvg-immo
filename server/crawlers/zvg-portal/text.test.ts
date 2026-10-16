@@ -34,6 +34,24 @@ describe('parseEuro', () => {
     expect(parseEuro('800.000,00')).toBe(800000)
   })
 
+  it('uses an explicitly stated total when the portal lists several lots', () => {
+    expect(parseEuro(
+      '1. WE 46 Blatt 15090&nbsp; 59.000,00\n' +
+      '2. Flst. 1402/10, 1/192 Miteigentumsanteil 400,00\n' +
+      'Einbauküche: 3.000,00\nGesamtwert: 62.400,00',
+    )).toBe(62400)
+  })
+
+  it('does not ignore an unmarked Gesamtwert when a lot has a euro marker', () => {
+    expect(parseEuro('Wohnung: 59.000,00 €; Gesamtwert: 62.400,00')).toBe(62400)
+  })
+
+  it('sums all lot values when the portal does not state a total', () => {
+    expect(parseEuro(
+      '<p>Wohnung: 59.000,00</p><p>Grundstücksanteil: 400,00</p><p>Einbauküche: 3.000,00</p>',
+    )).toBe(62400)
+  })
+
   it('decodes &euro; entities before matching', () => {
     expect(parseEuro('16.100,00&nbsp;&euro;')).toBe(16100)
   })

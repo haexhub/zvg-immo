@@ -90,11 +90,14 @@ function mapItem(item: SyslumennAuction, platformId: string): Auction {
   // lotId is the commissioner's internal case id. When it is missing, derive a
   // deterministic key from stable lot attributes — the feed is a rolling
   // window, so a positional index would shift between crawls and break the
-  // platform:externalId snapshot merge.
+  // platform:externalId snapshot merge. The auction date is deliberately left
+  // out: it moves when a sale is postponed or enters its next stage, which
+  // would re-create the lot under a new key and re-notify alerts. Stages of
+  // one lot thus share a key, exactly as they do via lotId.
   const lotId = clean(item.lotId)
   const externalId =
     lotId ??
-    ['is', clean(item.office), clean(item.lotName), clean(item.auctionDate)]
+    ['is', clean(item.office), clean(item.lotName)]
       .filter(Boolean)
       .join(':')
 

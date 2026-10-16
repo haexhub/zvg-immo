@@ -182,6 +182,21 @@ describe('pollOpenAiBatch', () => {
     })
   })
 
+  it('passes the error file along so partially failed requests get an outcome', async () => {
+    stubOfetch([
+      { match: '/batches/batch_partial', data: { status: 'completed', output_file_id: 'file-out', error_file_id: 'file-err' } },
+      { match: '/batches/batch_allfail', data: { status: 'completed', output_file_id: null, error_file_id: 'file-err' } },
+    ])
+    const { pollOpenAiBatch } = await import('./openai-batch')
+
+    await expect(pollOpenAiBatch('batch_partial', config)).resolves.toEqual({
+      state: 'succeeded',
+      resultFileName: 'file-out',
+      errorFileName: 'file-err',
+    })
+    await expect(pollOpenAiBatch('batch_allfail', config)).resolves.toEqual({ state: 'succeeded', errorFileName: 'file-err' })
+  })
+
   it('maps terminal and in-flight statuses', async () => {
     stubOfetch([
       { match: '/batches/batch_failed', data: { status: 'failed' } },
@@ -214,7 +229,7 @@ describe('fetchOpenAiBatchResults', () => {
     stubOfetch([{ match: '/files/file-out/content', data: lines.join('\n') }])
     const { fetchOpenAiBatchResults } = await import('./openai-batch')
 
-    const results = await fetchOpenAiBatchResults('file-out', config, {
+    const results = await fetchOpenAiBatchResults(['file-out'], config, {
       zvg_0_hash: 'zvg-portal:7265',
       zvg_1_hash: 'zvg-portal:9999',
     })
@@ -223,6 +238,24 @@ describe('fetchOpenAiBatchResults', () => {
     expect(results[0]!.key).toBe('zvg-portal:7265')
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
-    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null })
+    expect(results[0]!.usage).toEqual({ inputTokens: null, outputTokens: null })
+    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'Keine gültige Extraktion in der Batch-Antwort' })
+  })
+
+  it('resolves error-file lines as failed items with the provider message', async () => {
+    const errorLine = JSON.stringify({
+      custom_id: 'zvg_2_hash',
+      response: { status_code: 400, body: { error: { message: 'image too large' } } },
+      error: null,
+    })
+    stubOfetch([
+      { match: '/files/file-out/content', data: '' },
+      { match: '/files/file-err/content', data: errorLine },
+    ])
+    const { fetchOpenAiBatchResults } = await import('./openai-batch')
+
+    const results = await fetchOpenAiBatchResults(['file-out', 'file-err'], config, { zvg_2_hash: 'zvg-portal:42' })
+
+    expect(results).toEqual([{ key: 'zvg-portal:42', extraction: null, usage: null, error: 'image too large' }])
   })
 })

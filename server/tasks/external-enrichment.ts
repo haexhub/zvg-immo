@@ -1,28 +1,26 @@
-import type { Pool } from 'pg'
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
-import { readAuctionSnapshot } from '~/server/utils/auction-snapshot'
+import { readAuctionRecord, readAuctionRecords } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
 import { getPool } from '~/server/utils/db'
+import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
+  readLocationEnrichment,
   readLocationEnrichmentCache,
   writeLocationEnrichmentCache,
   type LocationEnrichmentCache,
 } from '~/server/utils/external-data/location-enrichment'
-import { createDvfFileMarketAdapter } from '~/server/utils/external-data/fr-dvf-cache'
-import { createEuFloodRiskFileAdapter } from '~/server/utils/external-data/eu-flood-risk'
-import { createCopernicusEffisBurntAreaFileAdapter } from '~/server/utils/external-data/copernicus-effis'
-import { createEeaEnvironmentalNoiseEnhancer } from '~/server/utils/external-data/eea-environmental-noise'
-import { createCamsAirQualityEnhancer } from '~/server/utils/external-data/cams-air-quality'
-import { createOsmLocationContextAdapter } from '~/server/utils/external-data/osm-location-context'
-import {
-  getStoredExternalDataSourceConfig,
-  getConfigurableExternalDataSource,
-  resolveExternalDataSourceConfig,
-  type ExternalDataSourceConfigValues,
-} from '~/server/utils/external-data/config'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
-import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
-import { recordTaskRunEnd, recordTaskRunStart } from '~/server/utils/task-runs'
+import { isTaskActive, runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
+import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
+import { inScope, orderByStaleness } from '../utils/tasks/external-enrichment-scope'
+import {
+  defaultHazardAdapters,
+  defaultLocationContextAdapters,
+  defaultMarketAdapters,
+  recordProviderFailure,
+} from '../utils/tasks/external-enrichment-adapters'
+
+export { withLocationContextEnhancers } from '../utils/tasks/external-enrichment-adapters'
 
 export interface MarketComparisonAdapter {
   id: string
@@ -49,7 +47,7 @@ export interface LocationContextAdapter {
   id: string
   sourceVersion: string
   supports(auction: Auction): boolean
-  context(auction: Auction): Promise<LocationContext | null>
+  context(auction: Auction, previous?: LocationContext | null): Promise<LocationContext | null>
 }
 
 export interface LocationContextEnhancer {
@@ -69,6 +67,12 @@ export interface ExternalEnrichmentOptions {
   country?: string
   platform?: string
   externalId?: string
+  /** Restrict the run to the local OpenStreetMap location-context adapter. */
+  osmOnly?: boolean
+  /** Skip auctions that already have an OpenStreetMap location context. */
+  onlyMissingLocationContext?: boolean
+  /** 'manual' for /settings triggers; anything else yields to an active run. */
+  trigger?: 'cron' | 'manual'
 }
 
 export interface ExternalEnrichmentSummary {
@@ -86,35 +90,59 @@ export interface ExternalEnrichmentSummary {
   durationMs: number
 }
 
+/**
+ * Manual triggers call this directly instead of Nitro's `runTask`, which
+ * returns an already-running task for a duplicate name and silently drops the
+ * new payload. A newer manual run supersedes the active one; the 15-minute
+ * cron batch skips while one is active.
+ */
+export async function runExternalEnrichmentTask(
+  options: ExternalEnrichmentOptions = {},
+): Promise<{ result: ExternalEnrichmentSummary } | Record<string, never>> {
+  if (options.trigger !== 'manual' && isTaskActive('external-enrichment')) {
+    console.log('[external-enrichment] a run is already active — skipping scheduled run')
+    return {}
+  }
+  return await runExclusiveTask('external-enrichment', async (signal) => {
+    // Recorded because /settings triggers this detached: without a persisted
+    // status a provider failure would vanish with the promise.
+    await recordTaskRunStart('external-enrichment')
+    try {
+      const result = await runExternalEnrichment(options, signal)
+      const { errors, ...summary } = result
+      await recordTaskRunEnd('external-enrichment', {
+        result: summary,
+        warning: errors.length > 0
+          ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
+          : null,
+      })
+      return { result }
+    } catch (err) {
+      await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
+      throw err
+    }
+  })
+}
+
 export default defineTask({
   meta: {
     name: 'external-enrichment',
     description: 'Refresh cached external market and natural-hazard overlays for auction detail pages.',
   },
   async run(event) {
-    const options = (event?.payload ?? {}) as ExternalEnrichmentOptions
-    return await runExclusiveTask('external-enrichment', async (signal) => {
-      // Recorded because /settings triggers this detached: without a persisted
-      // status a provider failure would vanish with the promise.
-      await recordTaskRunStart('external-enrichment')
-      try {
-        const result = await runExternalEnrichment(options, signal)
-        const { errors, ...summary } = result
-        await recordTaskRunEnd('external-enrichment', {
-          result: summary,
-          warning: errors.length > 0
-            ? `${errors.length} Fehler: ${errors.slice(0, 20).join('; ')}`
-            : null,
-        })
-        return { result }
-      } catch (err) {
-        await recordTaskRunEnd('external-enrichment', { error: (err as Error).message })
-        throw err
-      }
-    })
+    return await runExternalEnrichmentTask((event?.payload ?? {}) as ExternalEnrichmentOptions)
   },
 })
 
+// Caps every invocation (cron or manual trigger) to a batch instead of a
+// full sweep, which measured ~16h — long enough that the next colliding
+// runExclusiveTask abort costs a whole day's progress, not a batch's.
+const DEFAULT_BATCH_LIMIT = 40
+
+/**
+ * Refreshes external enrichment for a bounded batch or one explicitly selected
+ * auction when both platform and externalId are provided.
+ */
 export async function runExternalEnrichment(
   options: ExternalEnrichmentOptions = {},
   signal?: AbortSignal,
@@ -122,9 +150,22 @@ export async function runExternalEnrichment(
   const startedAt = Date.now()
   const now = options.now ?? new Date()
   const checkedAt = now.toISOString()
-  const snapshot = await readAuctionSnapshot()
-  const existing = await readLocationEnrichmentCache()
-  const entries: LocationEnrichmentCache = {}
+  // A single-auction trigger (e.g. re-enrichment after coordinates moved,
+  // see current-auctions.ts) only ever needs that one row — reading the full
+  // table just to filter it back down to one auction in inScope() below
+  // meant every such trigger joined and sorted the entire auctions/
+  // auction_details/auction_fetch_state tables, which under concurrent crawl
+  // load queued up on the shared pool and blew its 15s query_timeout.
+  const { platform, externalId } = options
+  const records = platform && externalId
+    ? await readAuctionRecord(platform, externalId).then((record) => record ? [record] : [])
+    : await readAuctionRecords(options.country, { includePhotos: false })
+  // Both reads throw rather than yield an empty map: with no previous entry
+  // every adapter that comes back empty this run would null out stored data.
+  const existing: LocationEnrichmentCache = platform && externalId
+    ? await readLocationEnrichment(platform, externalId)
+      .then((entry): LocationEnrichmentCache => entry ? { [cacheKey(platform, externalId)]: entry } : {})
+    : await readLocationEnrichmentCache()
   const summary: ExternalEnrichmentSummary = {
     processed: 0,
     written: 0,
@@ -140,86 +181,110 @@ export async function runExternalEnrichment(
   }
 
   const db = getPool()
-  const marketAdapters = options.marketAdapters ?? await defaultMarketAdapters(db)
-  const landValueAdapters = options.landValueAdapters ?? []
-  const hazardAdapters = options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
-  const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt)
+  const marketAdapters = options.osmOnly ? [] : options.marketAdapters ?? await defaultMarketAdapters(db)
+  const landValueAdapters = options.osmOnly ? [] : options.landValueAdapters ?? []
+  const hazardAdapters = options.osmOnly ? [] : options.hazardAdapters ?? await defaultHazardAdapters(db, checkedAt, summary)
+  const locationContextAdapters = options.locationContextAdapters ?? await defaultLocationContextAdapters(db, checkedAt, summary)
   throwIfTaskAborted(signal)
 
-  for (const rawAuction of Object.values(snapshot).filter((auction) => inScope(auction, options))) {
-    throwIfTaskAborted(signal)
-    if (options.limit != null && summary.processed >= options.limit) break
-    const point = await resolvePoint(rawAuction)
-    if (!point) {
-      summary.skippedMissingCoordinates++
-      continue
-    }
-    const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
-    summary.processed++
-    const key = cacheKey(auction.platform, auction.externalId)
-    const previous = existing[key]
+  const inScopeAuctions = records.map((record) => record.auction).filter((auction) =>
+    inScope(auction, options)
+    && (!options.onlyMissingLocationContext || existing[cacheKey(auction.platform, auction.externalId)]?.locationContext?.source.id !== 'openstreetmap-overpass'),
+  )
+  const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
+  // Sliced to the limit up front: resolvePoint below skips (not counts)
+  // auctions without coordinates, so looping the unsliced scope and relying
+  // only on the processed>=effectiveLimit break could still scan arbitrarily
+  // far past the intended batch size.
+  const batch = orderByStaleness(inScopeAuctions, existing).slice(0, effectiveLimit)
+  const total = batch.length
 
-    const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
+  for (const rawAuction of batch) {
     throwIfTaskAborted(signal)
-    const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
-    throwIfTaskAborted(signal)
-    const hazards = await allHazards(auction, hazardAdapters, summary)
-    throwIfTaskAborted(signal)
-    const locationContext = await firstLocationContext(auction, locationContextAdapters, summary)
-    throwIfTaskAborted(signal)
+    if (summary.processed >= effectiveLimit) break
+    try {
+      const point = await resolvePoint(rawAuction)
+      if (!point) {
+        summary.skippedMissingCoordinates++
+        continue
+      }
+      const auction: Auction = { ...rawAuction, lat: point.lat, lng: point.lng }
+      summary.processed++
+      const key = cacheKey(auction.platform, auction.externalId)
+      // An entry computed before the geocode was corrected describes another
+      // place: its fallbacks below and the enhancer merge (noise bands, air
+      // quality) would otherwise pin the old position's data indefinitely.
+      const stored = existing[key]
+      const previous = stored && !coordinatesMovedSignificantly(stored, point) ? stored : undefined
 
-    if (marketComparison) summary.marketComparisons++
-    if (landValueBaseline) summary.landValueBaselines++
-    summary.hazards += hazards.length
-    if (locationContext) summary.locationContexts++
-    summary.staleResults += hazards.filter((hazard) => hazard.stale).length
+      const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)
+      throwIfTaskAborted(signal)
+      const landValueBaseline = await firstLandValueBaseline(auction, landValueAdapters, summary)
+      throwIfTaskAborted(signal)
+      const hazards = await allHazards(auction, hazardAdapters, summary)
+      throwIfTaskAborted(signal)
+      const locationContext = await firstLocationContext(auction, locationContextAdapters, summary, previous?.locationContext ?? null)
+      throwIfTaskAborted(signal)
 
-    if (!marketComparison && !landValueBaseline && hazards.length === 0 && !locationContext) continue
+      if (marketComparison) summary.marketComparisons++
+      if (landValueBaseline) summary.landValueBaselines++
+      summary.hazards += hazards.length
+      if (locationContext) summary.locationContexts++
+      summary.staleResults += hazards.filter((hazard) => hazard.stale).length
 
-    entries[key] = {
-      platform: auction.platform,
-      externalId: auction.externalId,
-      lat: point.lat,
-      lng: point.lng,
-      marketComparison: marketComparison ?? previous?.marketComparison ?? null,
-      landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
-      hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
-      locationContext: locationContext ?? previous?.locationContext ?? null,
-      checkedAt,
-      sourceVersion: sourceVersion([
-        ...marketAdapters,
-        ...landValueAdapters,
-        ...hazardAdapters,
-        ...locationContextAdapters,
-      ]),
+      // No early-exit when every adapter came back empty: that's the common,
+      // correct outcome for rural/small-town ZVG objects, not an error, and
+      // skipping the write would skip checkedAt too — leaving the auction
+      // stuck at the front of orderByStaleness forever, starving others.
+
+      // Written immediately, per auction, instead of batched into one write
+      // after the whole scope finishes: a full sweep can run for a long time
+      // and gets superseded (aborted) whenever a newer external-enrichment
+      // invocation starts (runExclusiveTask) — with continuous background
+      // crawling that happens often, and a batch-at-the-end write meant every
+      // auction's freshly-computed result was thrown away with it, no matter
+      // how far the run had gotten.
+      const ok = await writeLocationEnrichmentCache({
+        [key]: {
+          platform: auction.platform,
+          externalId: auction.externalId,
+          lat: point.lat,
+          lng: point.lng,
+          marketComparison: marketComparison ?? previous?.marketComparison ?? null,
+          landValueBaseline: landValueBaseline ?? previous?.landValueBaseline ?? null,
+          hazards: hazards.length > 0 ? hazards : previous?.hazards ?? null,
+          locationContext: locationContext ?? previous?.locationContext ?? null,
+          checkedAt,
+          sourceVersion: sourceVersion([
+            ...marketAdapters,
+            ...landValueAdapters,
+            ...hazardAdapters,
+            ...locationContextAdapters,
+          ]),
+        },
+      })
+      if (ok) {
+        summary.written++
+      } else if (summary.errors.length < 100) {
+        summary.errors.push(`Anreicherungsdaten für ${auction.platform}/${auction.externalId} konnten nicht gespeichert werden.`)
+      }
+    } finally {
+      void recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total))
     }
   }
 
-  throwIfTaskAborted(signal)
-  const ok = await writeLocationEnrichmentCache(entries)
-  throwIfTaskAborted(signal)
-  summary.written = ok ? Object.keys(entries).length : 0
-  if (!ok && Object.keys(entries).length > 0) {
-    summary.errors.push('Externe Anreicherungsdaten konnten nicht gespeichert werden.')
-  }
+  await recordTaskRunProgress('external-enrichment', progressSnapshot(summary, total), { flush: true })
   summary.durationMs = Date.now() - startedAt
   return summary
 }
 
-function inScope(auction: Auction, options: ExternalEnrichmentOptions): boolean {
-  if (options.country && auction.country.toLowerCase() !== options.country.trim().toLowerCase()) return false
-  if (options.platform && auction.platform !== options.platform) return false
-  if (options.externalId && auction.externalId !== options.externalId) return false
-  return true
-}
-
-function scopeLabel(options: ExternalEnrichmentOptions): string {
-  const parts = [
-    options.country ? `country=${options.country}` : null,
-    options.platform ? `platform=${options.platform}` : null,
-    options.externalId ? `externalId=${options.externalId}` : null,
-  ].filter((part): part is string => !!part)
-  return parts.length > 0 ? parts.join(',') : 'full run'
+function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): TaskRunSummary {
+  return {
+    total,
+    processed: summary.processed,
+    skippedMissingCoordinates: summary.skippedMissingCoordinates,
+    providerFailures: summary.providerFailures,
+  }
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
@@ -285,11 +350,12 @@ async function firstLocationContext(
   auction: Auction,
   adapters: LocationContextAdapter[],
   summary: ExternalEnrichmentSummary,
+  previous: LocationContext | null,
 ): Promise<LocationContext | null> {
   for (const adapter of adapters) {
     if (!adapter.supports(auction)) continue
     try {
-      const result = await adapter.context(auction)
+      const result = await adapter.context(auction, previous)
       if (result) return result
     } catch (err) {
       recordProviderFailure(summary, adapter.id, 'location context', auction, err)
@@ -298,152 +364,8 @@ async function firstLocationContext(
   return null
 }
 
-function recordProviderFailure(
-  summary: ExternalEnrichmentSummary,
-  adapterId: string,
-  kind: string,
-  auction: Auction,
-  error: unknown,
-): void {
-  summary.providerFailures++
-  const message = `${adapterId} ${kind} für ${auction.platform}/${auction.externalId}: ${
-    error instanceof Error ? error.message : String(error)
-  }`
-  if (summary.errors.length < 100) summary.errors.push(message)
-  console.warn(`[external-enrichment] ${message}`)
-}
-
 function sourceVersion(adapters: Array<{ id: string; sourceVersion: string }>): string {
   return adapters.length > 0
     ? adapters.map((adapter) => `${adapter.id}@${adapter.sourceVersion}`).join(',')
     : 'no-adapters'
-}
-
-// Every default*Adapters function below resolves its source(s) through this
-// one path — DB override (app_settings, /settings) > env runtimeConfig
-// (nuxt.config.ts's externalData.*) > the field's own default, exactly the
-// generic contract server/utils/external-data/config.ts documents. A source
-// with no configFields, or whose required fields resolve empty everywhere,
-// yields `null` and is left out — same graceful-degrade as before, now
-// driven by the registry instead of one hand-written check per source.
-async function resolvedSourceValues(
-  db: Pool | null,
-  sourceId: string,
-): Promise<ExternalDataSourceConfigValues | null> {
-  const source = getConfigurableExternalDataSource(sourceId)
-  if (!source) return null
-  const stored = db ? await getStoredExternalDataSourceConfig(db, sourceId) : {}
-  const runtimeConfig = typeof useRuntimeConfig === 'function'
-    ? (useRuntimeConfig().externalData as Record<string, string | number | undefined> | undefined) ?? {}
-    : {}
-  const resolved = resolveExternalDataSourceConfig(source, stored, runtimeConfig)
-  return resolved.isConfigured ? resolved.values : null
-}
-
-async function defaultMarketAdapters(db: Pool | null): Promise<MarketComparisonAdapter[]> {
-  const adapters: MarketComparisonAdapter[] = []
-  const values = await resolvedSourceValues(db, 'fr-dvf-geolocated')
-  if (values) {
-    adapters.push(await createDvfFileMarketAdapter({ cachePath: String(values.cachePath) }))
-  }
-  return adapters
-}
-
-async function defaultHazardAdapters(
-  db: Pool | null,
-  checkedAt: string,
-  summary: ExternalEnrichmentSummary,
-): Promise<HazardAssessmentAdapter[]> {
-  const adapters: HazardAssessmentAdapter[] = []
-  const values = await resolvedSourceValues(db, 'eu-flood-risk-areas')
-  if (values) {
-    // The polygon cache is filled out-of-band (server/tasks/import-eu-flood-
-    // risk-cache.ts), so a path that was just set from /settings legitimately
-    // points at a file that doesn't exist yet — and unlike fr-dvf's
-    // readJsonCache, createEuFloodRiskFileAdapter reads it eagerly and throws
-    // on ENOENT/corrupt JSON. Skip only this source instead of rejecting the
-    // whole run. Retain the concrete configuration failure in the result so
-    // the other providers can continue without hiding it from the admin.
-    try {
-      adapters.push(await createEuFloodRiskFileAdapter({
-        geoJsonPath: String(values.geoJsonPath),
-        checkedAt,
-        maxCacheAgeDays: Number(values.maxCacheAgeDays),
-      }))
-    } catch (error) {
-      summary.providerFailures++
-      const message = `eu-flood-risk cache ${String(values.geoJsonPath)}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-      summary.errors.push(message)
-      console.warn(`[external-enrichment] ${message}`)
-    }
-  }
-  const effisValues = await resolvedSourceValues(db, 'copernicus-effis')
-  if (effisValues) {
-    // Same rationale as the flood cache above: the burnt-area cache is filled
-    // out-of-band (import-copernicus-effis-cache.ts) and a path just set from
-    // /settings can legitimately not exist yet.
-    try {
-      adapters.push(await createCopernicusEffisBurntAreaFileAdapter({
-        cachePath: String(effisValues.cachePath),
-        checkedAt,
-        maxCacheAgeDays: Number(effisValues.maxCacheAgeDays),
-      }))
-    } catch (err) {
-      console.warn(
-        `[external-enrichment] copernicus-effis cache unusable at ${String(effisValues.cachePath)}: ${(err as Error).message}`,
-      )
-    }
-  }
-  return adapters
-}
-
-async function defaultLocationContextAdapters(db: Pool | null, checkedAt: string): Promise<LocationContextAdapter[]> {
-  const osmValues = await resolvedSourceValues(db, 'openstreetmap-overpass')
-  if (!osmValues) return []
-  const osmAdapter = createOsmLocationContextAdapter({
-    endpoint: String(osmValues.endpoint),
-    checkedAt,
-    timeoutMs: Number(osmValues.timeoutMs),
-  })
-  const enhancers: LocationContextEnhancer[] = []
-  const eeaValues = await resolvedSourceValues(db, 'eea-environmental-noise-directive')
-  if (eeaValues) {
-    enhancers.push(createEeaEnvironmentalNoiseEnhancer({
-      checkedAt,
-      serviceBaseUrl: String(eeaValues.serviceBaseUrl),
-      timeoutMs: Number(eeaValues.timeoutMs),
-    }))
-  }
-  const airQualityValues = await resolvedSourceValues(db, 'cams-air-quality')
-  if (airQualityValues) {
-    enhancers.push(createCamsAirQualityEnhancer({
-      checkedAt,
-      serviceUrl: String(airQualityValues.serviceUrl),
-      timeoutMs: Number(airQualityValues.timeoutMs),
-    }))
-  }
-  return [withLocationContextEnhancers(osmAdapter, enhancers)]
-}
-
-function withLocationContextEnhancers(
-  adapter: LocationContextAdapter,
-  enhancers: LocationContextEnhancer[],
-): LocationContextAdapter {
-  if (enhancers.length === 0) return adapter
-  return {
-    id: [adapter.id, ...enhancers.map((enhancer) => enhancer.id)].join('+'),
-    sourceVersion: [adapter.sourceVersion, ...enhancers.map((enhancer) => enhancer.sourceVersion)].join(','),
-    supports: (auction) => adapter.supports(auction),
-    async context(auction) {
-      let context = await adapter.context(auction)
-      if (!context) return null
-      for (const enhancer of enhancers) {
-        if (!enhancer.supports(auction, context)) continue
-        context = await enhancer.enhance(auction, context)
-      }
-      return context
-    },
-  }
 }

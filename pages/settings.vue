@@ -6,6 +6,7 @@ import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskO
 const { t } = useI18n()
 
 useHead({ title: t('settings.title') })
+useSeoMeta({ robots: 'noindex, nofollow' })
 
 const authed = ref(false)
 const passwordInput = ref('')
@@ -20,8 +21,11 @@ function clearAuthState(): void {
 
 provide(settingsSessionExpiredKey, clearAuthState)
 
-const { normalizeSettingsError } = useSettingsError()
+const { normalizeSettingsError } = useSettingsError(clearAuthState)
 const { stopProgressPolling } = useSettingsTaskOverview()
+// The progress timer is module-scoped and shared by all cards; leaving
+// /settings must not keep it polling the expensive overview endpoint.
+onBeforeUnmount(stopProgressPolling)
 
 async function probeSession(): Promise<void> {
   try {
@@ -71,7 +75,7 @@ onMounted(probeSession)
 
 <template>
   <main class="px-4 py-6">
-    <div class="max-w-2xl mx-auto space-y-6">
+    <div class="mx-auto max-w-6xl space-y-6">
       <div class="flex items-center justify-between gap-3">
         <NuxtLink to="/search" class="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
           <ArrowLeft class="h-4 w-4" /> {{ $t('settings.back') }}
@@ -83,7 +87,7 @@ onMounted(probeSession)
       </div>
       <h1 class="text-2xl font-bold tracking-tight">{{ $t('settings.heading') }}</h1>
 
-      <Card v-if="!authed">
+      <Card v-if="!authed" class="mx-auto max-w-2xl">
         <CardHeader>
           <CardTitle>{{ $t('settings.login.title') }}</CardTitle>
         </CardHeader>
@@ -108,24 +112,45 @@ onMounted(probeSession)
       </Card>
 
       <template v-else>
-        <SettingsLawyersCard />
-        <SettingsLlmConfigCard />
-        <SettingsLlmProfilesCard />
-        <SettingsLlmAssignmentsCard />
-        <SettingsLlmBatchCard />
-        <SettingsReprocessCard />
-        <SettingsCountrySourcesCard />
-        <SettingsExternalDataCard />
-        <SettingsDisplayCard />
+        <SettingsCountryStatusOverview />
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{{ $t('settings.archive.title') }}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <SettingsArchiveBrowser />
-          </CardContent>
-        </Card>
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.operations') }}</h2>
+          <SettingsOperationsCard />
+        </section>
+
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.pipeline') }}</h2>
+          <SettingsGeoMetricsCard />
+          <SettingsExternalDataCard />
+          <SettingsReprocessCard />
+        </section>
+
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.llm') }}</h2>
+          <SettingsLlmKillSwitchCard />
+          <SettingsLlmConfigCard />
+          <SettingsLlmProfilesCard />
+          <SettingsLlmAssignmentsCard />
+          <SettingsLlmBatchCard />
+          <SettingsLlmCostCard />
+        </section>
+
+        <section class="space-y-4">
+          <h2 class="text-lg font-semibold text-muted-foreground">{{ $t('settings.sections.admin') }}</h2>
+          <SettingsLawyersCard />
+          <SettingsOutboundDeliveriesCard />
+          <SettingsDisplayCard />
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{{ $t('settings.archive.title') }}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <SettingsArchiveBrowser />
+            </CardContent>
+          </Card>
+        </section>
       </template>
     </div>
   </main>

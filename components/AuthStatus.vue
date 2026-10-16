@@ -11,6 +11,7 @@ function redirectQuery(): string {
   <div class="flex items-center gap-2 text-sm">
     <LocaleSwitcher />
     <CurrencySwitcher />
+    <ThemeSwitcher />
     <template v-if="user">
       <span class="text-muted-foreground truncate max-w-40" :title="user.email">{{ user.email }}</span>
       <NuxtLink

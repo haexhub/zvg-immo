@@ -3,6 +3,7 @@
 // server/middleware/supabase-auth.ts has already verified event.context.user.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { LawyerInquiry } from './index.post'
 
 export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
@@ -12,11 +13,11 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
   }
   const { data, error } = await supabase
     .from('lawyer_inquiries')
-    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, created_at')
+    .select('id, lawyer_id, platform, external_id, message, commission_cents, commission_status, delivery_status, created_at')
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/lawyer-inquiries', 500, 'Anfragen konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,
@@ -26,6 +27,7 @@ export default defineEventHandler(async (event): Promise<LawyerInquiry[]> => {
     message: row.message as string,
     commissionCents: row.commission_cents as number | null,
     commissionStatus: row.commission_status as string,
+    deliveryStatus: row.delivery_status as string,
     createdAt: row.created_at as string,
   }))
 })

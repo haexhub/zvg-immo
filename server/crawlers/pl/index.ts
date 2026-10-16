@@ -9,6 +9,10 @@ const MAX_PAGES = 50 // safety cap — 100 listings per page
 async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
   const auctions = []
   let offset = 0
+  // Only the safety cap is an unambiguous truncation signal — a missing
+  // pagination widget is equally consistent with a genuine one-page result
+  // set, so it stays a warning and doesn't mark the crawl incomplete.
+  let truncated = false
 
   for (let pages = 1; ; pages++) {
     const result = await fetchListPage(offset, PLATFORM_ID)
@@ -25,6 +29,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
       console.warn(
         `[pl-komornik] safety cap of ${MAX_PAGES} pages hit at page ${result.currentPage}/${result.lastPage} — crawl truncated`,
       )
+      truncated = true
       break
     }
     // Advance by the number of cards actually delivered: if the server ever
@@ -49,6 +54,7 @@ async function crawl(_opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: truncated ? [] : [PLATFORM_ID],
     source: PL_BASE,
     countries: [COUNTRY],
     regions: [],

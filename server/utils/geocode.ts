@@ -6,14 +6,6 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildGeocodeQueries } from './geocode-normalizers'
 
-export {
-  normalizeBgAddress,
-  normalizeEeAddress,
-  normalizeLtAddress,
-  normalizeLvAddress,
-  normalizeSeAddress,
-} from './geocode-normalizers'
-
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'geocode')
 
 // Geocoder backend. Defaults to the public Nominatim (fine for local dev and
@@ -47,6 +39,14 @@ export interface GeoPoint {
   lat: number
   lng: number
   displayName: string
+}
+
+/** Which backend geocodeOnce would currently call. Recorded alongside every
+ *  attempt (auctions.geocode_provider) so a later switch between Nominatim
+ *  and LocationIQ doesn't get masked by stale failures from the other one —
+ *  see docs/plans/2026-08-04-gis-wp3-geocoding-abdeckung.md. */
+export function activeGeocoderProvider(): 'nominatim' | 'locationiq' {
+  return LOCATIONIQ_KEY ? 'locationiq' : 'nominatim'
 }
 
 async function ensureCacheDir(): Promise<void> {
@@ -168,13 +168,15 @@ export async function geocodeStatus(
 export async function geocodeAddress(
   address: string | null,
   country: string,
-  options: { fetchMissing?: boolean } = { fetchMissing: true },
+  options: { fetchMissing?: boolean } = {},
 ): Promise<GeoPoint | null> {
   if (!address) return null
   const c = country.toLowerCase()
-  // During the failure cooldown a cache miss behaves like fetchMissing=false:
-  // serve what's cached but leave Nominatim alone until the ban blows over.
-  const fetchMissing = Boolean(options.fetchMissing) && Date.now() >= cooldownUntil
+  // Cache-only unless a caller opts in: only the exclusive geocode task may
+  // hit the upstream geocoder, so a new request path can't fan out to it by
+  // forgetting the option. During the failure cooldown a cache miss behaves
+  // like fetchMissing=false too: leave Nominatim alone until the ban blows over.
+  const fetchMissing = options.fetchMissing === true && Date.now() >= cooldownUntil
   for (const q of buildGeocodeQueries(address, c)) {
     const cached = await readCacheEntry(q, c)
     if (cached.state === 'hit') return cached.point!

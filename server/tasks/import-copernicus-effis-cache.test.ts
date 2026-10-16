@@ -47,11 +47,11 @@ async function stubStoredCachePath(cachePath: string): Promise<void> {
 describe('runImportCopernicusEffisCache', () => {
   it('imports the EFFIS burnt-area cache with defaults', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
-    const { importCopernicusEffisBurntAreaCache, COPERNICUS_EFFIS_WFS_URL } = await import('~/server/utils/external-data/copernicus-effis')
+    const { importCopernicusEffisBurntAreaCache, COPERNICUS_EFFIS_SOURCE_VERSION, COPERNICUS_EFFIS_WFS_URL } = await import('~/server/utils/external-data/copernicus-effis')
     vi.mocked(importCopernicusEffisBurntAreaCache).mockResolvedValue({
       cachePath: '/tmp/copernicus-effis.json',
       serviceUrl: COPERNICUS_EFFIS_WFS_URL,
-      sourceVersion: 'jrc-modis-ba-poly-2026-07-29',
+      sourceVersion: COPERNICUS_EFFIS_SOURCE_VERSION,
       generatedAt: '2026-07-29T00:00:00.000Z',
       fetched: 2,
       normalized: 2,
@@ -68,7 +68,7 @@ describe('runImportCopernicusEffisCache', () => {
     expect(importCopernicusEffisBurntAreaCache).toHaveBeenCalledWith({
       cachePath: '/tmp/copernicus-effis.json',
       serviceUrl: COPERNICUS_EFFIS_WFS_URL,
-      sourceVersion: 'jrc-modis-ba-poly-2026-07-29',
+      sourceVersion: COPERNICUS_EFFIS_SOURCE_VERSION,
       generatedAt: '2026-07-29T00:00:00.000Z',
       bbox: undefined,
       pageSize: undefined,
@@ -123,5 +123,40 @@ describe('import-copernicus-effis-cache task', () => {
 
     expect(vi.mocked(importCopernicusEffisBurntAreaCache).mock.calls[0]?.[0].cachePath)
       .toBe('/env/copernicus-effis.json')
+  })
+
+  // /settings triggers this task detached (see the endpoint), so a persisted
+  // status is the only way a failure surfaces at all instead of vanishing
+  // with the unwatched promise.
+  it('records task-run status around a manual import', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { importCopernicusEffisBurntAreaCache } = await import('~/server/utils/external-data/copernicus-effis')
+    vi.mocked(importCopernicusEffisBurntAreaCache).mockResolvedValue(summaryFixture('/tmp/copernicus-effis.json'))
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+
+    const task = (await import('./import-copernicus-effis-cache')).default as unknown as {
+      run: (event?: { payload?: unknown }) => Promise<{ result: unknown }>
+    }
+    await task.run({ payload: { cachePath: '/tmp/copernicus-effis.json' } })
+
+    const status = await getTaskRunStatus('import-copernicus-effis-cache')
+    expect(status.status).toBe('idle')
+    expect(status.lastResult).toEqual({ fetched: 2, normalized: 2, pages: 1 })
+    expect(status.lastError).toBeNull()
+  })
+
+  it('records the failure instead of losing it when the import throws', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { importCopernicusEffisBurntAreaCache } = await import('~/server/utils/external-data/copernicus-effis')
+    vi.mocked(importCopernicusEffisBurntAreaCache).mockRejectedValue(new Error('WFS unreachable'))
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+
+    const task = (await import('./import-copernicus-effis-cache')).default as unknown as {
+      run: (event?: { payload?: unknown }) => Promise<{ result: unknown }>
+    }
+    await expect(task.run({ payload: { cachePath: '/tmp/copernicus-effis.json' } })).rejects.toThrow('WFS unreachable')
+
+    const status = await getTaskRunStatus('import-copernicus-effis-cache')
+    expect(status.lastError).toBe('WFS unreachable')
   })
 })

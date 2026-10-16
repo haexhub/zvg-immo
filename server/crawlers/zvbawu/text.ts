@@ -65,6 +65,12 @@ export function extractInertiaPage<T = unknown>(html: string): T | null {
     .replace(/&gt;/g, '>')
     // &amp; must be decoded last — otherwise "&amp;lt;" would double-decode.
     .replace(/&amp;/g, '&')
+    // zvbawü occasionally emits a literal \u0000 JSON escape mid-word
+    // in free-text fields (confirmed live, e.g. titles splitting like
+    // "Gr\u0000ünflä\u0000che") — an upstream encoding bug. Stripped here,
+    // before JSON.parse, since the escape would otherwise decode into a
+    // real NUL byte that Postgres rejects on write.
+    .replace(/\\u0000/gi, '')
   try {
     return JSON.parse(decoded) as T
   } catch {

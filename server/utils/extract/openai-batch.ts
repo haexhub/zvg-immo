@@ -1,61 +1,22 @@
-import { createHash } from 'node:crypto'
 import {
   buildParts,
-  clampExtraction,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
-  UNIVERSAL_AUCTION_SCHEMA_NAME,
-  type ClampedExtraction,
   type LlmConfig,
   type LlmInput,
 } from './llm'
-import { parseOpenAiExtractionResponse, toOpenAiContent } from './providers/openai-compatible'
+import { clampExtraction } from './llm-clamp'
+import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA, UNIVERSAL_AUCTION_SCHEMA_NAME } from './llm-schema'
+import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
+import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
-import type { PollResult } from './gemini-batch'
-import type { LlmBatchSubmitResult } from './llm-batch'
-
-/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
- *  — the actionable text lives in the parsed JSON body ofetch exposes as
- *  `.data`, shaped like Google's ({error:{message}}) for OpenAI too. */
-function extractOfetchErrorMessage(err: unknown): string {
-  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
-  if (data?.error && typeof data.error.message === 'string') return data.error.message
-  return err instanceof Error ? err.message : String(err)
-}
-
-/** Timeouts, connection failures and 5xx/429 responses say nothing about
- *  whether this account/model can batch at all — only a durable rejection
- *  should ever flip the recorded capability to broken, or a transient blip
- *  could disable batching for every subsequent run until someone notices and
- *  manually re-checks it. */
-function isTransientBatchError(err: unknown): boolean {
-  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
-  const statusCode =
-    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
-  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
-  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
-  if (httpStatus != null && (httpStatus === 429 || httpStatus >= 500)) return true
-  const name = (err as { name?: unknown })?.name
-  if (name === 'AbortError' || name === 'TimeoutError') return true
-  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
-  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
-}
+import type { PollResult } from './gemini-batch-client'
+import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 const MAX_OPENAI_BATCH_REQUESTS = 50_000
 const MAX_OPENAI_BATCH_FILE_BYTES = 200 * 1024 * 1024
 const OPENAI_BATCH_FILE_HEADROOM_BYTES = 1024 * 1024
 
-function apiBase(config: LlmConfig): string {
-  return config.baseUrl.replace(/\/$/, '')
-}
-
 function authHeaders(config: LlmConfig): Record<string, string> {
   return config.apiKey ? { authorization: `Bearer ${config.apiKey}` } : {}
-}
-
-function customIdForKey(key: string, index: number): string {
-  const hash = createHash('sha256').update(key).digest('base64url').slice(0, 18)
-  return `zvg_${index}_${hash}`.slice(0, 64)
 }
 
 function buildBatchLine(customId: string, input: LlmInput, config: LlmConfig): string | null {
@@ -147,6 +108,9 @@ async function submitOpenAiRequestChunk(
     source,
     itemCount: lines.length,
     customIdMap,
+    provider: config.provider ?? 'openai-compatible',
+    model: config.model,
+    profileId: config.profileId,
   })
   if (!recorded) {
     console.warn(`[openai-batch] failed to record job ${batch.id} — treating submission as failed`)
@@ -248,6 +212,7 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
     const resp = await $fetch<{
       status?: string
       output_file_id?: string | null
+      error_file_id?: string | null
       errors?: { data?: Array<{ message?: string }> } | null
     }>(`${apiBase(config)}/batches/${jobName}`, {
       headers: authHeaders(config),
@@ -255,11 +220,17 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
     })
     const errorMessage = resp.errors?.data?.[0]?.message
     if (resp.status === 'completed') {
-      if (!resp.output_file_id) {
-        console.warn(`[openai-batch] job ${jobName} completed without an output_file_id`)
+      if (!resp.output_file_id && !resp.error_file_id) {
+        console.warn(`[openai-batch] job ${jobName} completed without an output or error file`)
         return { state: 'failed' }
       }
-      return { state: 'succeeded', resultFileName: resp.output_file_id }
+      // Requests that failed (e.g. a 400 for an oversized image) are only in
+      // error_file_id; dropping it would leave those items without an outcome.
+      return {
+        state: 'succeeded',
+        ...(resp.output_file_id ? { resultFileName: resp.output_file_id } : {}),
+        ...(resp.error_file_id ? { errorFileName: resp.error_file_id } : {}),
+      }
     }
     if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed', errorMessage }
     if (resp.status === 'expired') return { state: 'expired', errorMessage }
@@ -270,18 +241,19 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
   }
 }
 
+/** Parse the output and error files of a completed batch; both share one JSONL line shape. */
 export async function fetchOpenAiBatchResults(
-  outputFileId: string,
+  fileIds: readonly string[],
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
-  const text = await $fetch<string>(`${apiBase(config)}/files/${outputFileId}/content`, {
+): Promise<LlmBatchResultItem[]> {
+  const texts = await Promise.all(fileIds.map((fileId) => $fetch<string>(`${apiBase(config)}/files/${fileId}/content`, {
     headers: authHeaders(config),
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
-  })
-  const out: { key: string; extraction: ClampedExtraction | null }[] = []
-  for (const line of text.split('\n')) {
+  })))
+  const out: LlmBatchResultItem[] = []
+  for (const line of texts.join('\n').split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
     let parsed: {
@@ -297,11 +269,16 @@ export async function fetchOpenAiBatchResults(
     }
     if (typeof parsed.custom_id !== 'string') continue
     const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-    const raw =
-      parsed.error || parsed.response?.status_code !== 200
-        ? null
-        : parseOpenAiExtractionResponse(parsed.response.body)
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+    const ok = !parsed.error && parsed.response?.status_code === 200
+    const raw = ok ? parseOpenAiExtractionResponse(parsed.response!.body) : null
+    const usage = ok ? parseOpenAiUsage(parsed.response!.body) : null
+    const extraction = raw ? clampExtraction(raw) : null
+    out.push({
+      key,
+      extraction,
+      usage,
+      error: extraction ? null : (extractBatchItemErrorMessage(parsed.error, parsed.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
+    })
   }
   return out
 }

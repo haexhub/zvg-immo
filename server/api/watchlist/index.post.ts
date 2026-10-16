@@ -4,9 +4,13 @@
 // checking whether the item is already there.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 import type { WatchlistItem } from './index.get'
 
 const UNIQUE_VIOLATION = '23505'
+// Generous upper bound for crawler ids, court names and case numbers; only
+// guards the table against oversized client input.
+const MAX_FIELD_LENGTH = 300
 
 export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   const body = await readBody<{
@@ -14,7 +18,7 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
     externalId?: unknown
     authority?: unknown
     caseNumber?: unknown
-  }>(event).catch(() => ({}) as Record<string, unknown>)
+  }>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const platform = typeof body.platform === 'string' ? body.platform.trim() : ''
   const externalId = typeof body.externalId === 'string' ? body.externalId.trim() : ''
   if (!platform || !externalId) {
@@ -22,6 +26,9 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
   }
   const authority = typeof body.authority === 'string' ? body.authority : null
   const caseNumber = typeof body.caseNumber === 'string' ? body.caseNumber : null
+  if ([platform, externalId, authority, caseNumber].some((value) => (value?.length ?? 0) > MAX_FIELD_LENGTH)) {
+    throw createError({ statusCode: 400, statusMessage: `Felder sind länger als ${MAX_FIELD_LENGTH} Zeichen.` })
+  }
 
   const supabase = getServiceClient()
   if (!supabase) {
@@ -43,12 +50,12 @@ export default defineEventHandler(async (event): Promise<WatchlistItem> => {
       .eq('external_id', externalId)
       .single()
     if (existing.error || !existing.data) {
-      throw createError({ statusCode: 500, statusMessage: existing.error?.message ?? 'Speichern fehlgeschlagen.' })
+      throw publicError('POST /api/watchlist', 500, 'Speichern fehlgeschlagen.', existing.error)
     }
     return toWatchlistItem(existing.data)
   }
   if (error || !data) {
-    throw createError({ statusCode: 500, statusMessage: error?.message ?? 'Speichern fehlgeschlagen.' })
+    throw publicError('POST /api/watchlist', 500, 'Speichern fehlgeschlagen.', error)
   }
   return toWatchlistItem(data)
 })

@@ -1,20 +1,25 @@
-import type {
-  ExternalEnrichmentOptions,
-  ExternalEnrichmentSummary,
-} from '~/server/tasks/external-enrichment'
+import { runExternalEnrichmentTask } from '~/server/tasks/external-enrichment'
 
 const MAX_LIMIT = 1000
 
-export default defineEventHandler(async (event): Promise<ExternalEnrichmentSummary> => {
-  const body = await readBody<Record<string, unknown>>(event).catch(() => ({}) as Record<string, unknown>)
+// Detached on purpose: an unscoped run sweeps every auction across every
+// country, calling several external providers per auction — far longer than
+// a request can stay open. Progress/result surface through task-runs
+// (externalEnrichmentStatus in /api/settings/llm-batch-jobs), same as the
+// country enrich flow's detached reprocess/external-enrichment calls.
+export default defineEventHandler(async (event): Promise<{ started: true }> => {
+  // Der Button schickt POST ohne Body: readBody wirft dann nicht, sondern
+  // liefert undefined (kein content-length -> h3 liest gar nicht erst) — der
+  // catch allein deckt das nicht ab, ein Property-Zugriff darauf wird zu 500.
+  const body = await readBody<Record<string, unknown>>(event).catch(() => undefined) ?? ({} as Record<string, unknown>)
   const limit = optionalLimit(body.limit)
   const country = optionalToken(body.country, 'country')
   const platform = optionalToken(body.platform, 'platform')
   const externalId = optionalToken(body.externalId, 'externalId')
-  const outcome = await runTask('external-enrichment', {
-    payload: { limit, country, platform, externalId } satisfies ExternalEnrichmentOptions,
-  }) as { result: ExternalEnrichmentSummary }
-  return outcome.result
+  void runExternalEnrichmentTask({ limit, country, platform, externalId, trigger: 'manual' }).catch((err: unknown) => {
+    console.error('[settings/external-data/enrichment] trigger failed:', (err as Error).message)
+  })
+  return { started: true }
 })
 
 function optionalLimit(value: unknown): number | undefined {

@@ -68,7 +68,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   }
   const enrichDetails = opts.enrichDetails ?? true
 
-  const { totalReported, auctions: mapped } = await fetchAllPublicSales(PLATFORM_ID)
+  const { totalReported, auctions: mapped, complete } = await fetchAllPublicSales(PLATFORM_ID)
   const auctions = mapped.map((m) => m.auction)
 
   // Resolve notary names so `authority` carries the office label instead
@@ -96,8 +96,11 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     }
   }
 
+  // A failed or shifted listing page means some lots are missing from this
+  // run; recording it as a success would hide those still-active lots as "gone".
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: complete ? [PLATFORM_ID] : [],
     source: BIDDIT_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],

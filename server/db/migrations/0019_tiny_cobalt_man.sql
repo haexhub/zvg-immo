@@ -1,0 +1,2 @@
+ALTER TABLE "auction_fetch_state" ADD COLUMN "enrich_claimed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "auction_fetch_state" ADD COLUMN "llm_claimed_at" timestamp with time zone;

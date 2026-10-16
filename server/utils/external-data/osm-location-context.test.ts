@@ -1,16 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
-import { buildLocationContext, createOsmLocationContextAdapter } from './osm-location-context'
+import { describe, expect, it } from 'vitest'
+import type { Pool } from 'pg'
+import { createLocalOsmLocationContextAdapter } from './osm-location-context'
+import { buildLocationContext } from './osm-location-context-builder'
 import type { Auction } from '~/types/auction'
-
-/** Latitude span of the bbox on the sub-query line ending in `marker`, so radius
- *  relationships can be asserted without restating the projection maths. */
-function bboxWidthDeg(query: string, marker: string): number {
-  const line = query.split('\n').find((candidate) => candidate.includes(marker))
-  if (!line) throw new Error(`no sub-query for ${marker}`)
-  const coords = line.match(/\((-?[\d.]+),(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\)/)
-  if (!coords) throw new Error(`no bbox for ${marker}`)
-  return Number(coords[3]) - Number(coords[1])
-}
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -47,7 +39,7 @@ describe('buildLocationContext', () => {
     const context = buildLocationContext({ lat: 52, lng: 13 }, [
       { type: 'node', id: 1, lat: 52.01, lon: 13.01, tags: { place: 'town', name: 'Musterstadt', population: '25000' } },
       { type: 'node', id: 2, lat: 52.001, lon: 13.001, tags: { highway: 'bus_stop', name: 'Am Markt' } },
-      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof' } },
+      { type: 'node', id: 3, lat: 52.002, lon: 13.002, tags: { railway: 'station', name: 'Musterstadt Bahnhof', network: 'DB Fernverkehr', ref: 'ICE 42' } },
       { type: 'way', id: 4, center: { lat: 52.003, lon: 13.003 }, tags: { highway: 'primary', name: 'B 1' } },
       { type: 'way', id: 5, center: { lat: 52.0005, lon: 13.0005 }, tags: { building: 'house' } },
       { type: 'node', id: 6, lat: 52.0006, lon: 13.0006, tags: { amenity: 'school' } },
@@ -73,6 +65,10 @@ describe('buildLocationContext', () => {
       population: 25_000,
     })
     expect(context.mobility.publicTransportLevel).toBe('excellent')
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Musterstadt Bahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('available')
+    expect(context.mobility.nationalRailStationName).toBe('Musterstadt Bahnhof')
     expect(context.mobility.roadAccessLevel).toBe('major')
     expect(context.amenities.find((item) => item.kind === 'groceries')).toMatchObject({
       countWithin1000m: 1,
@@ -180,332 +176,162 @@ describe('buildLocationContext', () => {
 
     expect(context.mobility.roadAccessLevel).toBe('local')
   })
+
+  it('does not treat a tram stop or an untagged railway station as confirmed long-distance service', () => {
+    const context = buildLocationContext({ lat: 52, lng: 13 }, [
+      { type: 'node', id: 1, lat: 52.002, lon: 13, tags: { railway: 'tram_stop', name: 'Markt' } },
+      { type: 'node', id: 2, lat: 52.01, lon: 13, tags: { railway: 'station', name: 'Regionalbahnhof' } },
+    ], '2026-07-26T00:00:00.000Z')
+
+    expect(context.mobility.regionalRailConnection).toBe('available')
+    expect(context.mobility.regionalRailStationName).toBe('Regionalbahnhof')
+    expect(context.mobility.nationalRailConnection).toBe('not_detected')
+    expect(context.mobility.nationalRailStationName).toBeNull()
+  })
 })
 
-describe('createOsmLocationContextAdapter', () => {
-  it('posts a bounded Overpass query and parses the response', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
-      elements: [
-        { type: 'node', id: 1, lat: 52.01, lon: 13.01, tags: { place: 'city', name: 'Berlin' } },
-      ],
-    }), { status: 200 }))
-    const adapter = createOsmLocationContextAdapter({
-      endpoint: 'https://overpass.example.test/api/interpreter',
-      checkedAt: '2026-07-26T00:00:00.000Z',
-      fetchImpl,
+interface LocalOsmRow {
+  osm_type: 'node' | 'way' | 'relation'
+  osm_id: string
+  lat: number
+  lon: number
+  tags: Record<string, string>
+}
+
+/** Fakes the Pool `createLocalOsmLocationContextAdapter` queries: an
+ *  EXISTS check per country, then one SELECT per tag category. Rows are
+ *  looked up by `tagKey` + `values` (the same params queryCategory sends),
+ *  not by parsing SQL, since the query text itself isn't under test here —
+ *  that's exercised implicitly by getting the right rows back. */
+function fakeOsmPool(options: {
+  covered?: boolean
+  rowsByTag?: Record<string, LocalOsmRow[]>
+  longDistanceRouteStationRows?: LocalOsmRow[]
+} = {}) {
+  const calls: Array<{ sql: string; params: unknown[] }> = []
+  const covered = options.covered ?? true
+  const rowsByTag = options.rowsByTag ?? {}
+  const query = async (sql: string, params: unknown[] = []) => {
+    calls.push({ sql, params })
+    if (sql.includes('SELECT EXISTS')) return { rows: [{ exists: covered }] }
+    const tagKey = params[4] as string
+    const values = params[5] as string[] | undefined
+    const key = `${tagKey}:${values ? JSON.stringify(values) : ''}`
+    if (sql.includes("immo:long_distance_train_route") && options.longDistanceRouteStationRows) {
+      return { rows: options.longDistanceRouteStationRows }
+    }
+    return { rows: rowsByTag[key] ?? [] }
+  }
+  return { pool: { query } as unknown as Pool, calls }
+}
+
+describe('createLocalOsmLocationContextAdapter', () => {
+  it('queries the local table and builds a context from the rows it finds', async () => {
+    const { pool } = fakeOsmPool({
+      rowsByTag: {
+        'place:["city","town","suburb","village","hamlet","island","municipality"]': [
+          { osm_type: 'node', osm_id: '1', lat: 52.01, lon: 13.01, tags: { place: 'city', name: 'Berlin' } },
+        ],
+      },
     })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
     const context = await adapter.context(auction())
 
-    expect(fetchImpl).toHaveBeenCalledWith(
-      'https://overpass.example.test/api/interpreter',
-      expect.objectContaining({ method: 'POST' }),
-    )
-    const request = fetchImpl.mock.calls[0]?.[1]
-    if (!request) throw new Error('missing fetch request options')
-    const query = (request.body as URLSearchParams).get('data')
-    expect(query).toContain('[out:json][timeout:120]')
-    // 30 km of latitude either side of the point => ~0.539 deg of span
-    expect(bboxWidthDeg(query ?? '', '["place"')).toBeCloseTo((2 * 30_000) / 111_320, 3)
     expect(context?.nearbyPlaces[0]?.name).toBe('Berlin')
   })
 
-  it('uses the configured client timeout in the Overpass query timeout', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ elements: [] }), { status: 200 }))
-    const adapter = createOsmLocationContextAdapter({
-      endpoint: 'https://overpass.example.test/api/interpreter',
-      checkedAt: '2026-07-26T00:00:00.000Z',
-      timeoutMs: 12_000,
-      fetchImpl,
-    })
+  it('scopes the query to the auction country and coordinates', async () => {
+    const { pool, calls } = fakeOsmPool()
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    await adapter.context(auction({ country: 'DE', lat: 52, lng: 13 }))
+
+    const categoryCall = calls.find((call) => !call.sql.includes('SELECT EXISTS'))
+    if (!categoryCall) throw new Error('no category query issued')
+    expect(categoryCall.params.slice(0, 3)).toEqual(['de', 13, 52])
+  })
+
+  it('restricts place and bus_stop lookups to nodes, so a boundary relation is not picked up as a place', async () => {
+    const { pool, calls } = fakeOsmPool()
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
     await adapter.context(auction())
 
-    const request = fetchImpl.mock.calls[0]?.[1]
-    if (!request) throw new Error('missing fetch request options')
-    expect((request.body as URLSearchParams).get('data')).toContain('[out:json][timeout:12]')
+    const placeCall = calls.find((call) => call.params[4] === 'place')
+    const busStopCall = calls.find((call) => call.params[4] === 'highway' && (call.params[5] as string[])?.includes('bus_stop'))
+    const buildingCall = calls.find((call) => call.params[4] === 'building' && call.params[5] === undefined)
+    if (!placeCall || !busStopCall || !buildingCall) throw new Error('expected category query missing')
+    expect(placeCall.sql).toContain("osm_type = 'node'")
+    expect(busStopCall.sql).toContain("osm_type = 'node'")
+    expect(buildingCall.sql).not.toContain("osm_type = 'node'")
   })
 
-  it('stays unsupported without endpoint or coordinates', () => {
-    const withEndpoint = createOsmLocationContextAdapter({
-      endpoint: 'https://overpass.example.test/api/interpreter',
-      checkedAt: '2026-07-26T00:00:00.000Z',
+  it('dedupes an OSM object matched by more than one tag category', async () => {
+    const shared: LocalOsmRow = { osm_type: 'way', osm_id: '99', lat: 52.001, lon: 13.001, tags: { building: 'yes', office: 'insurance' } }
+    const { pool } = fakeOsmPool({
+      rowsByTag: {
+        'building:': [shared],
+        'office:': [shared],
+      },
     })
-    const withoutEndpoint = createOsmLocationContextAdapter({
-      endpoint: '',
-      checkedAt: '2026-07-26T00:00:00.000Z',
-    })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-    expect(withEndpoint.supports(auction({ lat: null, lng: null }))).toBe(false)
-    expect(withoutEndpoint.supports(auction())).toBe(false)
+    const context = await adapter.context(auction())
+
+    expect(context?.neighborhood.notes).toContainEqual({ code: 'building_count_500m', params: { count: 1 } })
   })
 
-  it('narrows the sub-queries that overloaded the public endpoint', async () => {
-    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ elements: [] }), { status: 200 }))
-    const adapter = createOsmLocationContextAdapter({
-      endpoint: 'https://overpass.example.test/api/interpreter',
-      checkedAt: '2026-07-26T00:00:00.000Z',
-      fetchImpl,
-    })
-
-    await adapter.context(auction())
-    const query = (fetchImpl.mock.calls[0]?.[1]?.body as URLSearchParams).get('data') ?? ''
-
-    // bbox selection throughout: `around:` forces a linear scan and made the
-    // query unable to finish inside any sane timeout.
-    expect(query).not.toContain('around:')
-    // places as nodes only — the nwr variant dragged in boundary relations
-    expect(query).toMatch(/node\([\d.,-]+\)\["place"/)
-    expect(query).not.toMatch(/nwr\([\d.,-]+\)\["place"/)
-    // noise-relevant classes keep their range, minor classes shrink to 5 km
-    expect(query).toContain('["highway"~"^(motorway|trunk|primary)$"]')
-    expect(query).toContain('["highway"~"^(secondary|tertiary)$"]')
-    expect(bboxWidthDeg(query, '["highway"~"^(motorway|trunk|primary)$"]'))
-      .toBeGreaterThan(bboxWidthDeg(query, '["highway"~"^(secondary|tertiary)$"]'))
-    // the unbounded office key no longer spans 5 km
-    expect(bboxWidthDeg(query, '["office"]'))
-      .toBeLessThan(bboxWidthDeg(query, '["industrial"]'))
-  })
-
-  describe('throttling and retry', () => {
-    function okResponse(): Response {
-      return new Response(JSON.stringify({ elements: [] }), { status: 200 })
+  it('maps an explicitly tagged long-distance train route to its nearby station', async () => {
+    const station: LocalOsmRow = {
+      osm_type: 'node',
+      osm_id: '42',
+      lat: 52.01,
+      lon: 13,
+      // Simulates the station tags after queryCategory found a nearby
+      // type=route + route=train + service=high_speed relation.
+      tags: { railway: 'station', name: 'Fernbahnhof', 'immo:long_distance_train_route': 'yes' },
     }
+    const { pool, calls } = fakeOsmPool({ longDistanceRouteStationRows: [station] })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-    it('retries a 429 instead of losing the auction', async () => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
-        .mockResolvedValueOnce(okResponse())
-      const sleepImpl = vi.fn(async () => undefined)
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl,
-      })
+    const context = await adapter.context(auction())
 
-      const context = await adapter.context(auction())
+    expect(context?.mobility.regionalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailConnection).toBe('available')
+    expect(context?.mobility.nationalRailStationName).toBe('Fernbahnhof')
+    const railCall = calls.find((call) => call.params[4] === 'railway')
+    expect(railCall?.sql).toContain("train_route.tags ->> 'type' = 'route'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'route' = 'train'")
+    expect(railCall?.sql).toContain("train_route.tags ->> 'service' IN ('long_distance', 'high_speed', 'national', 'international')")
+  })
 
-      expect(context).not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-    })
+  it('returns null for a country with no imported data instead of an empty context', async () => {
+    const { pool, calls } = fakeOsmPool({ covered: false })
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-    it.each([[504], [502], [503]])('retries a transient %i', async (status) => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response('busy', { status }))
-        .mockResolvedValueOnce(okResponse())
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl: async () => undefined,
-      })
+    const context = await adapter.context(auction())
 
-      await expect(adapter.context(auction())).resolves.not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-    })
+    expect(context).toBeNull()
+    // Skips every category query — only the coverage check ran.
+    expect(calls).toHaveLength(1)
+  })
 
-    it('retries a network-level failure', async () => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockRejectedValueOnce(new TypeError('fetch failed'))
-        .mockResolvedValueOnce(okResponse())
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl: async () => undefined,
-      })
+  it('checks country coverage once per run, not once per auction', async () => {
+    const { pool, calls } = fakeOsmPool()
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-      await expect(adapter.context(auction())).resolves.not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-    })
+    await adapter.context(auction({ externalId: '1' }))
+    await adapter.context(auction({ externalId: '2' }))
 
-    it('honours Retry-After over its own backoff', async () => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response('rate limited', { status: 429, headers: { 'retry-after': '7' } }))
-        .mockResolvedValueOnce(okResponse())
-      const sleepImpl = vi.fn(async () => undefined)
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        minRequestIntervalMs: 0,
-        sleepImpl,
-      })
+    expect(calls.filter((call) => call.sql.includes('SELECT EXISTS'))).toHaveLength(1)
+  })
 
-      await adapter.context(auction())
+  it('stays unsupported without coordinates', () => {
+    const { pool } = fakeOsmPool()
+    const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-      expect(sleepImpl).toHaveBeenCalledWith(7_000)
-    })
-
-    it('retries a died query reported as 200 with a remark', async () => {
-      // An overloaded instance answers 200 + remark instead of 504, which would
-      // otherwise be stored as a successful enrichment with no elements.
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response(JSON.stringify({
-          elements: [],
-          remark: 'runtime error: Query timed out in "query" at line 5 after 120 seconds.',
-        }), { status: 200 }))
-        .mockResolvedValueOnce(okResponse())
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction())).resolves.not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-    })
-
-    it('surfaces a persistent remark as a failure rather than an empty context', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
-        elements: [],
-        remark: 'runtime error: Query ran out of memory in "recurse" at line 8.',
-      }), { status: 200 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        maxAttempts: 2,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction())).rejects.toThrow('Overpass runtime error')
-    })
-
-    it('keeps a response whose remark is not an error', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
-        elements: [],
-        remark: 'improve your query',
-      }), { status: 200 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction())).resolves.not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(1)
-    })
-
-    it('does not retry a client error it cannot recover from', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('bad query', { status: 400 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction())).rejects.toThrow('Overpass returned 400')
-      expect(fetchImpl).toHaveBeenCalledTimes(1)
-    })
-
-    it('gives up after the attempt budget and surfaces the last error', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('rate limited', { status: 429 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        maxAttempts: 3,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction())).rejects.toThrow('Overpass returned 429')
-      expect(fetchImpl).toHaveBeenCalledTimes(3)
-    })
-
-    it('stops hitting an endpoint that refuses every auction', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('rate limited', { status: 429 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        maxAttempts: 2,
-        giveUpAfterConsecutiveFailures: 2,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
-      await expect(adapter.context(auction({ externalId: '2' }))).rejects.toThrow('Overpass returned 429')
-      expect(fetchImpl).toHaveBeenCalledTimes(4)
-
-      // Budget spent: further auctions fail without touching the network.
-      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass unavailable')
-      expect(fetchImpl).toHaveBeenCalledTimes(4)
-    })
-
-    it('resets the give-up counter after a success', async () => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
-        .mockResolvedValueOnce(okResponse())
-        .mockResolvedValue(new Response('rate limited', { status: 429 }))
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        maxAttempts: 1,
-        giveUpAfterConsecutiveFailures: 2,
-        sleepImpl: async () => undefined,
-      })
-
-      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
-      await expect(adapter.context(auction({ externalId: '2' }))).resolves.not.toBeNull()
-      // Counter cleared, so the next two failures are attempted rather than skipped.
-      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass returned 429')
-      await expect(adapter.context(auction({ externalId: '4' }))).rejects.toThrow('Overpass returned 429')
-      await expect(adapter.context(auction({ externalId: '5' }))).rejects.toThrow('Overpass unavailable')
-    })
-
-    it('probes again once the give-up cooldown elapses, instead of skipping the rest of the run', async () => {
-      const fetchImpl = vi.fn<typeof fetch>()
-        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
-        .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
-        .mockResolvedValueOnce(okResponse())
-      let clock = 0
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        maxAttempts: 1,
-        giveUpAfterConsecutiveFailures: 2,
-        giveUpCooldownMs: 60_000,
-        sleepImpl: async () => undefined,
-        nowImpl: () => clock,
-      })
-
-      await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('Overpass returned 429')
-      await expect(adapter.context(auction({ externalId: '2' }))).rejects.toThrow('Overpass returned 429')
-      // Cooldown just tripped: the next auction is skipped without touching the network.
-      await expect(adapter.context(auction({ externalId: '3' }))).rejects.toThrow('Overpass unavailable')
-      expect(fetchImpl).toHaveBeenCalledTimes(2)
-
-      clock += 60_000
-      // Cooldown elapsed: this auction — further along in the same run — gets a real attempt.
-      await expect(adapter.context(auction({ externalId: '4' }))).resolves.not.toBeNull()
-      expect(fetchImpl).toHaveBeenCalledTimes(3)
-    })
-
-    it('spaces consecutive auctions by the configured interval', async () => {
-      const fetchImpl = vi.fn<typeof fetch>(async () => okResponse())
-      const waits: number[] = []
-      const adapter = createOsmLocationContextAdapter({
-        endpoint: 'https://overpass.example.test/api/interpreter',
-        checkedAt: '2026-07-26T00:00:00.000Z',
-        fetchImpl,
-        minRequestIntervalMs: 2_000,
-        sleepImpl: async (ms) => { waits.push(ms) },
-      })
-
-      await adapter.context(auction())
-      await adapter.context(auction({ externalId: '43' }))
-
-      // First call goes straight through; the second is held back.
-      expect(waits).toHaveLength(1)
-      expect(waits[0]).toBeGreaterThan(0)
-      expect(waits[0]).toBeLessThanOrEqual(2_000)
-    })
+    expect(adapter.supports(auction({ lat: null, lng: null }))).toBe(false)
+    expect(adapter.supports(auction())).toBe(true)
   })
 })

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { parseGeminiExtractionResponse, toGeminiParts } from './gemini-native'
+import { parseGeminiExtractionResponse, parseGeminiUsage, toGeminiParts } from './gemini-native'
 
 describe('toGeminiParts', () => {
   it('translates text, image and document parts to Gemini parts', () => {
@@ -38,6 +38,19 @@ describe('parseGeminiExtractionResponse', () => {
   })
 })
 
+describe('parseGeminiUsage', () => {
+  it('reads prompt/candidates token counts', () => {
+    expect(parseGeminiUsage({ usageMetadata: { promptTokenCount: 260_000, candidatesTokenCount: 512 } })).toEqual({
+      inputTokens: 260_000,
+      outputTokens: 512,
+    })
+  })
+
+  it('returns nulls when usageMetadata is missing', () => {
+    expect(parseGeminiUsage({})).toEqual({ inputTokens: null, outputTokens: null })
+  })
+})
+
 describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
   const config = { baseUrl: 'https://gemini.example', apiKey: 'k', model: 'gemini-flash-latest' }
   const req: ExtractionRequest = { systemPrompt: 'p', schema: {}, parts: [{ type: 'text', text: 'hi' }] }
@@ -55,6 +68,21 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
   function error(status: number) {
     return Object.assign(new Error(`http ${status}`), { response: { status } })
   }
+
+  /** 429 carrying a QuotaFailure detail, as the live API returns it. */
+  function quotaError(quotaId: string) {
+    return Object.assign(error(429), {
+      data: {
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+          details: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure', violations: [{ quotaId }] }],
+        },
+      },
+    })
+  }
+
+  const dailyQuotaError = () => quotaError('GenerateRequestsPerDayPerProjectPerModel-FreeTier')
+  const minuteQuotaError = () => quotaError('GenerateRequestsPerMinutePerProjectPerModel-FreeTier')
 
   beforeEach(() => {
     vi.useFakeTimers()
@@ -131,8 +159,58 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     expect(fetchMock).toHaveBeenCalledTimes(4) // 1 initial attempt + 3 retries
   })
 
-  it('does not retry and surfaces a non-429 failure', async () => {
+  // The whole point of telling the two 429 flavours apart: a per-day quota
+  // cannot clear before midnight Pacific, so the 3 retries at 12.5 s pacing
+  // were ~50 s burned per candidate. Measured in prod 2026-07-31.
+  it('does not retry a per-day quota and rethrows immediately', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(dailyQuotaError())
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toThrow('http 429')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('still retries a per-minute rate limit', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(minuteQuotaError())
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a transient (non-429) failure and returns the result once it succeeds', async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(error(500))
+      .mockRejectedValueOnce(error(500))
+      .mockResolvedValueOnce(okResponse)
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('surfaces a non-429 failure once retries are exhausted', async () => {
     const fetchMock = vi.fn().mockRejectedValue(error(500))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+    expect(fetchMock).toHaveBeenCalledTimes(3) // 1 initial attempt + 2 transient retries
+  })
+
+  it('does not retry a non-transient (e.g. 401/400) failure', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(error(401))
     vi.stubGlobal('$fetch', fetchMock)
     const provider = await freshProvider()
     const promise = provider.extract(req)
@@ -174,5 +252,148 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     await Promise.all([p1, p2])
     expect(startTimes).toHaveLength(2)
     expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
+  })
+
+  // The quota the pacing exists to respect is
+  // `GenerateRequestsPerMinutePerProjectPerModel-FreeTier` — per API key (each
+  // key is its own Google project) and per model. A single process-wide gate
+  // therefore throttled unrelated keys against each other, which is exactly
+  // what made a chain of four keys no faster than one.
+  it('does not pace two different API keys against each other', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const first = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-a' })
+    const second = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-b' })
+    const p1 = first.extract(req)
+    const p2 = second.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes).toHaveLength(2)
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(12_500)
+  })
+
+  it('still paces the same key across two provider instances', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const first = new mod.GeminiNativeProvider({ ...config, apiKey: 'same-key' })
+    const second = new mod.GeminiNativeProvider({ ...config, apiKey: 'same-key' })
+    const p1 = first.extract(req)
+    const p2 = second.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(12_500)
+  })
+
+  // TPM_CAP is 250_000 — see gemini-native.ts. GenerateRequestsPerMinutePer-
+  // ProjectPerModel-FreeTier (the RPM gate above) and the token quota are
+  // independent: a key can sit well under its request limit while its
+  // Gutachten PDFs blow the token one (measured in prod 2026-08-01: 6/15 RPM,
+  // 298.92k/250k TPM).
+  function okResponseWithTokens(promptTokenCount: number, candidatesTokenCount = 0) {
+    return { ...okResponse, usageMetadata: { promptTokenCount, candidatesTokenCount } }
+  }
+
+  it('calls onUsage with the token counts once a response is received', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponseWithTokens(1_000, 200))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const onUsage = vi.fn()
+    const promise = provider.extract(req, { onUsage })
+    await vi.runAllTimersAsync()
+    await promise
+    expect(onUsage).toHaveBeenCalledWith({ inputTokens: 1_000, outputTokens: 200 })
+  })
+
+  it('does not delay a fresh bucket even for an oversized first request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponseWithTokens(300_000))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const promise = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('waits out the trailing minute once recorded token usage crosses TPM_CAP', async () => {
+    const startTimes: number[] = []
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponseWithTokens(260_000)
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const p1 = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await p1
+    const p2 = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await p2
+    expect(startTimes).toHaveLength(2)
+    // Far past the 12.5s RPM gap — the token gate is what forces this wait.
+    expect(startTimes[1]! - startTimes[0]!).toBeGreaterThanOrEqual(60_000)
+  })
+
+  it('does not wait once the token window is under TPM_CAP', async () => {
+    const startTimes: number[] = []
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponseWithTokens(1_000)
+    })
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = await freshProvider()
+    const p1 = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await p1
+    const p2 = provider.extract(req)
+    await vi.runAllTimersAsync()
+    await p2
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(60_000)
+  })
+
+  it('does not pace the token budget of one key against another', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponseWithTokens(260_000)
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const first = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-a' })
+    const second = new mod.GeminiNativeProvider({ ...config, apiKey: 'key-b' })
+    const p1 = first.extract(req)
+    await vi.runAllTimersAsync()
+    await p1
+    const p2 = second.extract(req)
+    await vi.runAllTimersAsync()
+    await p2
+    expect(startTimes).toHaveLength(2)
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(60_000)
+  })
+
+  it('paces the same key separately per model, matching the per-model quota', async () => {
+    const startTimes: number[] = []
+    vi.stubGlobal('$fetch', vi.fn().mockImplementation(async () => {
+      startTimes.push(Date.now())
+      return okResponse
+    }))
+    vi.resetModules()
+    const mod = await import('./gemini-native')
+    const flash = new mod.GeminiNativeProvider({ ...config, apiKey: 'k', model: 'gemini-flash-latest' })
+    const lite = new mod.GeminiNativeProvider({ ...config, apiKey: 'k', model: 'gemini-flash-lite-latest' })
+    const p1 = flash.extract(req)
+    const p2 = lite.extract(req)
+    await vi.runAllTimersAsync()
+    await Promise.all([p1, p2])
+    expect(startTimes[1]! - startTimes[0]!).toBeLessThan(12_500)
   })
 })

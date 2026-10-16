@@ -2,7 +2,8 @@
 import { Trash2 } from 'lucide-vue-next'
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
-import type { LlmExecutionMode, LlmProvider, LlmProviderScope } from '~/server/utils/app-settings'
+import { useLlmProfileOptions } from '~/composables/settings/useLlmProfileOptions'
+import type { LlmExecutionMode, LlmProvider } from '~/server/utils/app-settings'
 
 interface LlmProviderProfileForm {
   id: string
@@ -22,6 +23,9 @@ interface LlmProviderProfileForm {
   modelOptionsRequestId: number
 }
 
+// Only the fields this card actually reads. /api/settings/llm-profiles also
+// returns assignments/effective/strategy/scopes — those belong to
+// SettingsLlmAssignmentsCard, which fetches the same route for itself.
 interface LlmProfilesResponse {
   profiles: Array<{
     id: string
@@ -33,36 +37,21 @@ interface LlmProfilesResponse {
     apiKeySet: boolean
     apiKeyMissing: boolean
   }>
-  assignments: Partial<Record<LlmProviderScope, string[]>>
-  effective: Record<LlmProviderScope, {
-    provider: string
-    baseUrl: string
-    model: string
-    executionMode: LlmExecutionMode
-  }>
-}
-
-interface LlmProviderProfileOption {
-  id: string
-  name: string
-  provider: LlmProvider
-  baseUrl: string
-  model: string
-  executionMode: LlmExecutionMode
 }
 
 const { t } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
 const { llmBatchJobs, loadLlmBatchJobs } = useSettingsTaskOverview()
+const { llmProfileOptions, setLlmProfileOptions } = useLlmProfileOptions()
 
 const LLM_PROVIDER_PRESETS: Record<LlmProvider, { baseUrl: string; model: string }> = {
   'claude-proxy': { baseUrl: 'http://haex-claude-proxy:8080', model: 'claude-sonnet-5' },
   'gemini-native': { baseUrl: 'https://generativelanguage.googleapis.com', model: 'gemini-flash-latest' },
   'openai-compatible': { baseUrl: 'https://api.openai.com/v1', model: '' },
+  openrouter: { baseUrl: 'https://openrouter.ai/api/v1', model: '' },
 }
 
 const llmProfiles = ref<LlmProviderProfileForm[]>([])
-const llmProfileOptions = useState<LlmProviderProfileOption[]>('settings:llm-profile-options', () => [])
 const persistedLlmProfileIds = ref<Set<string>>(new Set())
 const llmProfilesError = ref<string | null>(null)
 const llmProfilesSaved = ref(false)
@@ -108,6 +97,7 @@ function makeProfileForm(input?: Partial<LlmProviderProfileForm>): LlmProviderPr
 function profileSupportsBatch(profile: LlmProviderProfileForm): boolean {
   return profile.provider === 'gemini-native' ||
     profile.provider === 'claude-proxy' ||
+    profile.provider === 'openrouter' ||
     (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))
 }
 
@@ -124,6 +114,7 @@ function profileCanSelectBatch(profile: LlmProviderProfileForm): boolean {
   return profile.provider === 'gemini-native' ||
     (
       (profile.provider === 'claude-proxy' ||
+        profile.provider === 'openrouter' ||
         (profile.provider === 'openai-compatible' && isOpenAiBatchBaseUrl(profile.baseUrl))) &&
       (profile.apiKeySet || !!profile.apiKey)
     )
@@ -167,14 +158,7 @@ async function loadLlmProfiles(): Promise<void> {
   try {
     const res = await $fetch<LlmProfilesResponse>('/api/settings/llm-profiles')
     llmProfiles.value = res.profiles.map((profile) => makeProfileForm(profile))
-    llmProfileOptions.value = res.profiles.map(({ id, name, provider, baseUrl, model, executionMode }) => ({
-      id,
-      name,
-      provider,
-      baseUrl,
-      model,
-      executionMode,
-    }))
+    setLlmProfileOptions(res.profiles)
     persistedLlmProfileIds.value = new Set(res.profiles.map((profile) => profile.id))
     llmProfilesError.value = null
     await Promise.all(llmProfiles.value.map((profile) => loadProfileModelOptions(profile)))
@@ -193,11 +177,18 @@ async function deleteLlmProfile(profile: LlmProviderProfileForm): Promise<void> 
     llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
     return
   }
+  // Irreversible: the server drops the stored API key and strips the profile
+  // from every assignment chain.
+  if (!window.confirm(t('settings.llmProvider.deleteConfirm', { name: profile.name }))) return
   llmProfilesPending.value = true
   llmProfilesError.value = null
   try {
     await $fetch(`/api/settings/llm-profiles/${profile.id}`, { method: 'DELETE' })
-    await loadLlmProfiles()
+    // Remove just this profile locally instead of reloading the list, which
+    // would discard unsaved new profiles and typed API keys of the others.
+    llmProfiles.value = llmProfiles.value.filter((candidate) => candidate.id !== profile.id)
+    setLlmProfileOptions(llmProfileOptions.value.filter((option) => option.id !== profile.id))
+    persistedLlmProfileIds.value.delete(profile.id)
   } catch (err) {
     llmProfilesError.value = normalizeSettingsError(err, t('settings.llmProvider.deleteError'))
   } finally {
@@ -283,6 +274,7 @@ onMounted(async () => {
                   <SelectItem value="claude-proxy">{{ $t('settings.llmProvider.providerClaudeProxy') }}</SelectItem>
                   <SelectItem value="gemini-native">{{ $t('settings.llmProvider.providerGeminiNative') }}</SelectItem>
                   <SelectItem value="openai-compatible">{{ $t('settings.llmProvider.providerOpenaiCompatible') }}</SelectItem>
+                  <SelectItem value="openrouter">{{ $t('settings.llmProvider.providerOpenrouter') }}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -334,6 +326,12 @@ onMounted(async () => {
             </p>
             <p v-else-if="providerBatchBroken(profile.provider)" class="text-xs text-destructive">
               {{ $t('settings.llmProvider.batchBroken', { message: providerCapability(profile.provider)?.message ?? '' }) }}
+            </p>
+            <p
+              v-if="profile.provider === 'openrouter' && profile.executionMode === 'batch'"
+              class="text-xs text-muted-foreground"
+            >
+              {{ $t('settings.llmProvider.batchTextOnly') }}
             </p>
           </div>
 

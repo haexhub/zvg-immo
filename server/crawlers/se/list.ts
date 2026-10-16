@@ -11,12 +11,16 @@ const SEARCH_PATHS = [
   '/22660.html',
 ] as const
 
+/** `complete` is false when a search source or detail page failed: the
+ *  missing listings must not read as gone (see crawl-state.ts recordCrawlScope). */
+type ListingsResult = { auctions: Auction[]; total: number | null; complete: boolean }
+
 let allListingsCache:
   | {
     platformId: string
     fetchRef: typeof fetch
     expiresAt: number
-    promise: Promise<{ auctions: Auction[]; total: number | null }>
+    promise: Promise<ListingsResult>
   }
   | null = null
 
@@ -185,10 +189,15 @@ async function fetchSearchIds(path: string): Promise<string[]> {
 }
 
 function mapDetail(id: string, html: string, platformId: string): Auction | null {
+  const status = extractFact(html, 'Status')
   const address = extractFact(html, 'Adress')
   const showingAddress = extractShowingAddress(html)
   const kommun = extractFact(html, 'Kommun')
-  const regionName = regionNameForKommun(kommun) ?? 'Schweden'
+  const mappedRegion = regionNameForKommun(kommun)
+  // Unmapped listings land in a pseudo-region that no per-län crawl picks up,
+  // so they never appear; make that visible instead of dropping them silently.
+  if (!mappedRegion) console.warn(`[se-kronofogden] ${id}: kommun ${JSON.stringify(kommun)} not mapped to a län`)
+  const regionName = mappedRegion ?? 'Schweden'
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
   const storlek = extractFact(html, 'Storlek')
@@ -280,7 +289,11 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
     marketValueText: marknadsvardRaw ? `${marknadsvardRaw} SEK` : null,
     auctionDateIso,
     auctionDateText: auctionDateIso,
-    cancelled: false,
+    // Kronofogden marks a withdrawn sale as "Utgår" (or, on the detail
+    // page, "Objektet utgår från försäljning"). Keep it in the data so a
+    // direct link can explain why documents or the original announcement may
+    // no longer be available, while normal search results can hide it.
+    cancelled: /^utg[åa]r\b/i.test(status ?? ''),
     sourceUpdatedIso: null,
     pdfUrl,
     detailUrl: `${SE_BASE}/${id}.html`,
@@ -300,7 +313,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
 export async function fetchAllListings(
   platformId: string,
   regionCode = 'all',
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const all = await fetchAllListingsUnfiltered(platformId)
   const regionName = regionNameForRegionCode(regionCode)
   const auctions = regionName
@@ -309,12 +322,13 @@ export async function fetchAllListings(
   return {
     auctions: auctions.map((auction) => ({ ...auction })),
     total: auctions.length,
+    complete: all.complete,
   }
 }
 
 async function fetchAllListingsUnfiltered(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const now = Date.now()
   if (
     allListingsCache
@@ -342,7 +356,7 @@ async function fetchAllListingsUnfiltered(
 
 async function fetchAllListingsFresh(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
+): Promise<ListingsResult> {
   const searchResults = await Promise.all(
     SEARCH_PATHS.map(async (path) => {
       try {
@@ -365,10 +379,11 @@ async function fetchAllListingsFresh(
   }
 
   const ids = [...new Set(searchResults.flatMap((result) => result.ids ?? []))]
-  if (ids.length === 0) return { auctions: [], total: 0 }
+  if (ids.length === 0) return { auctions: [], total: 0, complete: failed.length === 0 }
 
   // Fetch detail pages with bounded concurrency
   const htmls: (string | null)[] = new Array(ids.length).fill(null)
+  const detailErrors: string[] = []
   let cursor = 0
   async function worker() {
     while (cursor < ids.length) {
@@ -377,18 +392,24 @@ async function fetchAllListingsFresh(
       if (!id) continue
       try {
         htmls[i] = await htmlFetch(`${SE_BASE}/${id}.html`)
-      } catch {
+      } catch (error) {
         htmls[i] = null
+        detailErrors.push(`${id}: ${errorMessage(error)}`)
       }
     }
   }
   await Promise.all(Array.from({ length: DETAIL_CONCURRENCY }, worker))
+  if (detailErrors.length > 0) {
+    console.warn(
+      `[se-kronofogden] ${detailErrors.length}/${ids.length} detail pages failed — crawl incomplete: ${detailErrors.slice(0, 5).join('; ')}`,
+    )
+  }
 
   const auctions = ids
     .map((id, i) => (htmls[i] ? mapDetail(id, htmls[i]!, platformId) : null))
     .filter((a): a is Auction => a !== null)
 
-  return { auctions, total: auctions.length }
+  return { auctions, total: auctions.length, complete: failed.length === 0 && detailErrors.length === 0 }
 }
 
 export async function fetchListingById(id: string, platformId: string): Promise<Auction | null> {

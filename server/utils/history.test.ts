@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Auction } from '~/types/auction'
-import { auctionToObservationRow } from './history'
+import { auctionToObservationRow, readLatestObservedAuction } from './history'
+
+const query = vi.fn()
+vi.mock('./db', () => ({ getPool: () => ({ query }) }))
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -93,5 +96,39 @@ describe('auctionToObservationRow', () => {
     expect(row.living_area_sqm).toBeNull()
     expect(row.rooms).toBeNull()
     expect(row.units).toBeNull()
+  })
+})
+
+describe('readLatestObservedAuction', () => {
+  beforeEach(() => query.mockReset().mockResolvedValue({ rows: [] }))
+
+  it('reads one indexed row instead of scanning every cached region blob', async () => {
+    await readLatestObservedAuction('zvg-portal', '42')
+
+    const [sql, values] = query.mock.calls[0]!
+    expect(sql).toContain('WHERE platform = $1 AND external_id = $2')
+    expect(sql).toContain('ORDER BY captured_at DESC')
+    expect(sql).toContain('LIMIT 1')
+    expect(values).toEqual(['zvg-portal', '42'])
+  })
+
+  it('returns the stored source record for the newest observation', async () => {
+    const payload = auction({ externalId: '42' })
+    query.mockResolvedValue({ rows: [{ payload }] })
+
+    expect(await readLatestObservedAuction('zvg-portal', '42')).toEqual(payload)
+  })
+
+  it('returns null for an auction that was never observed', async () => {
+    expect(await readLatestObservedAuction('zvg-portal', 'unknown')).toBeNull()
+  })
+
+  it('propagates a query failure instead of masking it as a miss', async () => {
+    query.mockRejectedValueOnce(new Error('connection lost'))
+
+    // The caller must be able to tell "database unavailable" apart from
+    // "genuinely never observed" — collapsing both to null would make it fall
+    // through to a live upstream crawl on every affected request.
+    await expect(readLatestObservedAuction('zvg-portal', '42')).rejects.toThrow('connection lost')
   })
 })

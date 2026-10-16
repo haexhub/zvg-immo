@@ -3,8 +3,11 @@ import { FEATURES } from '~/lib/features'
 import { PHOTO_CATEGORIES } from '~/lib/photo'
 import { PROPERTY_TYPES } from '~/lib/property-type'
 
-export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 2
-export const UNIVERSAL_AUCTION_SCHEMA_NAME = 'universal_auction_extraction_v2'
+export const UNIVERSAL_AUCTION_SCHEMA_VERSION = 3
+// Derived, so the provider-facing schema name can't drift away from the
+// version again the way it did when ruleCheck bumped v2 -> v3. Only a label
+// to the providers (json_schema.name), not part of any stored contract.
+export const UNIVERSAL_AUCTION_SCHEMA_NAME = `universal_auction_extraction_v${UNIVERSAL_AUCTION_SCHEMA_VERSION}`
 export const UNIVERSAL_AUCTION_SCHEMA_ID = `https://zvg-immo.local/schemas/${UNIVERSAL_AUCTION_SCHEMA_NAME}.json`
 
 export const SYSTEM_PROMPT =
@@ -18,10 +21,27 @@ export const SYSTEM_PROMPT =
   'wie documentSummary, biddingNotes, renovationNotes, insights.summary und planningNotes ' +
   'gibst du auf Deutsch zurück; kurze O-Ton-Beträge in marketValueText dürfen in der ' +
   'Originalsprache/-schreibweise bleiben. ' +
+  'Datenschutz ist zwingend: Nenne oder zitiere niemals Namen natürlicher Personen, insbesondere ' +
+  'nicht von Schuldnern, Miteigentümern, Eigentümern, Antragsgegnern oder Personen in einem ' +
+  'Insolvenzverfahren. Erhalte den sachlichen Zusammenhang ohne Identität, z. B. "ein Miteigentümer". ' +
   'Gib die Objektart als eine der erlaubten Kategorien ' +
   'zurück und Flächen in Quadratmetern (Hektar in m² umrechnen: 1 ha = 10000 m²). ' +
   'Wohnfläche und Grundstücksfläche strikt getrennt halten. Wenn ein Wert nicht ' +
   'eindeutig im Text steht, gib null zurück — niemals raten. ' +
+  'Enthält der Eingabetext einen Abschnitt "Automatisch (regelbasiert) vorermittelte ' +
+  'Werte zur Prüfung", wurden diese Werte durch eine separate, fehleranfällige ' +
+  'Texterkennung ermittelt (z. B. kann ein im Beschreibungstext genanntes Gebäude wie ' +
+  '"Mehrfamilienhaus" fälschlich als Objektart übernommen worden sein, obwohl tatsächlich ' +
+  'nur eine einzelne Wohnung darin versteigert wird). Prüfe jeden dort genannten Wert ' +
+  'eigenständig anhand des Textes und trage das Ergebnis je Feld in ruleCheck ein: true ' +
+  'wenn der vorgegebene Wert für das tatsächlich versteigerte Objekt korrekt ist, false ' +
+  'wenn er falsch ist, null wenn zu diesem Feld kein Wert vorgegeben wurde oder du ihn ' +
+  'anhand des Textes nicht sicher beurteilen kannst — setze false nur, wenn der Text den ' +
+  'vorgegebenen Wert eindeutig widerlegt. Gib davon ' +
+  'unabhängig in den Feldern propertyType/rooms/units/securityDeposit immer deine eigene, ' +
+  'aus dem Text abgeleitete Einschätzung zurück statt einfach den vorgegebenen Wert zu ' +
+  'übernehmen. Wurden im Eingabetext gar keine Werte zur Prüfung vorgegeben, gib ruleCheck ' +
+  'insgesamt als null zurück. ' +
   'Extrahiere Schlafzimmer, Badezimmer, Etage/Geschosslage, Badewanne, Dusche und ' +
   'Heizungsart nur, wenn sie ausdrücklich genannt werden. Bei Etage/Geschosslage ' +
   'kurze Angaben wie "EG", "1. OG", "Dachgeschoss" verwenden. Badewanne/Dusche ' +
@@ -60,15 +80,13 @@ export const SYSTEM_PROMPT =
   'Gib das Baujahr zurück, falls im Text eindeutig genannt, sonst null. Gib das Jahr der ' +
   'letzten Sanierung/Modernisierung zurück, falls eindeutig genannt, sonst null, und in ' +
   'renovationNotes einen kurzen Freitext-Hinweis dazu, sonst null. ' +
-  'Erstelle außerdem in documentSummary eine ausführliche, sachliche Zusammenfassung ' +
-  'aus ALLEN bereitgestellten objektbezogenen Dokumenten und der Anzeige. Führe die ' +
-  'wesentlichen Angaben zu Objekt und Nutzung, Lage, Flächen, Bauweise und Zustand, ' +
-  'Modernisierungen, Mängeln, rechtlichen oder planerischen Besonderheiten sowie ' +
-  'Wertermittlung in gut lesbaren Absätzen zusammen. Widersprüche zwischen Dokumenten ' +
-  'kenntlich machen und keine Tatsachen ergänzen. Allgemeine, nicht objektspezifische ' +
-  'Biet- oder Gerichtshinweise nicht wiederholen. Ziel sind etwa 5 bis 10 kompakte ' +
-  'Absätze; null nur, wenn außer dem bereits gelieferten Anzeigentext keine verwertbaren ' +
-  'Objektinformationen vorhanden sind. ' +
+  'Erstelle außerdem in documentSummary eine kompakte, sachliche Zusammenfassung ' +
+  'aus den bereitgestellten objektbezogenen Dokumenten und der Anzeige. Nenne nur die ' +
+  'wesentlichen Angaben zu Objekt, Flächen, Zustand, Modernisierungen, Besonderheiten ' +
+  'und Wertermittlung; Widersprüche knapp kenntlich machen und keine Tatsachen ergänzen. ' +
+  'Allgemeine Biet- oder Gerichtshinweise nicht wiederholen. Höchstens zwei kurze Absätze ' +
+  'bzw. 1.200 Zeichen; null nur, wenn außer dem bereits gelieferten Anzeigentext keine ' +
+  'verwertbaren Objektinformationen vorhanden sind. ' +
   'Extrahiere zusätzlich, sofern im Gutachten enthalten, eine reichhaltigere Einschätzung ' +
   '(insights): defects (Mängel/Schäden/Sanierungsstau), encumbrances (Belastungen wie ' +
   'Wohnrecht/Nießbrauch/Dienstbarkeiten), landValueEurPerSqm (Bodenrichtwert in EUR/m²), ' +
@@ -94,7 +112,10 @@ export const SYSTEM_PROMPT =
   'kuratiere jedes Bild im photos-Array: photoIndex (der Index aus dem Label), category ' +
   '(aussen/innen/grundriss/lageplan/sonstiges), caption (kurze Bildunterschrift oder null) ' +
   'und isPropertyPhoto (true nur bei einem echten Objektfoto, also Außen-/Innenansicht der ' +
-  'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Wurden keine ' +
+  'Immobilie; false bei Lageplan, Grundriss, Wappen, Deckblatt oder Textseite). Bewerte außerdem ' +
+  'appealScore von 0 bis 100 als Eignung für das erste Bild der Auktion: hohe Werte nur für klare, ' +
+  'repräsentative Ansichten von Haus, Wohnung oder relevantem Grundstück; niedrige Werte für ' +
+  'Schuppen, Details, unscharfe Bilder, Karten und Dokumente. Wurden keine ' +
   'Bilder mitgesendet, gib ein leeres photos-Array zurück.'
 
 export const UNIVERSAL_AUCTION_SCHEMA = {
@@ -138,6 +159,31 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
       type: ['number', 'null'],
       description: 'Explizit genannte Sicherheitsleistung in der Landeswährung der Anzeige, oder null.',
     },
+    ruleCheck: {
+      type: ['object', 'null'],
+      additionalProperties: false,
+      description:
+        'Prüfergebnis zu den im Eingabetext vorgegebenen, regelbasiert vorermittelten Werten (siehe Systemprompt) — nur für Felder, zu denen ein Wert vorgegeben wurde. null wenn im Eingabetext keine Werte zur Prüfung vorgegeben wurden.',
+      properties: {
+        propertyType: {
+          type: ['boolean', 'null'],
+          description: 'true wenn der vorgegebene propertyType-Wert korrekt ist, false wenn falsch, null wenn keiner vorgegeben wurde.',
+        },
+        rooms: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Zimmeranzahl korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+        units: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Anzahl Wohneinheiten korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+        securityDeposit: {
+          type: ['boolean', 'null'],
+          description: 'true wenn die vorgegebene Sicherheitsleistung korrekt ist, false wenn falsch, null wenn keine vorgegeben wurde.',
+        },
+      },
+      required: ['propertyType', 'rooms', 'units', 'securityDeposit'],
+    },
     marketValueEur: {
       type: ['number', 'null'],
       description:
@@ -159,6 +205,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     features: {
       type: 'array',
       items: { type: 'string', enum: FEATURES },
+      maxItems: 20,
       description: 'Erkannte Ausstattungsmerkmale, leer wenn keine eindeutig genannt.',
     },
     yearBuilt: { type: ['integer', 'null'], description: 'Baujahr, oder null wenn unklar.' },
@@ -178,11 +225,13 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         defects: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 8,
           description: 'Mängel/Schäden/Sanierungsstau, leer wenn keine genannt.',
         },
         encumbrances: {
           type: 'array',
           items: { type: 'string' },
+          maxItems: 8,
           description: 'Belastungen (Wohnrecht, Nießbrauch, Dienstbarkeiten, ...), leer wenn keine genannt.',
         },
         landValueEurPerSqm: {
@@ -191,7 +240,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         },
         construction: { type: ['string', 'null'], description: 'Bauweise/Konstruktion, oder null.' },
         locationCharacter: { type: ['string', 'null'], description: 'Lagecharakter, oder null.' },
-        summary: { type: ['string', 'null'], description: 'Kurze Gesamteinschätzung (2-4 Sätze), oder null.' },
+        summary: { type: ['string', 'null'], maxLength: 500, description: 'Kurze Gesamteinschätzung (2-4 Sätze), oder null.' },
       },
       required: [
         'defects',
@@ -219,6 +268,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
         conservationArea: { type: ['string', 'null'], description: 'Erhaltungsgebiet, oder null.' },
         landParcels: {
           type: 'array',
+          maxItems: 12,
           description: 'Aufteilung des Grundstücks in Teilflächen/Flurstücke, leer wenn keine genannt.',
           items: {
             type: 'object',
@@ -245,11 +295,13 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     },
     documentSummary: {
       type: ['string', 'null'],
+      maxLength: 1200,
       description:
-        'Ausführliche sachliche Zusammenfassung aller bereitgestellten objektbezogenen Dokumente in etwa 5 bis 10 kompakten Absätzen, oder null.',
+        'Kompakte sachliche Zusammenfassung der bereitgestellten objektbezogenen Dokumente in höchstens zwei kurzen Absätzen, oder null.',
     },
     photos: {
       type: 'array',
+      maxItems: 8,
       description:
         'Kuratierung der mitgesendeten Kandidatenbilder ("Bild N:"-Label), höchstens ein Eintrag pro Bild; leeres Array wenn keine Bilder mitgesendet wurden.',
       items: {
@@ -268,8 +320,14 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
             description:
               'true bei echtem Objektfoto (Außen-/Innenansicht), false bei Lageplan/Grundriss/Wappen/Deckblatt/Textseite.',
           },
+          appealScore: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 100,
+            description: 'Eignung als erstes Bild der Auktion von 0 (ungeeignet) bis 100 (beste repräsentative Ansicht).',
+          },
         },
-        required: ['photoIndex', 'category', 'caption', 'isPropertyPhoto'],
+        required: ['photoIndex', 'category', 'caption', 'isPropertyPhoto', 'appealScore'],
       },
     },
   },
@@ -286,6 +344,7 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     'heating',
     'units',
     'securityDeposit',
+    'ruleCheck',
     'marketValueEur',
     'marketValueText',
     'biddingNotes',
@@ -300,3 +359,87 @@ export const UNIVERSAL_AUCTION_SCHEMA = {
     'photos',
   ],
 } as const
+
+// ────────────────────────────────────────────────────────────────────────────
+// Map-reduce (server/utils/tasks/reprocess-map-reduce.ts): a per-document
+// "map" call asks for the same field set as UNIVERSAL_AUCTION_SCHEMA but for
+// exactly ONE document, minus ruleCheck (rules values describe the whole
+// auction, not one document — verification only happens once, at the
+// reduce call) and minus photos (unrelated to PDFs, stays a single
+// whole-auction concern at the reduce call, driven by candidateImages).
+// Derived from UNIVERSAL_AUCTION_SCHEMA rather than hand-duplicated so the
+// two can't silently drift apart when a field is added/changed.
+// ────────────────────────────────────────────────────────────────────────────
+
+const { ruleCheck: _omitRuleCheck, photos: _omitPhotos, ...DOCUMENT_SUMMARY_PROPERTIES } =
+  UNIVERSAL_AUCTION_SCHEMA.properties
+const DOCUMENT_SUMMARY_REQUIRED = UNIVERSAL_AUCTION_SCHEMA.required.filter(
+  (field): field is Exclude<typeof UNIVERSAL_AUCTION_SCHEMA.required[number], 'ruleCheck' | 'photos'> =>
+    field !== 'ruleCheck' && field !== 'photos',
+)
+
+export const DOCUMENT_SUMMARY_SCHEMA_NAME = 'document_summary_v1'
+
+export const DOCUMENT_SUMMARY_SCHEMA = {
+  description:
+    'Zwischenschritt der Map-Reduce-Extraktion: strukturierte Zusammenfassung EINES einzelnen Dokuments einer Auktion, nicht die finale Auktions-Extraktion.',
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    ...DOCUMENT_SUMMARY_PROPERTIES,
+    documentSummary: {
+      type: ['string', 'null'],
+      maxLength: 600,
+      description: 'Kompakte sachliche Zusammenfassung DIESES Dokuments in höchstens einem kurzen Absatz, oder null.',
+    },
+  },
+  required: DOCUMENT_SUMMARY_REQUIRED,
+} as const
+
+export const DOCUMENT_SUMMARY_SYSTEM_PROMPT =
+  'Du übersetzt chaotische, länderspezifische Texte zu einem einzelnen Dokument einer ' +
+  'Immobilienauktion in ein universelles JSON-Format. Dies ist eines von mehreren ' +
+  'Dokumenten derselben Auktion — berichte nur, was DIESES Dokument sagt. Nimm nichts an, ' +
+  'was ein anderes Dokument enthalten könnte, und rate nicht. Die Eingabe kann deutsch, ' +
+  'spanisch, italienisch, französisch, niederländisch, tschechisch, polnisch, bosnisch, ' +
+  'ungarisch, litauisch, lettisch, estnisch, schwedisch, finnisch, dänisch, isländisch ' +
+  'oder eine andere europäische Sprache enthalten. Arbeite semantisch, nicht wortwörtlich: ' +
+  'ordne lokale Auktions-, Gerichts-, Grundstücks- und Immobilienbegriffe den kanonischen ' +
+  'Schemafeldern zu und gib Enum-Werte exakt in den erlaubten normalisierten Codes zurück. ' +
+  'Freitexte wie documentSummary, biddingNotes, renovationNotes, insights.summary und ' +
+  'planningNotes gibst du auf Deutsch zurück; kurze O-Ton-Beträge in marketValueText dürfen ' +
+  'in der Originalsprache/-schreibweise bleiben. ' +
+  'Datenschutz ist zwingend: Nenne oder zitiere niemals Namen natürlicher Personen, ' +
+  'insbesondere nicht von Schuldnern, Miteigentümern, Eigentümern, Antragsgegnern oder ' +
+  'Personen in einem Insolvenzverfahren. Erhalte den sachlichen Zusammenhang ohne Identität, ' +
+  'z. B. "ein Miteigentümer". ' +
+  'Gib die Objektart als eine der erlaubten Kategorien zurück und Flächen in Quadratmetern ' +
+  '(Hektar in m² umrechnen: 1 ha = 10000 m²). Wohnfläche und Grundstücksfläche strikt ' +
+  'getrennt halten. Wenn ein Wert nicht eindeutig im Text steht, gib null zurück — niemals ' +
+  'raten. Gib die Zimmeranzahl nur für tatsächlich vorhandene, bereits errichtete Bebauung ' +
+  'zurück, keine genehmigte/zulässige Kapazität aus Bebauungsplan oder Baugenehmigung. ' +
+  'Gib eine Sicherheitsleistung nur zurück, wenn ein konkreter Geldbetrag in der ' +
+  'Landeswährung der Anzeige im Text genannt wird — niemals aus einem Prozentsatz berechnen ' +
+  'oder in eine andere Währung umrechnen, sonst null. ' +
+  'Gib den im Gutachten genannten Verkehrswert (Gesamtschätzwert der Immobilie) in der ' +
+  'Landeswährung der Anzeige zurück, falls explizit genannt, sonst null — nicht zu ' +
+  'verwechseln mit dem Bodenrichtwert (EUR/m² nur für das Grundstück, siehe insights). ' +
+  'Gib außerdem den Zustand als eine der erlaubten Kategorien zurück, nur wenn er eindeutig ' +
+  'aus dem Text hervorgeht, sonst null. Gib eine Liste erkannter Ausstattungsmerkmale ' +
+  'zurück — nur Merkmale, die explizit im Text genannt werden (Negation beachten), sonst ' +
+  'eine leere Liste. Niemals raten. ' +
+  'Extrahiere zusätzlich, sofern in diesem Dokument enthalten, eine reichhaltigere ' +
+  'Einschätzung (insights): defects, encumbrances, landValueEurPerSqm, construction, ' +
+  'locationCharacter und summary. Gib insights insgesamt als null zurück, wenn dieses ' +
+  'Dokument keine dieser Angaben enthält. Extrahiere außerdem, sofern in diesem Dokument ' +
+  'enthalten, planerische/rechtliche Hinweise (planningNotes): monumentProtection, ' +
+  'contamination, developmentPlan, landConsolidation, developmentCharges, ' +
+  'redevelopmentArea, conservationArea, landParcels. Ein "kein(e) X bekannt/vorhanden"-' +
+  'Hinweis zählt als vorhandene Angabe (kurz wiedergeben), nicht als null — null nur wenn ' +
+  'dieses Dokument das Thema gar nicht erwähnt. Gib planningNotes insgesamt als null ' +
+  'zurück, wenn keines der Felder und keine landParcels-Einträge in diesem Dokument stehen. ' +
+  'Niemals raten. ' +
+  'Erstelle in documentSummary eine kompakte, sachliche Zusammenfassung DIESES Dokuments — ' +
+  'nenne nur die wesentlichen Angaben zu Objekt, Flächen, Zustand, Modernisierungen, ' +
+  'Besonderheiten und Wertermittlung. Höchstens ein kurzer Absatz; null nur, wenn dieses ' +
+  'Dokument keine verwertbaren Objektinformationen enthält.'

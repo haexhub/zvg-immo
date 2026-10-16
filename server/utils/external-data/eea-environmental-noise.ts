@@ -1,6 +1,8 @@
 import type { Auction, LocationContext, LocationNoiseIndicator, LocationNoiseObservation, LocationNoiseSource } from '~/types/auction'
 import type { LocationContextEnhancer } from '~/server/tasks/external-enrichment'
+import { maxOf } from '~/lib/array-math'
 import { EXTERNAL_DATA_SOURCES } from './sources'
+import { qualityVerdict } from './osm-location-quality'
 
 export interface EeaNoiseLayerConfig {
   source: LocationNoiseSource
@@ -141,7 +143,7 @@ async function identifyNoiseValue(
     }))
     const res = await fetchImpl(url, {
       headers: {
-        'user-agent': 'PropHammer location enrichment (contact via deployment operator)',
+        'user-agent': 'ImmoHammer location enrichment (contact via deployment operator)',
       },
       signal: controller.signal,
     })
@@ -181,7 +183,7 @@ function strongestRasterValue(response: ArcGisIdentifyResponse): number | null {
     ...(response.properties?.Values ?? []),
   ].map(parseRasterValue).filter((value): value is number => value != null)
   if (values.length === 0) return null
-  return Math.max(...values)
+  return maxOf(values)
 }
 
 function parseRasterValue(value: string | number | null | undefined): number | null {
@@ -282,12 +284,4 @@ function adjustQualityForNoise(
     weaknesses: [...weaknesses],
     caveats: [...caveats],
   }
-}
-
-function qualityVerdict(score: number): LocationContext['quality']['verdict'] {
-  if (score >= 82) return 'excellent'
-  if (score >= 68) return 'good'
-  if (score >= 50) return 'average'
-  if (score >= 32) return 'weak'
-  return 'isolated'
 }

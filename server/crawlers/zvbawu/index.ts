@@ -35,7 +35,10 @@ async function enrichOne(auction: Auction): Promise<void> {
   // Aufgehobene auctions are skipped inside enrichInBatches (no error), so a
   // throw here only signals real fetch failures — the enrich task then leaves
   // the listing unstamped and retries it on a later run.
-  if (r.errors > 0) throw new Error('zvbawu detail fetch failed')
+  if (r.errors > 0) {
+    // The enrich task only logs the message, so carry the reason in it too.
+    throw new Error(`zvbawu detail fetch failed: ${(r.firstError as Error).message}`, { cause: r.firstError })
+  }
 }
 
 async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
@@ -51,12 +54,17 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   let totalReported = 0
   const auctions = []
+  // A failed court is missing from `auctions` entirely, not just short a few
+  // listings — recording the platform as succeeded anyway would let its whole
+  // catalog read as "gone" once a later, complete crawl runs.
+  let anyCourtFailed = false
   for (const [i, r] of courtResults.entries()) {
     if (r.status === 'fulfilled') {
       totalReported += r.value.totalReported
       auctions.push(...r.value.auctions)
       continue
     }
+    anyCourtFailed = true
     // Silent drops here have masked coverage regressions before (a single
     // court's parser breaking quietly hid 10–20% of BW from the map).
     const court = BW_COURTS_FALLBACK[i]
@@ -68,13 +76,14 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
     const result = await enrichInBatches(auctions, applyDetail)
     if (result.errors > 0) {
       console.warn(
-        `[zvbawu] enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed`,
+        `[zvbawu] enriched ${result.enriched}/${auctions.length}, ${result.errors} detail fetches failed (first: ${(result.firstError as Error).message})`,
       )
     }
   }
 
   return {
     platform: PLATFORM_ID,
+    platformsSucceeded: anyCourtFailed ? [] : [PLATFORM_ID],
     source: ZVBAWU_BASE,
     countries: [COUNTRY],
     regions: [REGION_NAME],

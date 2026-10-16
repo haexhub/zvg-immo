@@ -3,9 +3,10 @@
 // only sending an inquiry (server/api/lawyer-inquiries/index.post.ts) requires
 // a login. Returns only public-safe fields: `email` (the relay target for
 // commission-bearing inquiries) is never sent to the client — see
-// server/db/schema.sql's comment on the `lawyers` table.
+// server/db/schema/lawyers.ts's comment on the `lawyers` table.
 
 import { getServiceClient } from '../utils/supabase'
+import { publicError } from '../utils/public-error'
 
 export interface PublicLawyer {
   id: string
@@ -36,7 +37,7 @@ export default defineEventHandler(async (event): Promise<PublicLawyer[]> => {
     .contains('countries', [country])
     .order('name', { ascending: true })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/lawyers', 500, 'Anwälte konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,

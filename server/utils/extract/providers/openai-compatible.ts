@@ -3,8 +3,9 @@
 // compat layer, ...). This is the default extraction path: switching backend
 // is a baseUrl/apiKey/model config change, never a new class.
 
-import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, LlmProviderError, UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm'
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
+import { isRateLimitError, isTransientRequestError, LlmProviderError, TRANSIENT_RETRY_DELAYS_MS } from '../llm-errors'
+import { UNIVERSAL_AUCTION_SCHEMA_NAME } from '../llm-schema'
 
 type OpenAiContentPart =
   | { type: 'text'; text: string }
@@ -25,6 +26,44 @@ export function toOpenAiContent(parts: ContentPart[]): OpenAiContentPart[] {
   return content
 }
 
+/**
+ * OpenRouter forwards `response_format.json_schema` to the selected upstream
+ * provider. Google AI Studio rejects the otherwise valid JSON Schema keyword
+ * `maxItems` with `INVALID_ARGUMENT` (rather than simply ignoring it). The
+ * extraction result is bounded by clampExtraction after the response anyway,
+ * so dropping this provider-facing hint is safe and keeps OpenRouter's Google
+ * models usable for both sync and batch requests.
+ */
+function adaptOpenRouterSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(adaptOpenRouterSchemaValue)
+  if (!value || typeof value !== 'object') return value
+  const adapted: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value)) {
+    if (key === 'maxItems') continue
+    adapted[key] = adaptOpenRouterSchemaValue(child)
+  }
+  return adapted
+}
+
+export function toOpenRouterSchema(schema: Record<string, unknown>): Record<string, unknown> {
+  return adaptOpenRouterSchemaValue(schema) as Record<string, unknown>
+}
+
+/** Reads the OpenAI-compatible `usage.{prompt_tokens,completion_tokens}`
+ *  block. Every field is optional/absent on some backends, so each is read
+ *  independently rather than requiring the whole object. */
+export function parseOpenAiUsage(resp: unknown): LlmUsage {
+  const usage = (resp as { usage?: unknown })?.usage as {
+    prompt_tokens?: unknown
+    completion_tokens?: unknown
+    cost?: unknown
+  } | undefined
+  const inputTokens = typeof usage?.prompt_tokens === 'number' ? usage.prompt_tokens : null
+  const outputTokens = typeof usage?.completion_tokens === 'number' ? usage.completion_tokens : null
+  const costUsd = typeof usage?.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null
+  return costUsd == null ? { inputTokens, outputTokens } : { inputTokens, outputTokens, costUsd }
+}
+
 /** Pull the structured object out of the first choice's message content,
  *  which `response_format: json_schema` guarantees is a JSON-serialized
  *  string matching `req.schema`. */
@@ -42,15 +81,43 @@ export function parseOpenAiExtractionResponse(resp: unknown): Record<string, unk
   }
 }
 
+/** ofetch's default error message is just the HTTP status line ("403
+ *  Forbidden") — the actual reason (e.g. OpenRouter's "input flagged by
+ *  moderation" explanation for a 403) lives in the JSON error body ofetch
+ *  also attaches to the thrown error as `.data`. Append it when present so
+ *  callers/logs don't have to reproduce the request against the provider to
+ *  find out why. */
+function describeRequestError(err: unknown): string {
+  const base = (err as Error).message
+  const detail = (err as { data?: { error?: { message?: unknown } } })?.data?.error?.message
+  return typeof detail === 'string' && detail.trim() ? `${base} — ${detail}` : base
+}
+
 export class OpenAiCompatibleProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
+  private get providerLabel(): string {
+    return this.config.provider ?? 'openai-compatible'
+  }
+
+  /** OpenRouter lists `:batch`-suffixed ids (e.g. `google/gemini-3.5-flash-lite:batch`)
+   *  as separate, cheaper catalog entries for its Batch API (see
+   *  openrouter-batch.ts, which sends the suffix as-is to POST /batches) —
+   *  but that suffix 404s unconditionally on /chat/completions. Auctions with
+   *  photos/PDFs bypass the batch queue and land here synchronously (see
+   *  batchSupportsMultimodal in ../llm-batch.ts), as does every non-extraction
+   *  use case (translation), so a profile deliberately configured with a
+   *  `:batch` model for its cost savings must still work on this path. */
+  private get syncModel(): string {
+    return this.config.provider === 'openrouter' ? this.config.model.replace(/:batch$/, '') : this.config.model
+  }
+
   async extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null> {
     const body = {
-      model: this.config.model,
+      model: this.syncModel,
       // Raised from 512: the response now also carries `insights` (up to two
       // 20-item string lists plus free text) and a per-candidate-photo
       // curation array — the old budget truncated the larger JSON payload.
@@ -59,38 +126,74 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
         { role: 'system', content: req.systemPrompt },
         { role: 'user', content: toOpenAiContent(req.parts) },
       ],
+      // OpenRouter-only extension: without this opt-in, its `usage` block
+      // never carries the `cost` field parseOpenAiUsage reads — every call
+      // silently fell back to the static price table (see llm-pricing.ts),
+      // which doesn't know about most OpenRouter catalog ids. Other
+      // OpenAI-compatible backends ignore unknown body fields.
+      ...(this.config.provider === 'openrouter' ? { usage: { include: true } } : {}),
       response_format: {
         type: 'json_schema',
-        json_schema: { name: UNIVERSAL_AUCTION_SCHEMA_NAME, schema: req.schema, strict: true },
+        json_schema: {
+          name: req.name ?? UNIVERSAL_AUCTION_SCHEMA_NAME,
+          schema: this.config.provider === 'openrouter' ? toOpenRouterSchema(req.schema) : req.schema,
+          strict: true,
+        },
       },
     }
     let resp: unknown
-    try {
-      // Same rationale as ClaudeProxyProvider: bound the request so a stuck
-      // upstream call can't hang the enrich task's Promise.all forever.
-      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
-        },
-        body,
-        signal: AbortSignal.timeout(60_000),
-      })
-    } catch (err) {
-      // Rethrow a rate limit/quota error instead of swallowing it to null —
-      // see isRateLimitError() — so it isn't counted toward the retry-lockout.
-      if (isRateLimitError(err)) throw err
-      // A caller that passes onRequestError (extractByLlm) wants to keep
-      // batching past a single failed candidate; one that doesn't (e.g.
-      // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-      if (!opts?.onRequestError) throw new LlmProviderError('openai-compatible', (err as Error).message, { cause: err })
-      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-      opts.onRequestError(err)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        // Same rationale as ClaudeProxyProvider: bound the request so a stuck
+        // upstream call can't hang the enrich task's Promise.all forever.
+        resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+          },
+          body,
+          signal: AbortSignal.timeout(60_000),
+        })
+        break
+      } catch (err) {
+        // Rethrow a rate limit/quota error instead of swallowing it to null —
+        // see isRateLimitError() — so it isn't counted toward the retry-lockout.
+        if (isRateLimitError(err)) throw err
+        // A transient failure (e.g. OpenRouter's thin-provider-pool 404, "no
+        // endpoint available right now") gets a couple of quick retries on
+        // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS. A
+        // 400/401/403 will fail identically every time, so skip straight to
+        // giving up instead of paying the retry delay for nothing.
+        if (isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+          console.warn(
+            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${describeRequestError(err)}`,
+          )
+          await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
+          continue
+        }
+        // A caller that passes onRequestError (extractByLlm) wants to keep
+        // batching past a single failed candidate; one that doesn't (e.g.
+        // callSummaryLlm/callTranslationLlm) wants the failure to reject.
+        if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, describeRequestError(err), { cause: err })
+        console.warn(`[extract/llm] request failed: ${describeRequestError(err)}`)
+        opts.onRequestError(err)
+        return null
+      }
+    }
+    opts?.onUsage?.(parseOpenAiUsage(resp))
+    const parsed = parseOpenAiExtractionResponse(resp)
+    if (parsed) return parsed
+    // A response did come back, so this is about this input (e.g. JSON cut
+    // off at max_tokens), not an unavailable model: extractByLlm's callers
+    // count it as a per-auction failure instead of stopping the whole run.
+    // Callers without onRequestError (translations) still get a rejection,
+    // which lets their config chain try the next model.
+    if (opts?.onRequestError) {
+      const finishReason = (resp as { choices?: { finish_reason?: unknown }[] })?.choices?.[0]?.finish_reason
+      console.warn(`[extract/llm] unparseable response (finish_reason=${String(finishReason)})`)
       return null
     }
-    const parsed = parseOpenAiExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError('openai-compatible', 'ungültige oder leere Provider-Antwort')
-    return parsed
+    throw new LlmProviderError(this.providerLabel, 'ungültige oder leere Provider-Antwort')
   }
 }

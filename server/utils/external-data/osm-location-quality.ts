@@ -169,7 +169,7 @@ function amenity(amenities: LocationAmenitySummary[], kind: LocationAmenityKind)
   return amenities.find((item) => item.kind === kind) ?? null
 }
 
-function qualityVerdict(score: number): LocationContext['quality']['verdict'] {
+export function qualityVerdict(score: number): LocationContext['quality']['verdict'] {
   if (score >= 82) return 'excellent'
   if (score >= 68) return 'good'
   if (score >= 50) return 'average'

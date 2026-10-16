@@ -1,15 +1,25 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { getPool } from '../db'
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { getDb } from '../db'
+import { queryText } from '~/test-support/drizzle-query'
 
-vi.mock('../db', () => ({ getPool: vi.fn() }))
+vi.mock('../db', () => ({ getDb: vi.fn() }))
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
+vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
+  return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
+})
 
-// Imported after the mock so the module under test picks up the mocked getPool.
+// Imported after the mocks so the module under test picks up the mocked getDb/session.
 const { fetchPdfBuffer, pdfHasTrustworthyEncoding, pdfToText, pickAllPdfs, pickRelevantPdfs } =
   await import('./pdf-text')
+const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const FAKE_PDF = Buffer.from('%PDF-1.4\n%%EOF')
@@ -143,6 +153,40 @@ describe('fetchPdfBuffer resource bounds', () => {
     await expect(fetchPdfBuffer('https://example.test/oversized.pdf')).resolves.toBeNull()
     expect(cancel).toHaveBeenCalledOnce()
   })
+
+  it('retries a dga-ag securedl PDF once with a fresh session after landing on the login page', async () => {
+    function fakeResponse(url: string, body: string) {
+      const bytes = new TextEncoder().encode(body)
+      let read = false
+      return {
+        ok: true,
+        url,
+        headers: new Headers(),
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (read) return { done: true, value: undefined }
+              read = true
+              return { done: false, value: bytes }
+            },
+            cancel: async () => undefined,
+          }),
+        },
+      }
+    }
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf', '%PDF-1.4 real content'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const buf = await fetchPdfBuffer('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf')
+
+    expect(buf?.toString('ascii')).toBe('%PDF-1.4 real content')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getDgaAgSessionCookie)).toHaveBeenCalledWith({ forceRefresh: true })
+  })
 })
 
 async function cleanupTextCache(url: string): Promise<void> {
@@ -160,30 +204,29 @@ function makeFakePool() {
   const blobs = new Map<string, FakeBlobRow>()
   const captures: Array<{ kind: string; platform: string; externalId: string; sourceUrl: string | null }> = []
 
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n.startsWith('select "uploaded_at" from "artifact_blobs"')) {
       const hash = params[0] as string
-      return { rows: blobs.has(hash) ? [{ uploaded_at: null }] : [] }
+      return { rows: blobs.has(hash) ? [[null]] : [] }
     }
-    if (sql.includes('INSERT INTO raw_blobs')) {
+    if (n.startsWith('insert into "artifact_blobs"')) {
       const [hash, s3_key, content_type] = params as [string, string, string]
       if (!blobs.has(hash)) blobs.set(hash, { s3_key, content_type })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT content_hash FROM raw_captures')) {
-      return { rows: [] }
-    }
-    if (sql.includes('INSERT INTO raw_captures')) {
-      const [, kind, platform, , , externalId, , , , sourceUrl] = params as [
-        string, string, string, string, string | null, string, string | null, string | null, string, string | null,
+    if (n.includes('insert into artifact_captures')) {
+      const [, kind, platform, externalId, , sourceUrl] = params as [
+        string, string, string, string, string, string | null,
       ]
       captures.push({ kind, platform, externalId, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
 
-  return { blobs, captures, query }
+  return { blobs, captures, query, db: drizzle({ query } as never) }
 }
 
 describe('pdfToText document archiving', () => {
@@ -202,7 +245,7 @@ describe('pdfToText document archiving', () => {
 
   it('archives the fetched PDF as a document capture when identity is passed', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const url = 'https://example.test/appraisal-a.pdf'
     await cleanupTextCache(url)
@@ -222,7 +265,7 @@ describe('pdfToText document archiving', () => {
 
   it('does not archive when no identity is passed (e.g. the pdf-thumb path)', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const url = 'https://example.test/appraisal-b.pdf'
     await cleanupTextCache(url)
@@ -237,7 +280,7 @@ describe('pdfToText document archiving', () => {
 
   it('archives the extracted text as a document_text capture alongside the raw document', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(PDF_WITH_TEXT, { status: 200 })))
 
     const url = 'https://example.test/appraisal-text.pdf'
@@ -258,9 +301,24 @@ describe('pdfToText document archiving', () => {
     await cleanupTextCache(url)
   })
 
+  it('still returns the extracted text when the text cache cannot be written', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => new Response(PDF_WITH_TEXT, { status: 200 })))
+    const url = 'https://example.test/appraisal-cache-broken.pdf'
+    const key = createHash('sha1').update(url).digest('hex')
+    // A non-empty directory at the cache path makes the final rename fail.
+    const blocker = join(CACHE_DIR, `${key}.txt`)
+    await mkdir(join(blocker, 'occupied'), { recursive: true })
+    try {
+      expect(await pdfToText(url)).toContain('Hallo Welt')
+      expect((await readdir(CACHE_DIR)).filter((name) => name.startsWith(key) && name.endsWith('.tmp'))).toEqual([])
+    } finally {
+      await rm(blocker, { recursive: true, force: true })
+    }
+  })
+
   it('does not archive document_text when pdftotext yields no usable output', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
     // FAKE_PDF (no trailer) makes pdftotext exit non-zero, so stdout is null.
 
     const url = 'https://example.test/appraisal-blank.pdf'
@@ -278,7 +336,7 @@ describe('pdfToText document archiving', () => {
 
   it('dedups the same PDF fetched for two different auctions (one blob, two captures)', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.db as never)
 
     const urlA = 'https://example.test/shared.pdf?a'
     const urlB = 'https://example.test/shared.pdf?b'

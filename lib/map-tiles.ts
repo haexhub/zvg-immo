@@ -1,6 +1,12 @@
 export const OSM_ATTRIBUTION = '&copy; OpenStreetMap contributors'
 
-const DEFAULT_MAPTILER_STREETS_STYLE_ID = 'streets-v2'
+// 'basic-v2' instead of the richer 'streets-v2': the latter's 90 style layers
+// (33 of them symbol/label layers) cost 200-350ms of main-thread Canvas2D
+// drawing per zoom step once real auction data is loaded — see
+// search-map-freeze-cluster-investigation memory. 'basic-v2' has a third as
+// many layers (30, 7 symbol) and stays on the same vector/apply() pipeline,
+// so per-locale label rewriting (localizeVectorStyleLanguage) still works.
+const DEFAULT_MAPTILER_STREETS_STYLE_ID = 'basic-v2'
 const DEFAULT_MAPTILER_SATELLITE_STYLE_ID = 'hybrid'
 
 function configuredStyleId(value: string | undefined, defaultId: string): string {
@@ -34,16 +40,24 @@ export interface MapboxStyle {
   [key: string]: unknown
 }
 
-/** True when a Mapbox/MapLibre `text-field` expression reads a `name`-family
+/** True when a Mapbox/MapLibre `text-field` value reads a `name`-family
  *  source property (`name`, `name:xx`, `name_int`, …) — i.e. this is a
  *  place-name label layer, as opposed to house numbers, elevation labels,
- *  route shields etc., which must be left alone. */
-function referencesNameField(expression: unknown): boolean {
-  if (!Array.isArray(expression)) return false
-  if (expression[0] === 'get' && typeof expression[1] === 'string' && /^name(:|_|$)/.test(expression[1])) {
-    return true
-  }
-  return expression.some(referencesNameField)
+ *  route shields etc., which must be left alone. Handles both the modern
+ *  expression-array form (`['get', 'name:en']`) and the legacy Mapbox GL
+ *  string-template form (`'{name:en}'`) — MapTiler's `streets-v2` still uses
+ *  the latter for its Country/Continent/Capital-city/City/Ocean/Place labels,
+ *  which is why those kept rendering in whatever language the field was
+ *  hardcoded to (usually `name:en`) regardless of the chosen `lang`. */
+function referencesNameField(value: unknown): boolean {
+  if (typeof value === 'string') return /^\{name([:_][^}]*)?\}$/.test(value)
+  if (!Array.isArray(value)) return false
+  if (value[0] === 'get' && typeof value[1] === 'string' && /^name(:|_|$)/.test(value[1])) return true
+  return value.some(referencesNameField)
+}
+
+function localizedNameField(lang: string): unknown[] {
+  return ['coalesce', ['get', `name:${lang}`], ['get', 'name']]
 }
 
 /** Rewrites every place-name label layer's `text-field` to prefer the given
@@ -57,8 +71,22 @@ export function localizeVectorStyleLanguage(style: MapboxStyle, lang: string): M
   const cloned = JSON.parse(JSON.stringify(style)) as MapboxStyle
   for (const layer of cloned.layers ?? []) {
     const textField = layer.layout?.['text-field']
-    if (textField !== undefined && referencesNameField(textField)) {
-      layer.layout!['text-field'] = ['coalesce', ['get', `name:${lang}`], ['get', 'name']]
+    if (textField === undefined) continue
+    // Legacy zoom-function form (e.g. MapTiler's Airport layer: IATA code at
+    // low zoom, full name once zoomed in) — rewrite only the stop(s) that
+    // reference a name field, leaving unrelated stops (icons, refs) as-is.
+    if (textField && typeof textField === 'object' && !Array.isArray(textField) && Array.isArray((textField as { stops?: unknown }).stops)) {
+      const stops = (textField as { stops: [number, unknown][] }).stops
+      if (stops.some(([, stopValue]) => referencesNameField(stopValue))) {
+        layer.layout!['text-field'] = {
+          ...textField,
+          stops: stops.map(([zoom, stopValue]) => [zoom, referencesNameField(stopValue) ? localizedNameField(lang) : stopValue]),
+        }
+      }
+      continue
+    }
+    if (referencesNameField(textField)) {
+      layer.layout!['text-field'] = localizedNameField(lang)
     }
   }
   return cloned

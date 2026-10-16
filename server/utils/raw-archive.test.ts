@@ -3,12 +3,19 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Auction } from '~/types/auction'
-import { getPool } from './db'
+import { getDb } from './db'
+import { queryText } from '~/test-support/drizzle-query'
 
-vi.mock('./db', () => ({ getPool: vi.fn() }))
+// Only getDb is faked; pgErrorCode stays real, since the unique-violation test
+// below depends on it unwrapping Drizzle's error wrapper the way production does.
+vi.mock('./db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./db')>()),
+  getDb: vi.fn(),
+}))
 
-// Imported after the mock so the module under test picks up the mocked getPool.
+// Imported after the mock so the module under test picks up the mocked getDb.
 const {
   archiveAuction,
   archiveBlob,
@@ -59,15 +66,12 @@ interface FakeBlobRow {
 
 interface FakeCaptureRow {
   capturedAt: string
-  region: string | null
-  caseNumber: string | null
-  authority: string | null
   contentHash: string
   sourceUrl: string | null
 }
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
- *  raw-archive.ts issues (checked via the SQL prefix). Models the current
+ *  raw-archive.ts issues (checked via the compiled SQL). Models the current
  *  archive uniqueness: auctions by identity+contentHash (append-only),
  *  documents/detail captures by identity+sourceUrl+contentHash. */
 function makeFakePool() {
@@ -76,16 +80,21 @@ function makeFakePool() {
   const documentSets = new Map<string, { id: string; version: number; setHash: string }>()
   const documentSetItems = new Map<string, unknown[]>()
 
-  const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+  const query = vi.fn(async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n === 'begin' || n === 'commit' || n === 'rollback') {
       return { rows: [], rowCount: null }
     }
-    if (sql.includes('SELECT uploaded_at FROM raw_blobs')) {
+    if (n.startsWith('select "uploaded_at" from "artifact_blobs"')) {
+      // Drizzle requests array-mode rows for every query that carries field
+      // metadata (`.select()`/`.returning()`) — a plain `{uploaded_at: ...}`
+      // object row maps to nothing, since drizzle reads it positionally.
       const hash = params[0] as string
       const row = blobs.get(hash)
-      return { rows: row ? [{ uploaded_at: row.uploaded_at }] : [], rowCount: row ? 1 : 0 }
+      return { rows: row ? [[row.uploaded_at]] : [], rowCount: row ? 1 : 0 }
     }
-    if (sql.includes('INSERT INTO raw_blobs')) {
+    if (n.startsWith('insert into "artifact_blobs"')) {
       const [hash, s3_key, content_type, byte_size] = params as [string, string, string, number]
       // Mirrors the production ON CONFLICT (content_hash) DO UPDATE SET
       // uploaded_at = null: a re-write always resets uploaded_at, whether
@@ -93,63 +102,59 @@ function makeFakePool() {
       blobs.set(hash, { s3_key, content_type, byte_size, uploaded_at: null })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_captures')) {
-      const [capturedAt, kind, platform, , region, externalId, caseNumber, authority, contentHash, sourceUrl] =
-        params as [
-          string,
-          string,
-          string,
-          string,
-          string | null,
-          string,
-          string | null,
-          string | null,
-          string,
-          string | null,
-        ]
+    if (n.includes('insert into artifact_captures')) {
+      const [capturedAt, kind, platform, externalId, contentHash, sourceUrl] = params as [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string | null,
+      ]
       const key =
         kind === 'auction'
           ? `${kind}|${platform}|${externalId}|${contentHash}`
           : `${kind}|${platform}|${externalId}|${sourceUrl ?? ''}|${contentHash}`
-      captures.set(key, { capturedAt, region, caseNumber, authority, contentHash, sourceUrl })
+      captures.set(key, { capturedAt, contentHash, sourceUrl })
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('SELECT id, version') && sql.includes('FROM raw_document_sets')) {
+    if (n.startsWith('select "id", "version" from "artifact_versions"')) {
       const [platform, externalId, setHash] = params as [string, string, string]
       const row = documentSets.get(`${platform}|${externalId}|${setHash}`)
-      return { rows: row ? [{ id: row.id, version: row.version }] : [], rowCount: row ? 1 : 0 }
+      return { rows: row ? [[row.id, row.version]] : [], rowCount: row ? 1 : 0 }
     }
-    if (sql.includes('UPDATE raw_document_sets')) {
+    if (n.startsWith('update "artifact_versions"')) {
       return { rows: [], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_document_sets')) {
-      const [, platform, , , externalId, , , setHash] = params as [
-        string,
-        string,
-        string,
-        string | null,
-        string,
-        string | null,
-        string | null,
-        string,
-        number,
-      ]
+    if (n.includes('into "artifact_versions" (')) {
+      // values (default, $1 captured_at, $2 last_seen_at, $3 platform,
+      // $4 external_id, $5 set_hash, $6/$7 platform/external_id again
+      // (the coalesce(max(version)+1) subquery), $8 document_count).
+      const [, , platform, externalId, setHash] = params as [string, string, string, string, string]
       const identityPrefix = `${platform}|${externalId}|`
       const version = [...documentSets.keys()].filter((key) => key.startsWith(identityPrefix)).length + 1
       const id = String(documentSets.size + 1)
       documentSets.set(`${platform}|${externalId}|${setHash}`, { id, version, setHash })
-      return { rows: [{ id, version }], rowCount: 1 }
+      return { rows: [[id, version]], rowCount: 1 }
     }
-    if (sql.includes('INSERT INTO raw_document_set_items')) {
+    if (n.includes('into "artifact_version_items"')) {
       documentSetItems.set(String(params[0]), params)
       return { rows: [], rowCount: 1 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   })
 
-  const connect = vi.fn(async () => ({ query, release: vi.fn() }))
+  // drizzle's transaction() (used by archiveDocumentSet's insert path) only
+  // checks out its own connection when the client it wraps looks like a
+  // `pg.Pool` — it tests `instanceof Pool` or a constructor name containing
+  // "Pool" — so the mock needs a named constructor to take that branch.
+  function MockPool() {}
+  const pgPool = Object.assign(new (MockPool as unknown as new () => object)(), {
+    query,
+    connect: vi.fn(async () => ({ query, release: vi.fn() })),
+  })
 
-  return { blobs, captures, documentSets, documentSetItems, query, connect }
+  return { blobs, captures, documentSets, documentSetItems, query, pool: drizzle(pgPool as never) }
 }
 
 describe('canonicalizeAuction', () => {
@@ -233,13 +238,13 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
   })
 
   it('archiveBlob no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     const hash = await archiveBlob(Buffer.from('{}'), 'application/json', 'de')
     expect(hash).toBeNull()
   })
 
   it('recordCapture no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     await expect(
       recordCapture({
         capturedAt: '2026-07-19T00:00:00.000Z',
@@ -254,7 +259,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveBlob dedups a *confirmed-uploaded* blob (no rewrite)', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const bytes = Buffer.from(JSON.stringify({ a: 1 }))
     const first = await archiveBlob(bytes, 'application/json', 'de')
@@ -265,7 +270,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(second).toBe(first)
     expect(pool.blobs.size).toBe(1)
     // The confirmed-upload check short-circuits the second call — no redundant write.
-    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
+    const insertCalls = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('insert into "artifact_blobs"'))
     expect(insertCalls).toHaveLength(1)
   })
 
@@ -277,7 +282,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     // permanently skip writing the outbox file, so any future capture
     // hash-matching that row would never actually be retrievable.
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const bytes = Buffer.from(JSON.stringify({ a: 1 }))
     const first = await archiveBlob(bytes, 'application/json', 'de')
@@ -285,7 +290,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
     expect(second).toBe(first)
     expect(pool.blobs.size).toBe(1)
-    const insertCalls = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_blobs'))
+    const insertCalls = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('insert into "artifact_blobs"'))
     expect(insertCalls).toHaveLength(2)
     // The outbox file is present and intact either way.
     const row = pool.blobs.get(first!)!
@@ -295,7 +300,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveBlob gzips JSON content in the outbox', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const original = Buffer.from(JSON.stringify({ hello: 'world' }))
     const hash = await archiveBlob(original, 'application/json', 'de')
@@ -307,7 +312,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('recordCapture is change-only: identical content_hash inserts nothing new', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const base = {
       kind: 'auction' as const,
@@ -327,7 +332,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('recordCapture refreshes metadata even when the content_hash is unchanged', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const base = {
       kind: 'document' as const,
@@ -336,18 +341,17 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       externalId: '1',
       contentHash: 'hash-a',
     }
-    // The PDF itself never changes — only the auction's region gets
-    // corrected upstream between the two captures.
-    await recordCapture({ ...base, capturedAt: '2026-07-01T00:00:00.000Z', region: null })
-    await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z', region: 'Hamburg' })
+    // The PDF itself never changes — it is simply re-seen on a later run.
+    await recordCapture({ ...base, capturedAt: '2026-07-01T00:00:00.000Z' })
+    await recordCapture({ ...base, capturedAt: '2026-07-20T00:00:00.000Z' })
 
     expect(pool.captures.size).toBe(1) // no duplicate row
-    expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({ region: 'Hamburg', capturedAt: '2026-07-20T00:00:00.000Z' })
+    expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({ capturedAt: '2026-07-20T00:00:00.000Z' })
   })
 
   it('recordCapture keeps separate document source URLs for the same auction', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const base = {
       kind: 'document' as const,
@@ -374,7 +378,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('recordCapture appends a new version when the content_hash changes', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const base = {
       kind: 'auction' as const,
@@ -398,7 +402,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('recordCapture preserves updated document content while deduping repeated hashes', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const base = {
       kind: 'document' as const,
@@ -406,34 +410,28 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       country: 'de',
       externalId: '1',
     }
-    // Same PDF captured while the auction was still assigned to the wrong region…
     await recordCapture({
       ...base,
       capturedAt: '2026-07-01T00:00:00.000Z',
       contentHash: 'hash-a',
-      region: null,
     })
     // …content genuinely changes for a while…
     await recordCapture({
       ...base,
       capturedAt: '2026-07-10T00:00:00.000Z',
       contentHash: 'hash-b',
-      region: null,
     })
-    // …then reverts to the original bytes after the region got corrected. The
-    // logical document slot is updated in place instead of preserving all
-    // intermediate captures.
+    // …then reverts to the original bytes. The logical document slot is
+    // updated in place instead of preserving all intermediate captures.
     await recordCapture({
       ...base,
       capturedAt: '2026-07-20T00:00:00.000Z',
       contentHash: 'hash-a',
-      region: 'Hamburg',
     })
 
     expect(pool.captures.size).toBe(2)
     expect(pool.captures.get('document|test|1||hash-a')).toMatchObject({
       contentHash: 'hash-a',
-      region: 'Hamburg',
       capturedAt: '2026-07-20T00:00:00.000Z',
     })
     expect(pool.captures.get('document|test|1||hash-b')).toMatchObject({ contentHash: 'hash-b' })
@@ -441,7 +439,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveAuction: a second run with no real change produces no new blob or capture row', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     await archiveAuction(auction({ detailFetchedAt: '2026-07-19T00:00:00.000Z' }), '2026-07-19T00:00:00.000Z')
     await archiveAuction(auction({ detailFetchedAt: '2026-07-20T12:00:00.000Z' }), '2026-07-20T12:00:00.000Z')
@@ -456,7 +454,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveAuction: enrichment (new description) produces a new blob and capture', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     await archiveAuction(auction(), '2026-07-19T00:00:00.000Z')
     await archiveAuction(
@@ -475,26 +473,29 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
       contentHash: secondHash,
       capturedAt: '2026-07-19T00:05:00.000Z',
     })
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(2)
   })
 
-  it('archiveAuction persists region directly on the capture row', async () => {
+  it('archiveAuction stores identity by (platform, external_id) only, not denormalized columns', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     await archiveAuction(auction({ region: 'Sachsen-Anhalt' }), '2026-07-19T00:00:00.000Z')
 
-    const [insertSql, insertParams] = pool.query.mock.calls.find(([sql]) =>
-      sql.includes('INSERT INTO raw_captures'),
+    const [insertQuery, insertParams] = pool.query.mock.calls.find((call) =>
+      queryText(call[0]).includes('INSERT INTO artifact_captures'),
     )!
-    expect(insertSql).toContain('region')
-    expect(insertParams![4]).toBe('Sachsen-Anhalt')
+    for (const column of ['country', 'region', 'case_number', 'authority']) {
+      expect(queryText(insertQuery)).not.toContain(column)
+    }
+    expect(insertParams![2]).toBe('test') // platform
+    expect(insertParams![3]).toBe('42') // external_id
   })
 
   it('archiveDocument: same PDF referenced by two auctions dedups the blob but captures both', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const pdfBytes = Buffer.from('%PDF-1.4 fake appraisal bytes')
     await archiveDocument(
@@ -524,16 +525,16 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const row = [...pool.blobs.values()][0]!
     expect(row.content_type).toBe('application/pdf') // raw, not gzipped
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(2)
     expect(captureInserts[0]![1]).toContain('document')
-    expect(captureInserts[0]![1]![4]).toBe('Sachsen') // region forwarded from DocumentIdentity
-    expect(captureInserts[1]![1]![4]).toBeNull() // omitted region -> null, not undefined/crash
+    expect(captureInserts[0]![1]![3]).toBe('1') // external_id
+    expect(captureInserts[1]![1]![3]).toBe('2')
   })
 
   it('archivePhotoBlob: roundtrips bytes into a photo capture without a sourceUrl', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const photoBytes = Buffer.from('fake jpeg bytes')
     const hash = await archivePhotoBlob(
@@ -550,15 +551,15 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const stored = await readFile(join(outboxDir, row.s3_key))
     expect(stored).toEqual(photoBytes)
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(1)
     expect(captureInserts[0]![1]).toContain('photo')
-    expect(captureInserts[0]![1]![9]).toBeNull() // no sourceUrl for photos
+    expect(captureInserts[0]![1]![5]).toBeNull() // no sourceUrl for photos
   })
 
   it('archivePhotoBlob: the same photo bytes referenced by two auctions dedup the blob but capture both', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const photoBytes = Buffer.from('shared jpeg bytes')
     await archivePhotoBlob(photoBytes, 'image/jpeg', { platform: 'test', country: 'de', externalId: '1' }, '2026-07-19T00:00:00.000Z')
@@ -569,7 +570,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
   })
 
   it('archivePhotoBlob no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     await expect(
       archivePhotoBlob(
         Buffer.from('fake jpeg bytes'),
@@ -582,7 +583,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveDocumentText: gzips the text and records a document_text capture', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     await archiveDocumentText(
       'Gutachten-Volltext ...',
@@ -597,14 +598,14 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     const stored = await readFile(join(outboxDir, row.s3_key))
     expect(gunzipSync(stored).toString('utf8')).toBe('Gutachten-Volltext ...')
 
-    const captureInserts = pool.query.mock.calls.filter(([sql]) => sql.includes('INSERT INTO raw_captures'))
+    const captureInserts = pool.query.mock.calls.filter((call) => queryText(call[0]).includes('INSERT INTO artifact_captures'))
     expect(captureInserts).toHaveLength(1)
     expect(captureInserts[0]![1]).toContain('document_text')
   })
 
   it('archiveDocumentSet reuses the same version for an unchanged document set', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const identity = { platform: 'test', country: 'de', externalId: '1' }
     const documents = [
@@ -628,9 +629,48 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
     expect(pool.documentSets.size).toBe(1)
   })
 
+  it('archiveDocumentSet adopts the winner when a concurrent writer takes the version', async () => {
+    const pool = makeFakePool()
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
+    const insertRow = pool.query.getMockImplementation()!
+    let raised = false
+    pool.query.mockImplementation(async (queryArg: unknown, params: unknown[] = []) => {
+      const n = queryText(queryArg).replace(/\s+/g, ' ').trim().toLowerCase()
+      if (!raised && n.includes('into "artifact_versions" (')) {
+        raised = true
+        // The concurrent transaction committed this exact set first; ours then
+        // loses the unique index. The rejection is a bare pg error — Drizzle
+        // wraps it in a DrizzleQueryError on the way out, which is why the
+        // 23505 check has to look at the cause.
+        await insertRow(queryArg, params)
+        throw Object.assign(new Error('duplicate key value violates unique constraint'), { code: '23505' })
+      }
+      return insertRow(queryArg, params)
+    })
+
+    const result = await archiveDocumentSet(
+      { platform: 'test', country: 'de', externalId: '1' },
+      [{
+        ordinal: 0,
+        kind: 'document',
+        label: 'Gutachten',
+        filename: 'gutachten.pdf',
+        fileId: 'a',
+        sourceUrl: 'https://example.test/gutachten.pdf',
+        contentHash: 'hash-a',
+        contentType: 'application/pdf',
+      }],
+      '2026-07-19T00:00:00.000Z',
+    )
+
+    expect(raised).toBe(true)
+    expect(result).toMatchObject({ version: 1, changed: false })
+    expect(pool.documentSets.size).toBe(1)
+  })
+
   it('archiveDocumentSet treats pure document reordering as unchanged', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const identity = { platform: 'test', country: 'de', externalId: '1' }
     const first = await archiveDocumentSet(
@@ -692,7 +732,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
 
   it('archiveDocumentSet creates a new version when the valid document set changes', async () => {
     const pool = makeFakePool()
-    vi.mocked(getPool).mockReturnValue(pool as never)
+    vi.mocked(getDb).mockReturnValue(pool.pool as never)
 
     const identity = { platform: 'test', country: 'de', externalId: '1' }
     const first = await archiveDocumentSet(
@@ -754,7 +794,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
   })
 
   it('archiveDocumentText no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     await expect(
       archiveDocumentText(
         'text',
@@ -766,7 +806,7 @@ describe('archiveBlob / recordCapture / archiveAuction (DB mocked)', () => {
   })
 
   it('archiveDocument no-ops without a DB pool', async () => {
-    vi.mocked(getPool).mockReturnValue(null)
+    vi.mocked(getDb).mockReturnValue(null)
     await expect(
       archiveDocument(
         Buffer.from('%PDF-1.4'),

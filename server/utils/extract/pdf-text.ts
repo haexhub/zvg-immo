@@ -4,7 +4,7 @@
 //
 // Attachment URLs differ by platform. ZVG Portal uses an absolute source URL
 // that needs a specific Referer, while AT, zvbawü and Biddit are directly
-// fetchable. resolveSource also understands legacy persisted proxy strings
+// fetchable. resolveAttachmentSource also understands legacy persisted proxy strings
 // during the database transition; they are never exposed by public APIs.
 
 import { execFile } from 'node:child_process'
@@ -14,12 +14,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import type { Attachment } from '~/types/auction'
+import { BASE_URL as DGA_AG_BASE_URL } from '~/server/crawlers/dga-ag/constants'
+import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
 import { UA, ZVG_BASE } from '~/server/crawlers/zvg-portal/constants'
 import { archiveDocument, archiveDocumentText, type DocumentIdentity } from '../raw-archive'
+import { fetchPublicUrl } from './public-fetch'
 
 const exec = promisify(execFile)
 const CACHE_DIR = join(process.cwd(), '.cache_zvg', 'pdftext')
 const MAX_PDF_BYTES = 50 * 1024 * 1024
+const PDF_ACCEPT = 'application/pdf,*/*'
 
 /** Attachment kinds whose PDF most likely carries the size/type facts, best first. */
 const PDF_KIND_PRIORITY = ['appraisal', 'brochure', 'announcement', 'other'] as const
@@ -80,42 +84,59 @@ export function pickAllPdfs(attachments: Attachment[]): Attachment[] {
   return out
 }
 
-function resolveSource(proxyUrl: string): { url: string; headers: Record<string, string> } {
+/**
+ * Turn a persisted attachment `proxyUrl` into the upstream URL and headers
+ * that fetch it. Shared by every attachment download (PDF text, live LLM
+ * documents, document photos) so the per-portal rules live in one place.
+ */
+export async function resolveAttachmentSource(
+  proxyUrl: string,
+  accept: string,
+): Promise<{ url: string; headers: Record<string, string> }> {
+  const zvgHeaders = { 'User-Agent': UA, Accept: accept, Referer: `${ZVG_BASE}/index.php?button=Suchen` }
   if (proxyUrl.startsWith('/api/zvg-proxy')) {
     const q = new URLSearchParams(proxyUrl.split('?')[1] ?? '')
-    const url = `${ZVG_BASE}/index.php?button=showAnhang&land_abk=${q.get('land_abk')}&file_id=${q.get('file_id')}&zvg_id=${q.get('zvg_id')}`
-    return { url, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` } }
+    const params = new URLSearchParams({
+      button: 'showAnhang',
+      land_abk: q.get('land_abk') ?? '',
+      file_id: q.get('file_id') ?? '',
+      zvg_id: q.get('zvg_id') ?? '',
+    })
+    return { url: `${ZVG_BASE}/index.php?${params}`, headers: zvgHeaders }
   }
-  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) {
-    return {
-      url: proxyUrl,
-      headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*', Referer: `${ZVG_BASE}/index.php?button=Suchen` },
-    }
+  if (proxyUrl.startsWith(`${ZVG_BASE}/`)) return { url: proxyUrl, headers: zvgHeaders }
+  // dga-ag.de's per-object "Objektunterlagen" PDF (detail.ts) sits behind the
+  // same felogin session that unlocked it on the detail page — the signed
+  // URL's own JWT alone is not enough (verified live: it 302s to /login.html
+  // without this cookie).
+  if (proxyUrl.startsWith(`${DGA_AG_BASE_URL}/securedl/`)) {
+    const cookie = await getDgaAgSessionCookie()
+    return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept, ...(cookie ? { Cookie: cookie } : {}) } }
   }
-  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: 'application/pdf,*/*' } }
+  return { url: proxyUrl, headers: { 'User-Agent': UA, Accept: accept } }
 }
 
-/**
- * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
- * (network error, non-200, non-PDF response).
- */
-export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
-  const { url, headers } = resolveSource(proxyUrl)
+async function fetchPdfBufferAttempt(
+  url: string,
+  headers: Record<string, string>,
+): Promise<{ buf: Buffer | null; finalUrl: string | null }> {
   let buf: Buffer
+  let finalUrl: string | null = null
   try {
     // Bound the fetch: a slow upstream would otherwise hang both text and
     // photo extraction (the enrich task uses Promise.all across workers, so
     // one stuck request stalls the whole run).
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) })
-    if (!res.ok) return null
+    const res = await fetchPublicUrl(url, { headers, signal: AbortSignal.timeout(30_000) })
+    finalUrl = res.url || null
+    if (!res.ok) return { buf: null, finalUrl }
     const contentLength = Number(res.headers.get('content-length') ?? '')
     if (Number.isFinite(contentLength) && contentLength > MAX_PDF_BYTES) {
       await res.body?.cancel().catch(() => undefined)
-      return null
+      return { buf: null, finalUrl }
     }
     if (!res.body) {
       buf = Buffer.from(await res.arrayBuffer())
-      if (buf.length > MAX_PDF_BYTES) return null
+      if (buf.length > MAX_PDF_BYTES) return { buf: null, finalUrl }
     } else {
       const reader = res.body.getReader()
       const chunks: Uint8Array[] = []
@@ -126,17 +147,31 @@ export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
         total += value.byteLength
         if (total > MAX_PDF_BYTES) {
           await reader.cancel().catch(() => undefined)
-          return null
+          return { buf: null, finalUrl }
         }
         chunks.push(value)
       }
       buf = Buffer.concat(chunks, total)
     }
   } catch {
-    return null
+    return { buf: null, finalUrl }
   }
-  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return null
-  return buf
+  if (!buf.subarray(0, 5).toString('ascii').startsWith('%PDF-')) return { buf: null, finalUrl }
+  return { buf, finalUrl }
+}
+
+/**
+ * Fetch the PDF at `proxyUrl` and return its bytes, or null on any failure
+ * (network error, non-200, non-PDF response). Retries once with a freshly
+ * forced dga-ag session if the first attempt lands on the login page.
+ */
+export async function fetchPdfBuffer(proxyUrl: string): Promise<Buffer | null> {
+  const { url, headers } = await resolveAttachmentSource(proxyUrl, PDF_ACCEPT)
+  const first = await fetchPdfBufferAttempt(url, headers)
+  if (first.buf || !isDgaAgLoginRedirect(proxyUrl, first.finalUrl)) return first.buf
+  await getDgaAgSessionCookie({ forceRefresh: true })
+  const retry = await resolveAttachmentSource(proxyUrl, PDF_ACCEPT)
+  return (await fetchPdfBufferAttempt(retry.url, retry.headers)).buf
 }
 
 /**
@@ -173,14 +208,19 @@ const CJK_CID_ENCODING_RE = /RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC/i
 /**
  * Whether this PDF's fonts look trustworthy, i.e. none uses a CJK CID
  * encoding — a strong signal that its text layer is bogus (see
- * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") so a
- * missing/erroring `pdffonts` never makes extraction worse than before this
- * check existed.
+ * CJK_CID_ENCODING_RE above). Fails open (true = "trust the text") when
+ * `pdffonts` cannot inspect the file, while still rejecting an explicit CJK
+ * encoding marker present in the raw font dictionary.
  */
 export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
   const dir = await mkdtemp(join(tmpdir(), 'zvg-pdffonts-'))
   const inputPath = join(dir, 'in.pdf')
   try {
+    // Check the raw dictionary first as a fallback for Poppler versions that
+    // accept the file but omit a malformed font from their output table.
+    if (/\/Encoding\s*\/[^\s/]*(?:RKSJ|UniGB|UniCNS|UniJIS|UniKS|EUC-|KSC)/i.test(buf.toString('latin1'))) {
+      return false
+    }
     await writeFile(inputPath, buf)
     const { stdout } = await exec('pdffonts', [inputPath], {
       timeout: 30_000,
@@ -194,6 +234,8 @@ export async function pdfHasTrustworthyEncoding(buf: Buffer): Promise<boolean> {
       // width tail columns from the end rather than indexing from the start.
       .some((line) => CJK_CID_ENCODING_RE.test(line.trim().split(/\s+/).at(-6) ?? ''))
   } catch {
+    // Keep the historical fail-open behavior for files without an explicit
+    // CJK marker when Poppler cannot inspect them.
     return true
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -233,13 +275,16 @@ export async function pdfToText(
   if (archive && stdout.trim()) {
     await archiveDocumentText(stdout, archive.identity, proxyUrl, archive.capturedAt)
   }
+  const tmp = `${cachePath}.${randomUUID()}.tmp`
   try {
     await mkdir(CACHE_DIR, { recursive: true })
-    const tmp = `${cachePath}.${randomUUID()}.tmp`
     await writeFile(tmp, stdout)
     await rename(tmp, cachePath)
-    return stdout
-  } catch {
-    return null
+  } catch (err) {
+    // Cache failures (full volume, read-only FS) must not turn a successful
+    // extraction into a failed one.
+    console.warn(`[extract/pdf-text] text cache write failed: ${(err as Error).message}`)
+    await rm(tmp, { force: true }).catch(() => undefined)
   }
+  return stdout
 }

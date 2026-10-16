@@ -38,6 +38,7 @@ describe('/api/settings/archive/cases', () => {
         lastCapturedAt: '2026-07-27T07:30:12.000Z',
       },
     ])
-    expect(query.mock.calls[0]?.[0]).toContain("WHERE country = $1 AND kind = 'auction'")
+    expect(query.mock.calls[0]?.[0]).toContain("WHERE a.country = $1 AND rc.kind = 'auction'")
+    expect(query.mock.calls[0]?.[0]).toContain('JOIN auctions a')
   })
 })

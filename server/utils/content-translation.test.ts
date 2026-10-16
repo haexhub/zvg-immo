@@ -146,8 +146,8 @@ function makeFakeAuctionTranslationPool() {
 
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
     if (sql.includes('INSERT INTO auction_translations')) {
-      const [platform, externalId, lang] = params as [string, string, string, string, string]
-      const key = `${platform}:${externalId}:${lang}`
+      const [platform, externalId, version, lang] = params as [string, string, number, string, string]
+      const key = `${platform}:${externalId}:${version}:${lang}`
       const truncated = sql.includes("date_trunc('milliseconds', now())")
       const startedAtMs = Date.now()
       rows.set(key, {
@@ -160,8 +160,8 @@ function makeFakeAuctionTranslationPool() {
       return { rows: [{ startedAt: new Date(startedAtMs) }] }
     }
     if (sql.includes("status = 'completed'")) {
-      const [platform, externalId, lang, startedAt, title] = params as [string, string, string, Date, string]
-      const key = `${platform}:${externalId}:${lang}`
+      const [platform, externalId, version, lang, startedAt, title] = params as [string, string, number, string, Date, string]
+      const key = `${platform}:${externalId}:${version}:${lang}`
       const row = rows.get(key)
       const matches =
         row?.status === 'pending' && !row.startedAtHasMicroRemainder && row.startedAtMs === startedAt.getTime()
@@ -172,8 +172,8 @@ function makeFakeAuctionTranslationPool() {
       return { rowCount: matches ? 1 : 0 }
     }
     if (sql.includes("status = 'failed'")) {
-      const [platform, externalId, lang, startedAt, errorMessage] = params as [string, string, string, Date, string]
-      const key = `${platform}:${externalId}:${lang}`
+      const [platform, externalId, version, lang, startedAt, errorMessage] = params as [string, string, number, string, Date, string]
+      const key = `${platform}:${externalId}:${version}:${lang}`
       const row = rows.get(key)
       const matches =
         row?.status === 'pending' && !row.startedAtHasMicroRemainder && row.startedAtMs === startedAt.getTime()
@@ -193,25 +193,25 @@ describe('claimAuctionTranslation / completeAuctionTranslation / failAuctionTran
   it('a claim can be completed — started_at survives the Postgres round trip', async () => {
     const pool = makeFakeAuctionTranslationPool()
     const db = { query: pool.query } as Pool
-    const claim = await claimAuctionTranslation(db, 'se-kronofogden', '101735', 'de', 'hash-a')
+    const claim = await claimAuctionTranslation(db, 'se-kronofogden', '101735', 1, 'de', 'hash-a')
     expect(claim).not.toBeNull()
-    await completeAuctionTranslation(db, 'se-kronofogden', '101735', 'de', claim!, {
+    await completeAuctionTranslation(db, 'se-kronofogden', '101735', 1, 'de', claim!, {
       title: 'Translated title',
       address: null,
       description: null,
       documentSummary: null,
       extractionTexts: null,
     })
-    expect(pool.rows.get('se-kronofogden:101735:de')?.status).toBe('completed')
+    expect(pool.rows.get('se-kronofogden:101735:1:de')?.status).toBe('completed')
   })
 
   it('a claim can be failed — started_at survives the Postgres round trip', async () => {
     const pool = makeFakeAuctionTranslationPool()
     const db = { query: pool.query } as Pool
-    const claim = await claimAuctionTranslation(db, 'bg-zapori', '3500', 'de', 'hash-b')
+    const claim = await claimAuctionTranslation(db, 'bg-zapori', '3500', 2, 'de', 'hash-b')
     expect(claim).not.toBeNull()
-    await failAuctionTranslation(db, 'bg-zapori', '3500', 'de', claim!, 'LLM ist nicht konfiguriert', null)
-    const row = pool.rows.get('bg-zapori:3500:de')
+    await failAuctionTranslation(db, 'bg-zapori', '3500', 2, 'de', claim!, 'LLM ist nicht konfiguriert', null)
+    const row = pool.rows.get('bg-zapori:3500:2:de')
     expect(row?.status).toBe('failed')
     expect(row?.errorMessage).toBe('LLM ist nicht konfiguriert')
   })

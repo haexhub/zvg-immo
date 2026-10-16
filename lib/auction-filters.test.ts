@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { auctionCategory, filterAuctions, hasCompletedLlmAnalysis, scopeByCountryRegion, type AuctionFilters } from './auction-filters'
 import type { Auction } from '~/types/auction'
+import { defaultAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
 
 function makeAuction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -31,26 +32,8 @@ function makeAuction(overrides: Partial<Auction> = {}): Auction {
 }
 
 const BASE_FILTERS: AuctionFilters = {
-  countries: [],
+  ...defaultAuctionSearchFilters(),
   regionNameKeys: null,
-  search: '',
-  authority: 'all',
-  category: 'all',
-  condition: 'all',
-  features: [],
-  onlyWithPhotos: false,
-  includeCancelled: false,
-  hideRulesOnly: false,
-  priceMin: null,
-  priceMax: null,
-  landMin: null,
-  landMax: null,
-  livMin: null,
-  livMax: null,
-  yearBuiltMin: null,
-  yearBuiltMax: null,
-  renovationYearMin: null,
-  renovationYearMax: null,
 }
 
 describe('scopeByCountryRegion', () => {
@@ -104,6 +87,15 @@ describe('auctionCategory', () => {
 })
 
 describe('filterAuctions', () => {
+  it('honours the browser nearby filter, rejecting auctions outside the requested distance', () => {
+    const filters = { ...BASE_FILTERS, nearLat: 52.52, nearLng: 13.405, nearRadius: 10 }
+    const items = [
+      makeAuction({ externalId: 'berlin', lat: 52.52, lng: 13.405 }),
+      makeAuction({ externalId: 'hamburg', lat: 53.551, lng: 9.993 }),
+      makeAuction({ externalId: 'ungeocoded' }),
+    ]
+    expect(filterAuctions(items, filters).map((auction) => auction.externalId)).toEqual(['berlin'])
+  })
   it('excludes cancelled auctions by default', () => {
     const items = [makeAuction({ externalId: '1', cancelled: true }), makeAuction({ externalId: '2', cancelled: false })]
     expect(filterAuctions(items, BASE_FILTERS).map((a) => a.externalId)).toEqual(['2'])
@@ -131,6 +123,16 @@ describe('filterAuctions', () => {
     ]
     const result = filterAuctions(items, { ...BASE_FILTERS, category: 'garage-stellplatz' })
     expect(result.map((a) => a.externalId)).toEqual(['2'])
+  })
+
+  it('filters by the selected set of source platforms', () => {
+    const items = [
+      makeAuction({ externalId: '1', platform: 'zvg-portal' }),
+      makeAuction({ externalId: '2', platform: 'dga-ag' }),
+      makeAuction({ externalId: '3', platform: 'kronofogden' }),
+    ]
+    const result = filterAuctions(items, { ...BASE_FILTERS, platform: ['zvg-portal', 'dga-ag'] })
+    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
   })
 
   it('filters onlyWithPhotos', () => {
@@ -231,7 +233,7 @@ describe('filterAuctions', () => {
     expect(result.map((a) => a.externalId)).toEqual(['2'])
   })
 
-  it('filters by minimum condition, excluding auctions without a known condition once set', () => {
+  it('filters by the selected set of conditions, excluding auctions without a known condition once set', () => {
     const items = [
       makeAuction({ externalId: '1', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'neuwertig', features: [], at: '' } }),
       makeAuction({ externalId: '2', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: 'gepflegt', features: [], at: '' } }),
@@ -239,8 +241,8 @@ describe('filterAuctions', () => {
       makeAuction({ externalId: '4', extraction: { propertyType: null, landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, source: 'llm', confidence: 'low', condition: null, features: [], at: '' } }),
       makeAuction({ externalId: '5', extraction: null }),
     ]
-    const result = filterAuctions(items, { ...BASE_FILTERS, condition: 'gepflegt' })
-    expect(result.map((a) => a.externalId)).toEqual(['1', '2'])
+    const result = filterAuctions(items, { ...BASE_FILTERS, condition: ['gepflegt', 'baufaellig'] })
+    expect(result.map((a) => a.externalId)).toEqual(['2', '3'])
   })
 
   it('filters by features with OR semantics', () => {

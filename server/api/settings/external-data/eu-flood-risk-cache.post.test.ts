@@ -7,7 +7,7 @@ afterEach(() => {
 })
 
 describe('/api/settings/external-data/eu-flood-risk-cache', () => {
-  it('passes a valid import payload to the task helper', async () => {
+  it('starts the import detached and passes a valid payload without request-chosen paths/URLs', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('readBody', vi.fn(async () => ({
       cachePath: '/cache/eu-flood-risk.geojson',
@@ -33,11 +33,11 @@ describe('/api/settings/external-data/eu-flood-risk-cache', () => {
 
     const handler = (await import('./eu-flood-risk-cache.post')).default as unknown as (event: unknown) => Promise<unknown>
 
-    await expect(handler({})).resolves.toMatchObject({ normalized: 2 })
+    // Detached: awaiting the paginated EEA layer inside the request is what
+    // made this button look like it did nothing.
+    await expect(handler({})).resolves.toEqual({ started: true })
     expect(runTask).toHaveBeenCalledWith('import-eu-flood-risk-cache', {
       payload: {
-        cachePath: '/cache/eu-flood-risk.geojson',
-        serviceUrl: 'https://example.test/MapServer/2',
         sourceVersion: 'flood-v1',
         generatedAt: '2026-07-27T00:00:00.000Z',
         pageSize: 100,

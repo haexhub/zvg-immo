@@ -4,6 +4,8 @@ import {
   checkRateLimit,
   recordFailedAttempt,
   resetRateLimit,
+  SESSION_MAX_AGE_MS,
+  sessionSigningKey,
   signSession,
   timingSafePasswordEqual,
   verifySession,
@@ -12,40 +14,60 @@ import {
 const SECRET = 'x'.repeat(64)
 
 describe('signSession / verifySession', () => {
-  it('round-trips a cookie value', () => {
-    const cookie = signSession(SECRET, 1_700_000_000_000)
-    expect(cookie).toMatch(/^1700000000000\.[0-9a-f]{64}$/)
-    expect(verifySession(SECRET, cookie, 1_699_000_000_000)).toBe(true)
+  const ISSUED = 1_699_000_000_000
+  const EXPIRY = 1_700_000_000_000
+
+  it('round-trips a cookie value and returns the issue time', () => {
+    const cookie = signSession(SECRET, ISSUED, EXPIRY)
+    expect(cookie).toMatch(/^1699000000000\.1700000000000\.[0-9a-f]{64}$/)
+    expect(verifySession(SECRET, cookie, ISSUED + 1)).toBe(ISSUED)
   })
 
   it('rejects an expired cookie', () => {
-    const cookie = signSession(SECRET, 1_700_000_000_000)
-    expect(verifySession(SECRET, cookie, 1_700_000_000_001)).toBe(false)
+    const cookie = signSession(SECRET, ISSUED, EXPIRY)
+    expect(verifySession(SECRET, cookie, EXPIRY + 1)).toBeNull()
   })
 
-  it('rejects tampered expiry', () => {
-    const cookie = signSession(SECRET, 1_700_000_000_000)
-    const [, hmac] = cookie.split('.')
-    const tampered = `1800000000000.${hmac}`
-    expect(verifySession(SECRET, tampered, 1_700_000_000_000)).toBe(false)
+  it('rejects a session older than the absolute max age even if not expired', () => {
+    const cookie = signSession(SECRET, ISSUED, ISSUED + SESSION_MAX_AGE_MS + 60_000)
+    expect(verifySession(SECRET, cookie, ISSUED + SESSION_MAX_AGE_MS - 1)).toBe(ISSUED)
+    expect(verifySession(SECRET, cookie, ISSUED + SESSION_MAX_AGE_MS)).toBeNull()
+  })
+
+  it('rejects tampered timestamps', () => {
+    const cookie = signSession(SECRET, ISSUED, EXPIRY)
+    const [, , hmac] = cookie.split('.')
+    expect(verifySession(SECRET, `${ISSUED}.1800000000000.${hmac}`, ISSUED)).toBeNull()
+    expect(verifySession(SECRET, `${ISSUED + 1000}.${EXPIRY}.${hmac}`, ISSUED + 1000)).toBeNull()
   })
 
   it('rejects tampered hmac', () => {
-    const cookie = signSession(SECRET, 1_700_000_000_000)
-    const [expiry] = cookie.split('.')
-    const tampered = `${expiry}.${'0'.repeat(64)}`
-    expect(verifySession(SECRET, tampered, 1_700_000_000_000)).toBe(false)
+    const tampered = `${ISSUED}.${EXPIRY}.${'0'.repeat(64)}`
+    expect(verifySession(SECRET, tampered, ISSUED)).toBeNull()
   })
 
-  it('rejects a malformed cookie', () => {
-    expect(verifySession(SECRET, 'not-a-cookie', 0)).toBe(false)
-    expect(verifySession(SECRET, '', 0)).toBe(false)
-    expect(verifySession(SECRET, '1700.abc', 0)).toBe(false)
+  it('rejects a malformed or legacy two-part cookie', () => {
+    expect(verifySession(SECRET, 'not-a-cookie', 0)).toBeNull()
+    expect(verifySession(SECRET, '', 0)).toBeNull()
+    expect(verifySession(SECRET, '1700.abc', 0)).toBeNull()
+    expect(verifySession(SECRET, `${EXPIRY}.${'a'.repeat(64)}`, 0)).toBeNull()
   })
 
-  it('rejects when secret differs', () => {
-    const cookie = signSession(SECRET, 1_700_000_000_000)
-    expect(verifySession('y'.repeat(64), cookie, 1_699_000_000_000)).toBe(false)
+  it('rejects when the signing key differs', () => {
+    const cookie = signSession(SECRET, ISSUED, EXPIRY)
+    expect(verifySession('y'.repeat(64), cookie, ISSUED)).toBeNull()
+  })
+
+  it('revokes sessions when the session epoch changes', () => {
+    const cookie = signSession(sessionSigningKey(SECRET, 'pw', 'epoch-1'), ISSUED, EXPIRY)
+    expect(verifySession(sessionSigningKey(SECRET, 'pw', 'epoch-1'), cookie, ISSUED)).toBe(ISSUED)
+    expect(verifySession(sessionSigningKey(SECRET, 'pw', 'epoch-2'), cookie, ISSUED)).toBeNull()
+  })
+
+  it('revokes sessions when the admin password changes', () => {
+    const cookie = signSession(sessionSigningKey(SECRET, 'old-password', ''), ISSUED, EXPIRY)
+    expect(verifySession(sessionSigningKey(SECRET, 'old-password', ''), cookie, ISSUED)).toBe(ISSUED)
+    expect(verifySession(sessionSigningKey(SECRET, 'new-password', ''), cookie, ISSUED)).toBeNull()
   })
 })
 

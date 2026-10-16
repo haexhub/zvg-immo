@@ -96,6 +96,8 @@ describe('runOffloadImages', () => {
     expect(result).toMatchObject({ uploaded: 1, removed: 1, failed: 0 })
     expect(result.freedBytes).toBe('photo-bytes'.length)
     expect(await remaining('42')).toEqual([])
+    // The emptied auction directory goes too, so later runs stop revisiting it.
+    expect(await readdir(join(IMAGES_DIR, PLATFORM))).not.toContain('42')
   })
 
   it('keeps the local file when the upload was not confirmed', async () => {

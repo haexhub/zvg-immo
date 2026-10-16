@@ -2,48 +2,19 @@
 // Anthropic Messages shape as ClaudeProxyProvider, but submits many requests
 // to `/v1/messages/batches` and later consumes the JSONL results stream.
 
-import { createHash } from 'node:crypto'
 import {
   buildParts,
-  clampExtraction,
-  parseExtractionResponse,
-  SYSTEM_PROMPT,
-  UNIVERSAL_AUCTION_SCHEMA,
-  type ClampedExtraction,
   type ContentPart,
   type LlmConfig,
   type LlmInput,
 } from './llm'
+import { clampExtraction } from './llm-clamp'
+import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA } from './llm-schema'
+import { parseClaudeUsage, parseExtractionResponse } from './providers/claude-proxy'
+import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
-import type { PollResult } from './gemini-batch'
-import type { LlmBatchSubmitResult } from './llm-batch'
-
-/** ofetch's FetchError.message is generic ("[POST] "url": 400 Bad Request")
- *  — the actionable text lives in the parsed JSON body ofetch exposes as
- *  `.data`, shaped like `{error:{type,message}}` for Anthropic. */
-function extractOfetchErrorMessage(err: unknown): string {
-  const data = (err as { data?: unknown })?.data as { error?: { message?: unknown } } | undefined
-  if (data?.error && typeof data.error.message === 'string') return data.error.message
-  return err instanceof Error ? err.message : String(err)
-}
-
-/** Timeouts, connection failures and 5xx/429 responses say nothing about
- *  whether this account/model can batch at all — only a durable rejection
- *  (e.g. a 4xx like "model: field required") should ever flip the recorded
- *  capability to broken, or a transient blip could disable batching for
- *  every subsequent run until someone notices and manually re-checks it. */
-function isTransientBatchError(err: unknown): boolean {
-  const status = (err as { status?: unknown; statusCode?: unknown; response?: { status?: unknown } })?.status
-  const statusCode =
-    typeof status === 'number' ? status : (err as { statusCode?: unknown })?.statusCode
-  const responseStatus = (err as { response?: { status?: unknown } })?.response?.status
-  const httpStatus = typeof statusCode === 'number' ? statusCode : typeof responseStatus === 'number' ? responseStatus : undefined
-  if (httpStatus != null && (httpStatus === 429 || httpStatus >= 500)) return true
-  const name = (err as { name?: unknown })?.name
-  if (name === 'AbortError' || name === 'TimeoutError') return true
-  const code = (err as { code?: unknown })?.code ?? (err as { cause?: { code?: unknown } })?.cause?.code
-  return typeof code === 'string' && /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE)$/.test(code)
-}
+import type { PollResult } from './gemini-batch-client'
+import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
 
 type AnthropicContentBlock =
   | { type: 'text'; text: string }
@@ -53,10 +24,6 @@ type AnthropicContentBlock =
 const MAX_ANTHROPIC_BATCH_REQUESTS = 100_000
 const MAX_ANTHROPIC_BATCH_BODY_BYTES = 256 * 1024 * 1024
 const ANTHROPIC_BATCH_BODY_HEADROOM_BYTES = 1024 * 1024
-
-function apiBase(config: LlmConfig): string {
-  return config.baseUrl.replace(/\/$/, '')
-}
 
 function authHeaders(config: LlmConfig): Record<string, string> {
   return config.apiKey ? { 'x-api-key': config.apiKey } : {}
@@ -73,11 +40,6 @@ function toAnthropicContent(parts: ContentPart[]): AnthropicContentBlock[] {
     }
   }
   return blocks
-}
-
-function customIdForKey(key: string, index: number): string {
-  const hash = createHash('sha256').update(key).digest('base64url').slice(0, 18)
-  return `zvg_${index}_${hash}`.slice(0, 64)
 }
 
 function buildRequest(customId: string, input: LlmInput, config: LlmConfig): Record<string, unknown> | null {
@@ -140,6 +102,9 @@ async function submitAnthropicRequestChunk(
     source,
     itemCount: requests.length,
     customIdMap,
+    provider: 'claude-proxy',
+    model: config.model,
+    profileId: config.profileId,
   })
   if (!recorded) {
     console.warn(`[anthropic-batch] failed to record job ${batch.id} — treating submission as failed`)
@@ -250,7 +215,7 @@ export async function fetchAnthropicBatchResults(
   jobName: string,
   config: LlmConfig,
   customIdMap: Record<string, string>,
-): Promise<{ key: string; extraction: ClampedExtraction | null }[]> {
+): Promise<LlmBatchResultItem[]> {
   const text = await $fetch<string>(`${apiBase(config)}/v1/messages/batches/${jobName}/results`, {
     headers: {
       'anthropic-version': '2023-06-01',
@@ -259,11 +224,11 @@ export async function fetchAnthropicBatchResults(
     signal: AbortSignal.timeout(120_000),
     responseType: 'text',
   })
-  const out: { key: string; extraction: ClampedExtraction | null }[] = []
+  const out: LlmBatchResultItem[] = []
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
     if (!trimmed) continue
-    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown } }
+    let parsed: { custom_id?: unknown; result?: { type?: unknown; message?: unknown; error?: { message?: unknown } } }
     try {
       parsed = JSON.parse(trimmed) as typeof parsed
     } catch (err) {
@@ -272,8 +237,17 @@ export async function fetchAnthropicBatchResults(
     }
     if (typeof parsed.custom_id !== 'string') continue
     const key = customIdMap[parsed.custom_id] ?? parsed.custom_id
-    const raw = parsed.result?.type === 'succeeded' ? parseExtractionResponse(parsed.result.message) : null
-    out.push({ key, extraction: raw ? clampExtraction(raw) : null })
+    const succeeded = parsed.result?.type === 'succeeded'
+    const raw = succeeded ? parseExtractionResponse(parsed.result!.message) : null
+    const usage = succeeded ? parseClaudeUsage(parsed.result!.message) : null
+    const extraction = raw ? clampExtraction(raw) : null
+    const error = extraction
+      ? null
+      : (typeof parsed.result?.error?.message === 'string' ? parsed.result.error.message : undefined) ??
+        (typeof parsed.result?.type === 'string' && !succeeded
+          ? `Batch-Ergebnis: ${parsed.result.type}`
+          : 'Keine gültige Extraktion in der Batch-Antwort')
+    out.push({ key, extraction, usage, error })
   }
   return out
 }

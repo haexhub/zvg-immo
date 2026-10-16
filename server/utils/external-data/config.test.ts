@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import {
   configurableExternalDataSources,
@@ -39,8 +39,9 @@ describe('configurableExternalDataSources', () => {
       'copernicus-effis',
       'eea-environmental-noise-directive',
       'eu-flood-risk-areas',
+      'eurostat-regional-tourism-nights',
       'fr-dvf-geolocated',
-      'openstreetmap-overpass',
+      'open-meteo-climate-normals',
     ])
   })
 
@@ -50,35 +51,35 @@ describe('configurableExternalDataSources', () => {
 })
 
 describe('resolveExternalDataSourceConfig', () => {
-  const source = getConfigurableExternalDataSource('openstreetmap-overpass')!
+  const source = getConfigurableExternalDataSource('eea-environmental-noise-directive')!
 
   it('falls back to the field default when neither DB nor env is set', () => {
     const resolved = resolveExternalDataSourceConfig(source, {}, {})
-    expect(resolved.values.endpoint).toBe('')
-    expect(resolved.values.timeoutMs).toBe(120_000)
+    expect(resolved.values.serviceBaseUrl).toBe('')
+    expect(resolved.values.timeoutMs).toBe(10_000)
     expect(resolved.isConfigured).toBe(false)
   })
 
   it('env runtimeConfig wins over the field default', () => {
-    const resolved = resolveExternalDataSourceConfig(source, {}, { osmContextEndpoint: 'https://overpass-api.de/api/interpreter' })
-    expect(resolved.values.endpoint).toBe('https://overpass-api.de/api/interpreter')
+    const resolved = resolveExternalDataSourceConfig(source, {}, { eeaNoiseServiceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap' })
+    expect(resolved.values.serviceBaseUrl).toBe('https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap')
     expect(resolved.isConfigured).toBe(true)
   })
 
   it('a DB override wins over env runtimeConfig', () => {
     const resolved = resolveExternalDataSourceConfig(
       source,
-      { endpoint: 'https://my-overpass-mirror.example/api/interpreter' },
-      { osmContextEndpoint: 'https://overpass-api.de/api/interpreter' },
+      { serviceBaseUrl: 'https://my-noise-mirror.example/services/noiseStoryMap' },
+      { eeaNoiseServiceBaseUrl: 'https://noise.discomap.eea.europa.eu/arcgis/rest/services/noiseStoryMap' },
     )
-    expect(resolved.values.endpoint).toBe('https://my-overpass-mirror.example/api/interpreter')
+    expect(resolved.values.serviceBaseUrl).toBe('https://my-noise-mirror.example/services/noiseStoryMap')
   })
 })
 
 describe('stored external-data source config (DB round-trip)', () => {
   it('returns {} for a source with nothing stored yet', async () => {
     const db = makeFakePool()
-    expect(await getStoredExternalDataSourceConfig(db, 'openstreetmap-overpass')).toEqual({})
+    expect(await getStoredExternalDataSourceConfig(db, 'eea-environmental-noise-directive')).toEqual({})
   })
 
   it('saves and re-reads a source config, dropping invalid/empty fields', async () => {
@@ -98,9 +99,35 @@ describe('stored external-data source config (DB round-trip)', () => {
 
   it('bulk-reads every configurable source in one call', async () => {
     const db = makeFakePool()
-    await setStoredExternalDataSourceConfig(db, 'fr-dvf-geolocated', { cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
+    await setStoredExternalDataSourceConfig(db, 'fr-dvf-geolocated', { cachePath: '.cache_zvg/external/fr-dvf.json' })
     const all = await getAllStoredExternalDataSourceConfigs(db)
-    expect(all['fr-dvf-geolocated']).toEqual({ cachePath: '/app/.cache_zvg/external/fr-dvf.json' })
-    expect(all['openstreetmap-overpass']).toEqual({})
+    expect(all['fr-dvf-geolocated']).toEqual({ cachePath: '.cache_zvg/external/fr-dvf.json' })
+    expect(all['cams-air-quality']).toEqual({})
+  })
+
+  describe('override confinement', () => {
+    afterEach(() => vi.unstubAllGlobals())
+
+    it.each([
+      ['copernicus-effis', { cachePath: '/etc/cron.d/zvg' }],
+      ['fr-dvf-geolocated', { cachePath: '.cache_zvg/external/../../server/index.mjs' }],
+      ['fr-dvf-geolocated', { cachePath: '.cache_zvg/external' }],
+      ['eea-environmental-noise-directive', { serviceBaseUrl: 'http://noise.discomap.eea.europa.eu/x' }],
+      ['cams-air-quality', { serviceUrl: 'https://169.254.169.254/latest/meta-data' }],
+      ['cams-air-quality', { serviceUrl: 'https://evil-open-meteo.com/v1/air-quality' }],
+    ])('400s %s override %o without storing it', async (sourceId, rawValues) => {
+      vi.stubGlobal('createError', (input: { statusCode: number; statusMessage: string }) => Object.assign(new Error(input.statusMessage), input))
+      const db = makeFakePool()
+      await expect(setStoredExternalDataSourceConfig(db, sourceId, rawValues)).rejects.toMatchObject({ statusCode: 400 })
+      expect(await getStoredExternalDataSourceConfig(db, sourceId)).toEqual({})
+    })
+
+    it('accepts paths inside the cache dir and subdomains of an allowed host', async () => {
+      const db = makeFakePool()
+      expect(await setStoredExternalDataSourceConfig(db, 'copernicus-effis', { cachePath: `${process.cwd()}/.cache_zvg/external/effis.json` }))
+        .toEqual({ cachePath: `${process.cwd()}/.cache_zvg/external/effis.json` })
+      expect(await setStoredExternalDataSourceConfig(db, 'cams-air-quality', { serviceUrl: 'https://customer-air-quality-api.open-meteo.com/v1/air-quality' }))
+        .toEqual({ serviceUrl: 'https://customer-air-quality-api.open-meteo.com/v1/air-quality' })
+    })
   })
 })

@@ -3,11 +3,13 @@
 // delete another user's row.
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
+import { isUuidSegment } from '../../utils/path-segment'
 
 export default defineEventHandler(async (event): Promise<{ ok: true }> => {
   const id = String(event.context.params?.id ?? '')
-  if (!id) {
-    throw createError({ statusCode: 400, statusMessage: 'id fehlt.' })
+  if (!isUuidSegment(id)) {
+    throw createError({ statusCode: 400, statusMessage: 'id fehlt oder ist ungültig.' })
   }
   const supabase = getServiceClient()
   if (!supabase) {
@@ -19,7 +21,7 @@ export default defineEventHandler(async (event): Promise<{ ok: true }> => {
     .eq('id', id)
     .eq('user_id', event.context.user!.id)
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('DELETE /api/watchlist', 500, 'Löschen fehlgeschlagen.', error)
   }
   return { ok: true }
 })

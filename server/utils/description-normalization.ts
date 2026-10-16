@@ -1,4 +1,5 @@
 import type { Auction } from '~/types/auction'
+import { maxOf } from '~/lib/array-math'
 
 function isValidCodePoint(code: number): boolean {
   return Number.isInteger(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
@@ -50,7 +51,7 @@ function isTechnicalJunkLine(line: string): boolean {
   const trimmed = line.trim()
   if (!trimmed) return false
   if (/\b(?:AppRegistry|applicationId|portletId|webAppVersion|requiredLibs|AGNOSTIC_RENDERER)\b/.test(trimmed)) return true
-  const longestToken = Math.max(...trimmed.split(/\s+/).map((token) => token.length))
+  const longestToken = maxOf(trimmed.split(/\s+/).map((token) => token.length))
   if (trimmed.length > 500 && punctuationDensity(trimmed) > 0.08) return true
   return longestToken > 240 && punctuationDensity(trimmed) > 0.05
 }

@@ -26,9 +26,10 @@ function mergeCookies(existing: string, setCookieHeaders: string[]): string {
 /** The list view exposes no clean detail fields (address, dates) — only a
  *  live countdown widget — so pagination here only harvests okids; every
  *  field is scraped from the per-lot detail page instead. */
-async function fetchActiveIds(): Promise<string[]> {
+async function fetchActiveIds(): Promise<{ ids: string[]; complete: boolean }> {
   const seen = new Set<string>()
   let cookies = ''
+  let complete = true
 
   for (let page = 1; page <= MAX_LIST_PAGES; page++) {
     const headers: Record<string, string> = {
@@ -43,8 +44,12 @@ async function fetchActiveIds(): Promise<string[]> {
       signal: AbortSignal.timeout(20_000),
     })
     if (!res.ok) {
-      if (seen.size > 0) break
-      throw new Error(`oksjonikeskus.ee list fetch failed: ${res.status}`)
+      if (seen.size === 0) throw new Error(`oksjonikeskus.ee list fetch failed: ${res.status}`)
+      // Keep the pages already harvested, but the lots on the remaining pages
+      // are missing — the run must not read as complete.
+      console.warn(`[oksjonikeskus] list page ${page} failed: HTTP ${res.status}`)
+      complete = false
+      break
     }
     const setCookie = res.headers.getSetCookie?.() ?? []
     if (setCookie.length > 0) cookies = mergeCookies(cookies, setCookie)
@@ -56,7 +61,7 @@ async function fetchActiveIds(): Promise<string[]> {
     if (seen.size === before) break
   }
 
-  return [...seen]
+  return { ids: [...seen], complete }
 }
 
 function extractInfoTable($: ReturnType<typeof load>): Map<string, string> {
@@ -153,11 +158,12 @@ export function mapDetail(id: string, html: string, platformId: string): Auction
 
 export async function fetchAllListings(
   platformId: string,
-): Promise<{ auctions: Auction[]; total: number | null }> {
-  const ids = await fetchActiveIds()
-  if (ids.length === 0) return { auctions: [], total: 0 }
+): Promise<{ auctions: Auction[]; total: number | null; complete: boolean }> {
+  const { ids, complete: listComplete } = await fetchActiveIds()
+  if (ids.length === 0) return { auctions: [], total: 0, complete: listComplete }
 
   const htmls: (string | null)[] = new Array(ids.length).fill(null)
+  let failedDetails = 0
   let cursor = 0
   async function worker() {
     while (cursor < ids.length) {
@@ -169,9 +175,17 @@ export async function fetchAllListings(
           headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
           signal: AbortSignal.timeout(20_000),
         })
-        htmls[i] = res.ok ? await res.text() : null
-      } catch {
-        htmls[i] = null
+        // 404/410: the lot was withdrawn after the list page was read — gone,
+        // not missing from this run, so it must not mark the run incomplete.
+        if (res.status === 404 || res.status === 410) {
+          await res.body?.cancel().catch(() => undefined)
+          continue
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        htmls[i] = await res.text()
+      } catch (err) {
+        failedDetails++
+        console.warn(`[oksjonikeskus] detail okid=${id} failed: ${(err as Error).message}`)
       }
     }
   }
@@ -181,5 +195,6 @@ export async function fetchAllListings(
     .map((id, i) => (htmls[i] ? mapDetail(id, htmls[i]!, platformId) : null))
     .filter((a): a is Auction => a !== null)
 
-  return { auctions, total: auctions.length }
+  // A lot whose detail page failed is missing from this run, not gone.
+  return { auctions, total: auctions.length, complete: listComplete && failedDetails === 0 }
 }

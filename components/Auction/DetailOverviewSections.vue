@@ -22,11 +22,9 @@ import {
   Layers3,
   Mountain,
   ParkingSquare,
-  ShieldAlert,
   ShowerHead,
   TreePine,
   Warehouse,
-  Waves,
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -45,10 +43,17 @@ const props = defineProps<{
 const MARKET_COMPARISON_MIN_SAMPLES = 5
 
 const { t } = useI18n()
-const intlLocale = useIntlLocale()
+const {
+  hazardDetailLine,
+  hazardIcon,
+  hazardLabel,
+  hazardStatusClass,
+  hazardStatusLabel,
+} = useHazardDisplay()
 const attachmentKindLabelFn = useAttachmentKindLabel()
 const conditionLabel = useConditionLabel()
 const featureLabel = useFeatureLabel()
+const propertyTypeLabel = usePropertyTypeLabel()
 const {
   currency,
   formatPrice,
@@ -85,7 +90,7 @@ const FEATURE_ICONS: Partial<Record<Feature, Component>> = {
 const hasPropertyData = computed(() => {
   const e = props.displayExtraction
   if (!e) return false
-  return e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
+  return !!e.propertyType || e.landAreaSqm != null || e.livingAreaSqm != null || e.yearBuilt != null
     || e.lastRenovationYear != null || e.rooms != null || (e.units != null && e.units > 1)
     || e.bedrooms != null || e.bathrooms != null || e.floor != null || pricePerSqm.value != null
     || !!e.condition || !!e.renovationNotes
@@ -180,6 +185,9 @@ function attachmentHref(att: Attachment): string | undefined {
   if (props.auction.platform === 'bg-zapori') {
     return `/api/bg-zapori-document/${encodeURIComponent(props.auction.externalId)}/${encodeURIComponent(att.fileId)}`
   }
+  if (props.auction.platform === 'dga-ag' && att.kind === 'appraisal') {
+    return `/api/dga-ag-document/${encodeURIComponent(props.auction.externalId)}`
+  }
   return safeHref(att.proxyUrl)
 }
 
@@ -193,31 +201,6 @@ function marketVerdictLabel(verdict: string): string {
   return t(`objektDetail.marketVerdict.${verdict}`)
 }
 
-function hazardIcon(hazard: string): Component {
-  if (hazard === 'flood') return Waves
-  if (hazard === 'wildfire') return Flame
-  if (hazard === 'avalanche') return Mountain
-  return ShieldAlert
-}
-
-function hazardLabel(hazard: string): string {
-  return t(`objektDetail.hazard.${hazard}`)
-}
-
-function hazardStatusLabel(status: string): string {
-  return t(`objektDetail.hazardStatus.${status}`)
-}
-
-function hazardSeverityLabel(severity: string): string {
-  return t(`objektDetail.hazardSeverity.${severity}`)
-}
-
-function hazardStatusClass(status: string): string {
-  if (status === 'inside') return 'text-destructive'
-  if (status === 'nearby') return 'text-amber-700'
-  if (status === 'outside') return 'text-emerald-700'
-  return 'text-muted-foreground'
-}
 </script>
 
 <template>
@@ -256,6 +239,14 @@ function hazardStatusClass(status: string): string {
       <div>
         <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.caseNumber') }}</dt>
         <dd class="text-sm font-mono">{{ auction.caseNumber }}</dd>
+      </div>
+      <div v-if="auction.sourcePlatform">
+        <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.source') }}</dt>
+        <dd class="text-sm font-medium">
+          <a :href="safeHref(auction.sourcePlatform.url)" target="_blank" rel="noopener" class="underline underline-offset-2 hover:text-foreground">
+            {{ auction.sourcePlatform.name }}
+          </a>
+        </dd>
       </div>
     </dl>
     <p v-if="displayExtraction?.biddingNotes" class="mt-4 text-xs text-muted-foreground">
@@ -313,6 +304,10 @@ function hazardStatusClass(status: string): string {
       <TranslationPendingBadge />
     </template>
     <dl class="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+      <div v-if="displayExtraction?.propertyType">
+        <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.propertyType') }}</dt>
+        <dd class="text-sm font-medium">{{ propertyTypeLabel(displayExtraction.propertyType) }}</dd>
+      </div>
       <div v-if="displayExtraction?.landAreaSqm != null">
         <dt class="text-xs uppercase tracking-wide text-muted-foreground">{{ $t('objektDetail.landArea') }}</dt>
         <dd class="text-sm font-medium tabular-nums">{{ formatArea(displayExtraction.landAreaSqm) }}</dd>
@@ -359,10 +354,7 @@ function hazardStatusClass(status: string): string {
         <dd class="text-sm font-medium">{{ conditionLabel(displayExtraction.condition) }}</dd>
       </div>
     </dl>
-    <p v-if="displayExtraction?.source === 'llm'" class="mt-4 text-xs text-muted-foreground">
-      {{ $t('objektDetail.extractionNotice', { confidence: displayExtraction.confidence === 'high' ? $t('objektDetail.confidenceHigh') : $t('objektDetail.confidenceLow') }) }}
-    </p>
-    <p v-if="displayExtraction?.renovationNotes" class="mt-1 text-xs text-muted-foreground">
+    <p v-if="displayExtraction?.renovationNotes" class="mt-4 text-xs text-muted-foreground">
       {{ $t('objektDetail.renovationNotes', { note: displayExtraction.renovationNotes }) }}
     </p>
   </DetailSectionCard>
@@ -452,11 +444,8 @@ function hazardStatusClass(status: string): string {
               {{ hazardStatusLabel(hazard.status) }}
             </p>
           </div>
-          <p class="mt-1 text-xs text-muted-foreground">
-            {{ $t('objektDetail.hazardSeverityLabel') }} {{ hazardSeverityLabel(hazard.severity) }}
-            <span v-if="hazard.distanceMeters != null">
-              · {{ $t('objektDetail.hazardDistance', { meters: hazard.distanceMeters.toLocaleString(intlLocale, { maximumFractionDigits: 0 }) }) }}
-            </span>
+          <p v-if="hazardDetailLine(hazard)" class="mt-1 text-xs text-muted-foreground">
+            {{ hazardDetailLine(hazard) }}
           </p>
           <p class="mt-1 text-xs text-muted-foreground">
             {{ $t('objektDetail.sourceChecked', { source: hazard.sourceLabel, date: formatShortDate(hazard.checkedAt) }) }}

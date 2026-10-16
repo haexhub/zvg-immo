@@ -4,12 +4,38 @@
 // until the Claude path is retired in favor of OpenAiCompatibleProvider/
 // GeminiNativeProvider.
 
-import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig } from '../llm'
-import { isRateLimitError, LlmProviderError, parseExtractionResponse } from '../llm'
+import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
+import {
+  isRateLimitError,
+  isTransientRequestError,
+  LlmProviderError,
+  TRANSIENT_RETRY_DELAYS_MS,
+} from '../llm-errors'
 
 type ClaudeContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** Pull the structured object out of the proxy's `final_result` tool_use block. */
+export function parseExtractionResponse(resp: unknown): Record<string, unknown> | null {
+  if (!resp || typeof resp !== 'object') return null
+  const content = (resp as { content?: unknown }).content
+  if (!Array.isArray(content)) return null
+  const block = content.find(
+    (c): c is { input: unknown } =>
+      !!c && typeof c === 'object' && (c as { type?: unknown }).type === 'tool_use' &&
+      (c as { name?: unknown }).name === 'final_result',
+  )
+  if (!block || typeof block.input !== 'object' || block.input == null) return null
+  return block.input as Record<string, unknown>
+}
+
+// The proxy's OAuth/Claude-CLI path allows large multimodal requests up to
+// 10 minutes. Scanned appraisals can legitimately need several minutes: the
+// production proxy completed one after 288s. Keep the client-side deadline
+// above that backstop, otherwise the app aborts first, kills the proxy's CLI
+// process, and every retry is recorded as a provider failure.
+const CLAUDE_PROXY_REQUEST_TIMEOUT_MS = 11 * 60 * 1000
 
 /** This proxy path forwards only text and image blocks: `document` parts are
  *  intentionally dropped here — the transitional proxy doesn't relay native
@@ -26,12 +52,20 @@ function toClaudeContent(parts: ContentPart[]): ClaudeContentBlock[] {
   return blocks
 }
 
+/** Reads the Anthropic Messages API's `usage.{input_tokens,output_tokens}`. */
+export function parseClaudeUsage(resp: unknown): LlmUsage {
+  const usage = (resp as { usage?: unknown })?.usage as { input_tokens?: unknown; output_tokens?: unknown } | undefined
+  const inputTokens = typeof usage?.input_tokens === 'number' ? usage.input_tokens : null
+  const outputTokens = typeof usage?.output_tokens === 'number' ? usage.output_tokens : null
+  return { inputTokens, outputTokens }
+}
+
 export class ClaudeProxyProvider implements ExtractionProvider {
   constructor(private config: LlmConfig) {}
 
   async extract(
     req: ExtractionRequest,
-    opts?: { onRequestError?: (err: unknown) => void },
+    opts?: { onRequestError?: (err: unknown) => void; onUsage?: (usage: LlmUsage) => void },
   ): Promise<Record<string, unknown> | null> {
     const body = {
       model: this.config.model,
@@ -51,37 +85,66 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       tool_choice: { type: 'tool', name: 'final_result' },
     }
     let resp: unknown
-    try {
-      // Bound the request: the proxy spawns a `claude` subprocess per call, so a
-      // stuck spawn (or upstream stall) would keep this promise pending forever
-      // and — because the enrich task awaits every worker via Promise.all — block
-      // the whole run. 120s (not 60s): observed in prod, the subprocess itself
-      // can take 80s+ to exit even on success, so 60s aborted a call that would
-      // otherwise have succeeded moments later.
-      resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'anthropic-version': '2023-06-01',
-          ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
-        },
-        body,
-        signal: AbortSignal.timeout(120_000),
-      })
-    } catch (err) {
-      // Rethrow a rate limit/quota error instead of swallowing it to null —
-      // see isRateLimitError() — so it isn't counted toward the retry-lockout.
-      if (isRateLimitError(err)) throw err
-      // A caller that passes onRequestError (extractByLlm) wants to keep
-      // batching past a single failed candidate; one that doesn't (e.g.
-      // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-      if (!opts?.onRequestError) throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
-      console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-      opts.onRequestError(err)
+    for (let attempt = 0; ; attempt++) {
+      try {
+        // Bound the request: the proxy spawns a `claude` subprocess per call, so a
+        // stuck spawn (or upstream stall) would keep this promise pending forever
+        // and — because the enrich task awaits every worker via Promise.all — block
+        // the whole run. This is deliberately just above the proxy's 10-minute
+        // subprocess backstop; see CLAUDE_PROXY_REQUEST_TIMEOUT_MS above.
+        resp = await $fetch(`${this.config.baseUrl.replace(/\/$/, '')}/v1/messages`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'anthropic-version': '2023-06-01',
+            ...(this.config.apiKey ? { 'x-api-key': this.config.apiKey } : {}),
+          },
+          body,
+          signal: AbortSignal.timeout(CLAUDE_PROXY_REQUEST_TIMEOUT_MS),
+        })
+        break
+      } catch (err) {
+        // Rethrow a rate limit/quota error instead of swallowing it to null —
+        // see isRateLimitError() — so it isn't counted toward the retry-lockout.
+        if (isRateLimitError(err)) throw err
+        // A transient failure (e.g. OpenRouter's thin-provider-pool 404, "no
+        // endpoint available right now") gets a couple of quick retries on
+        // the same model before giving up — see TRANSIENT_RETRY_DELAYS_MS. A
+        // 400/401/403 will fail identically every time, so skip straight to
+        // giving up instead of paying the retry delay for nothing.
+        // A reprocess call passes onRequestError.  Its prompts can include
+        // multiple rendered document pages and are consequently expensive on
+        // the Claude subscription. Retrying a proxy 5xx/timeout immediately
+        // has repeatedly spent the same input budget three times without a
+        // usable result. Surface that first failure to reprocess instead: it
+        // aborts the run (or tries a configured fallback) without increasing
+        // every auction's llm_failures counter. Lightweight callers that do
+        // not pass the callback retain the short transient retry behaviour.
+        if (!opts?.onRequestError && isTransientRequestError(err) && attempt < TRANSIENT_RETRY_DELAYS_MS.length) {
+          console.warn(
+            `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
+          )
+          await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
+          continue
+        }
+        // `onRequestError` is observability, not permission to turn a
+        // provider outage into a per-auction extraction failure.  Always
+        // reject after reporting it so reprocess can stop safely.
+        opts?.onRequestError?.(err)
+        throw new LlmProviderError('claude-proxy', (err as Error).message, { cause: err })
+      }
+    }
+    opts?.onUsage?.(parseClaudeUsage(resp))
+    const parsed = parseExtractionResponse(resp)
+    if (parsed) return parsed
+    // Unlike a request failure above, an unparseable response (e.g. JSON cut
+    // off at max_tokens) is about this input, not a proxy outage: reprocess
+    // counts it as a per-auction failure instead of stopping the whole run.
+    if (opts?.onRequestError) {
+      const stopReason = (resp as { stop_reason?: unknown })?.stop_reason
+      console.warn(`[extract/llm] unparseable response (stop_reason=${String(stopReason)})`)
       return null
     }
-    const parsed = parseExtractionResponse(resp)
-    if (!parsed) throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')
-    return parsed
+    throw new LlmProviderError('claude-proxy', 'ungültige oder leere Provider-Antwort')
   }
 }

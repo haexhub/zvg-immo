@@ -2,7 +2,7 @@
 // search grid's row type) — used as the map popover's fallback when the
 // clicked marker isn't among the auctions the grid has already loaded, so it
 // doesn't have to pull the full detail endpoint (live-crawler fallback,
-// geocoding, extraction-cache merge) just to show a compact card.
+// geocoding or aggregate reconstruction) just to show a compact card.
 
 import type { AuctionSearchResponse } from '~/server/api/auctions.get'
 import { SUMMARY_COLUMNS_SQL, SUMMARY_FROM_SQL, summary, type SearchRow } from '~/server/api/auctions.get'

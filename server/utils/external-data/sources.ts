@@ -12,6 +12,7 @@ export type ExternalDataCapability =
   | 'settlement_structure'
   | 'noise_airport'
   | 'air_quality'
+  | 'climate_normals'
   | 'flight_routes'
   | 'source_discovery'
 
@@ -41,6 +42,9 @@ export interface ExternalDataConfigField {
    *  adapter list entirely (same graceful-degrade contract nuxt.config.ts
    *  documents today for empty externalData.* values). */
   required?: boolean
+  /** url fields only: hosts (and their subdomains) a /settings override may
+   *  point at — see config.ts's externalDataOverrideError. */
+  allowedHosts?: string[]
 }
 
 export interface ExternalDataSource {
@@ -159,37 +163,14 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
       },
     ],
   },
-  {
-    id: 'openstreetmap-overpass',
-    label: 'OpenStreetMap / Overpass',
-    countries: ['eu'],
-    capabilities: ['location_context', 'poi_places', 'transport_network'],
-    sourceUrl: 'https://www.openstreetmap.org/copyright',
-    licenseNote: 'Europe-wide open map tags for POIs, transport, roads, landuse and visible neighborhood signals; completeness varies by mapper coverage.',
-    refreshCadence: 'deployment-configured / source minutely updates',
-    resolution: 'object tags around auction coordinates',
-    adapter: 'osmLocationContextAdapter',
-    configFields: [
-      {
-        key: 'endpoint',
-        type: 'url',
-        runtimeConfigKey: 'osmContextEndpoint',
-        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_ENDPOINT',
-        defaultValue: '',
-        required: true,
-      },
-      {
-        key: 'timeoutMs',
-        type: 'number',
-        runtimeConfigKey: 'osmContextTimeoutMs',
-        envVar: 'NUXT_EXTERNAL_DATA_OSM_CONTEXT_TIMEOUT_MS',
-        // Doubles as the query's own `[timeout:]`, so it must exceed the
-        // server-side execution time — see DEFAULT_TIMEOUT_MS in
-        // osm-location-context.ts.
-        defaultValue: 120_000,
-      },
-    ],
-  },
+  // openstreetmap-overpass used to live here as a configurable source (live
+  // Overpass endpoint + timeout). Replaced by a local PostGIS table
+  // (osm_local_elements, server/utils/external-data/osm-location-context.ts)
+  // loaded out-of-band by a standalone osm2pgsql job — nothing left to
+  // configure, so no source entry (this array only ever surfaces
+  // configurable sources; see configurableExternalDataSources() in
+  // config.ts). Attribution for the returned LocationContext is still
+  // OpenStreetMap's, hardcoded as SOURCE in osm-location-shared.ts.
   {
     id: 'overture-maps',
     label: 'Overture Maps',
@@ -246,6 +227,43 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
     adapter: 'eurostatRegionalLabourMarketAdapter',
   },
   {
+    id: 'eurostat-regional-tourism-nights',
+    label: 'Eurostat Nights Spent at Tourist Accommodation (NUTS 2)',
+    countries: ['eu'],
+    // Not a per-auction adapter — see server/tasks/external-enrichment.ts,
+    // which wires sources by hardcoded id rather than iterating this array,
+    // and computeExternalDataCoverage()'s fixed COVERAGE_SOURCE_IDS list.
+    // This entry exists only to get the generic /settings config UI + cache
+    // import trigger for free; it powers the search map's visitor-intensity
+    // overlay (composables/useTourismVisitorLayer.ts), not auction records.
+    capabilities: [],
+    sourceUrl: 'https://ec.europa.eu/eurostat/databrowser/view/tour_occ_nin2/default/table',
+    licenseNote: 'Official Eurostat statistics (tour_occ_nin2) joined with GISCO NUTS2 boundaries (Nuts2json, EUPL 1.2). Attribute both in the UI.',
+    refreshCadence: 'annual (Eurostat) / monthly courtesy re-pull',
+    resolution: 'NUTS 2 region, nights per km² (P_KM2)',
+    adapter: 'eurostatRegionalTourismNightsAdapter',
+    configFields: [
+      {
+        key: 'cachePath',
+        type: 'path',
+        runtimeConfigKey: 'eurostatTourismNutsCachePath',
+        envVar: 'NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_CACHE_PATH',
+        defaultValue: '',
+        required: true,
+      },
+      {
+        key: 'maxCacheAgeDays',
+        type: 'number',
+        runtimeConfigKey: 'eurostatTourismNutsMaxCacheAgeDays',
+        envVar: 'NUXT_EXTERNAL_DATA_EUROSTAT_TOURISM_NUTS_MAX_CACHE_AGE_DAYS',
+        // Eurostat updates the underlying statistic at most a couple of
+        // times a year; this only flags a long-broken importer, same
+        // rationale as eu-flood-risk-areas's maxCacheAgeDays default.
+        defaultValue: 400,
+      },
+    ],
+  },
+  {
     id: 'eea-environmental-noise-directive',
     label: 'EEA Environmental Noise Directive data',
     countries: ['eu'],
@@ -263,6 +281,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         envVar: 'NUXT_EXTERNAL_DATA_EEA_NOISE_SERVICE_BASE_URL',
         defaultValue: '',
         required: true,
+        allowedHosts: ['eea.europa.eu'],
       },
       {
         key: 'timeoutMs',
@@ -294,6 +313,7 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_SERVICE_URL',
         defaultValue: 'https://air-quality-api.open-meteo.com/v1/air-quality',
         required: true,
+        allowedHosts: ['open-meteo.com'],
       },
       {
         key: 'timeoutMs',
@@ -301,6 +321,40 @@ export const EXTERNAL_DATA_SOURCES: readonly ExternalDataSource[] = [
         runtimeConfigKey: 'camsAirQualityTimeoutMs',
         envVar: 'NUXT_EXTERNAL_DATA_CAMS_AIR_QUALITY_TIMEOUT_MS',
         defaultValue: 10_000,
+      },
+    ],
+  },
+  {
+    id: 'open-meteo-climate-normals',
+    label: 'Open-Meteo Historical Weather API (ERA5-Land climate normals)',
+    countries: ['eu'],
+    capabilities: ['climate_normals'],
+    sourceUrl: 'https://open-meteo.com/en/docs/historical-weather-api',
+    licenseNote: 'ERA5-Land reanalysis (Copernicus Climate Change Service, CC-BY-4.0) via Open-Meteo, aggregated here over the 1991–2020 reference period. Climate normals, not a forecast; modelled on a ~9-11 km grid, so it describes the surrounding area rather than the parcel.',
+    refreshCadence: 'fetched once per 0.1° grid cell, never (normals do not go stale)',
+    resolution: '0.1° ERA5-Land grid cell around the auction coordinates',
+    adapter: 'openMeteoClimateNormalsAdapter',
+    // Both fields carry a working default, so this source needs no admin setup
+    // to function — same public/unauthenticated shape as cams-air-quality.
+    configFields: [
+      {
+        key: 'serviceUrl',
+        type: 'url',
+        runtimeConfigKey: 'openMeteoClimateServiceUrl',
+        envVar: 'NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_SERVICE_URL',
+        defaultValue: 'https://archive-api.open-meteo.com/v1/archive',
+        required: true,
+        allowedHosts: ['open-meteo.com'],
+      },
+      {
+        key: 'timeoutMs',
+        type: 'number',
+        runtimeConfigKey: 'openMeteoClimateTimeoutMs',
+        envVar: 'NUXT_EXTERNAL_DATA_OPEN_METEO_CLIMATE_TIMEOUT_MS',
+        // 30 years of daily data is a much bigger response than the other
+        // Open-Meteo call in this file (current-weather air quality), so this
+        // default is well above cams-air-quality's 10s.
+        defaultValue: 30_000,
       },
     ],
   },

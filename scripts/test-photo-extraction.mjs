@@ -8,9 +8,9 @@ async function testAt() {
   console.log('=== AT ===')
   console.log('URL:', url)
   const info = await fetchAtDetail(url)
-  console.log('fotoCount:', info.fotoCount)
+  console.log('photoCount:', info.photoCount)
   console.log('thumbnailUrl:', info.thumbnailUrl)
-  const photos = info.attachments.filter((a) => a.kind === 'foto')
+  const photos = info.attachments.filter((a) => a.kind === 'photo')
   console.log(`photos (${photos.length}):`)
   for (const p of photos.slice(0, 3)) {
     console.log('  -', p.label, '|', p.proxyUrl)
@@ -59,9 +59,9 @@ async function testBiddit() {
     console.log('no detail')
     return
   }
-  console.log('fotoCount:', info.fotoCount)
+  console.log('photoCount:', info.photoCount)
   console.log('thumbnailUrl:', info.thumbnailUrl)
-  const photos = info.attachments.filter((a) => a.kind === 'foto')
+  const photos = info.attachments.filter((a) => a.kind === 'photo')
   console.log(`photos (${photos.length}):`)
   for (const p of photos.slice(0, 3)) {
     console.log('  -', p.label, '|', p.proxyUrl)

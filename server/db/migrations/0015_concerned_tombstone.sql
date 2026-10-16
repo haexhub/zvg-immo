@@ -1,0 +1,2 @@
+ALTER TABLE "llm_usage_events" ADD COLUMN "batch_job_name" text;--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_llm_usage_events_batch_identity" ON "llm_usage_events" USING btree ("batch_job_name","platform","external_id") WHERE "llm_usage_events"."batch_job_name" is not null;

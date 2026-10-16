@@ -42,8 +42,6 @@ export interface TranslationContentSource {
   documentSummary: string | null
   extractionTexts: TranslatableExtractionTexts | null
   extractionTextsVersion: number
-  documentSetHash: string | null
-  documentSetVersion: number | null
 }
 
 function text(value: string | null | undefined): string | null {
@@ -139,8 +137,6 @@ export function translationContentSource(
     documentSummary: auction.extraction?.documentSummary ?? null,
     extractionTexts: extractTranslatableExtractionTexts(auction.extraction),
     extractionTextsVersion: TRANSLATABLE_EXTRACTION_TEXTS_VERSION,
-    documentSetHash: auction.extraction?.documentSetHash ?? null,
-    documentSetVersion: auction.extraction?.documentSetVersion ?? null,
   }
 }
 

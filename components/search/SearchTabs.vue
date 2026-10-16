@@ -6,6 +6,7 @@ import { auctionKey } from '~/lib/auction-key'
 const props = defineProps<{
   auctions: AuctionSummary[]
   totalCount: number
+  canLoadMore: boolean
   pending: boolean
   loggedIn: boolean
   watchlistIds: Map<string, string>
@@ -14,6 +15,7 @@ const props = defineProps<{
   geoAuctions: GeoAuction[]
   selectedCountries: string[]
   geoFitKey: string
+  initialMapView?: { lat: number; lng: number; zoom: number } | null
   geoPending: boolean
   geoData: GeoCrawlResult | null
   geoError?: { statusMessage?: string; message?: string } | null
@@ -23,6 +25,7 @@ const emit = defineEmits<{
   (e: 'toggle-watchlist', auction: AuctionSummary): void
   (e: 'load-more'): void
   (e: 'bounds-change', bounds: { north: number; south: number; east: number; west: number }): void
+  (e: 'view-change', view: { lat: number; lng: number; zoom: number }): void
   (e: 'auction-hover', key: string | null): void
   (e: 'auction-select', key: string): void
 }>()
@@ -42,6 +45,7 @@ const auctionSummaries = computed(() => new Map(props.auctions.map((a) => [aucti
       <AuctionListPane
         :auctions="auctions"
         :total-count="totalCount"
+        :can-load-more="canLoadMore"
         :pending="pending"
         :logged-in="loggedIn"
         :watchlist-ids="watchlistIds"
@@ -59,10 +63,12 @@ const auctionSummaries = computed(() => new Map(props.auctions.map((a) => [aucti
         :selected-countries="selectedCountries"
         :active-auction-key="activeAuctionKey"
         :fit-key="geoFitKey"
+        :initial-view="initialMapView"
         :geo-pending="geoPending"
         :has-geo-data="!!geoData"
         :geo-error="geoError"
         @bounds-change="emit('bounds-change', $event)"
+        @view-change="emit('view-change', $event)"
         @auction-hover="emit('auction-hover', $event)"
         @auction-select="emit('auction-select', $event)"
       />

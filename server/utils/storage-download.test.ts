@@ -16,7 +16,7 @@ function makeFakePool(overrides: {
   blobs?: Record<string, { s3_key: string; content_type: string }>
 }) {
   const query = vi.fn(async (sql: string, params: unknown[] = []) => {
-    if (sql.includes('FROM raw_captures')) {
+    if (sql.includes('FROM artifact_captures')) {
       const rows = overrides.captures ?? []
       if (sql.includes('AND source_url')) {
         const sourceUrl = params[3]
@@ -24,7 +24,7 @@ function makeFakePool(overrides: {
       }
       return { rows }
     }
-    if (sql.includes('FROM raw_blobs')) {
+    if (sql.includes('FROM artifact_blobs')) {
       const hash = params[0] as string
       const blob = overrides.blobs?.[hash]
       return { rows: blob ? [blob] : [] }

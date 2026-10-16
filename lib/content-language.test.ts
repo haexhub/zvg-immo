@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { countryContentLanguage, isPassthroughLanguage } from './content-language'
+import type { LocationContext } from '~/types/auction'
+import { countryContentLanguage, isPassthroughLanguage, translatablePlaceNames } from './content-language'
 
 describe('isPassthroughLanguage', () => {
   it('is a passthrough when the target matches the country primary language', () => {
@@ -42,5 +43,20 @@ describe('countryContentLanguage', () => {
   it('returns null for an unknown country so the LLM can detect it', () => {
     expect(countryContentLanguage('zz')).toBeNull()
     expect(countryContentLanguage('deu')).toBeNull()
+  })
+})
+
+describe('translatablePlaceNames', () => {
+  it('collects settlement, named industry-site and airport names once each', () => {
+    const context = {
+      nearbyPlaces: [{ name: 'Бургас' }, { name: 'с. Равна' }],
+      environment: {
+        heavyIndustrySites: [{ name: 'Лукойл' }, { name: null }, { name: 'Бургас' }],
+        nearestAirportName: 'Летище Бургас',
+      },
+    } as unknown as LocationContext
+
+    expect(translatablePlaceNames(context)).toEqual(['Бургас', 'с. Равна', 'Лукойл', 'Летище Бургас'])
+    expect(translatablePlaceNames(null)).toEqual([])
   })
 })

@@ -5,6 +5,8 @@ node_modules
 .cache_zvg
 .pnpm-store
 .git
+.claude
+.worktrees
 .gitignore
 .env
 .env.*

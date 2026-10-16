@@ -2,27 +2,35 @@
 import { useSettingsError } from '~/composables/settings/useSettingsError'
 import { useSettingsTaskOverview } from '~/composables/settings/useSettingsTaskOverview'
 
-interface ReprocessResult {
-  candidates: number
-  processed: number
-  skipped: number
-  llmCalls: number
-  llmErrors: number
-  durationMs: number
-  warning?: string
-  lastLlmError?: string
-}
-
 const { t } = useI18n()
 const { normalizeSettingsError } = useSettingsError()
-const { loadLlmBatchJobs } = useSettingsTaskOverview()
+const { llmBatchJobs, loadLlmBatchJobs, startProgressPolling } = useSettingsTaskOverview()
 
 const reprocessLimit = ref('10')
 const reprocessCountry = ref('')
 const reprocessBatch = ref(false)
 const reprocessPending = ref(false)
 const reprocessError = ref<string | null>(null)
-const reprocessResult = ref<ReprocessResult | null>(null)
+// The POST is detached, so the run's outcome arrives via the polled
+// reprocessStatus. undefined = nothing triggered from this card yet;
+// otherwise the finishedAt seen right before triggering — compared against
+// server timestamps only, so client clock skew can't hide or fake a result.
+// ponytail: a scheduled run finishing after ours would replace the shown
+// summary; tagging runs with an id in task-runs.ts would make it exact.
+const reprocessTriggeredAfter = ref<string | null | undefined>(undefined)
+// Whether the shown result came from a batch submission — remembered at send
+// time rather than read off the live checkbox, which the user can flip while
+// the result is still on screen.
+const reprocessResultWasBatch = ref(false)
+
+const reprocessOutcome = computed(() => {
+  const status = llmBatchJobs.value?.reprocessStatus
+  if (reprocessTriggeredAfter.value === undefined || !status || status.status === 'running') return null
+  if (!status.finishedAt || status.finishedAt === reprocessTriggeredAfter.value) return null
+  return status
+})
+const reprocessAwaiting = computed(() => reprocessTriggeredAfter.value !== undefined && !reprocessOutcome.value)
+const reprocessResult = computed(() => reprocessOutcome.value?.lastError ? null : reprocessOutcome.value?.lastResult ?? null)
 
 function parseReprocessLimit(raw: string): number | null {
   const value = Number(raw)
@@ -37,17 +45,22 @@ async function runReprocessTest(): Promise<void> {
   }
   reprocessPending.value = true
   reprocessError.value = null
-  reprocessResult.value = null
+  const batch = reprocessBatch.value
   try {
-    reprocessResult.value = await $fetch<ReprocessResult>('/api/settings/reprocess', {
+    await loadLlmBatchJobs()
+    const previousFinishedAt = llmBatchJobs.value?.reprocessStatus.finishedAt ?? null
+    await $fetch<{ started: true }>('/api/settings/reprocess', {
       method: 'POST',
       body: {
         limit,
         country: reprocessCountry.value.trim() || undefined,
-        batch: reprocessBatch.value || undefined,
+        batch: batch || undefined,
       },
     })
+    reprocessTriggeredAfter.value = previousFinishedAt
+    reprocessResultWasBatch.value = batch
     await loadLlmBatchJobs()
+    startProgressPolling()
   } catch (err) {
     reprocessError.value = normalizeSettingsError(err, t('settings.reprocess.runError'))
   } finally {
@@ -88,6 +101,13 @@ async function runReprocessTest(): Promise<void> {
         </Button>
       </form>
 
+      <p v-if="reprocessAwaiting" class="text-sm text-muted-foreground">{{ $t('settings.reprocess.started') }}</p>
+      <SettingsMessageDetails
+        v-if="reprocessOutcome?.lastError"
+        :text="$t('settings.reprocess.failed', { message: reprocessOutcome.lastError })"
+        variant="error"
+      />
+
       <dl v-if="reprocessResult" class="grid grid-cols-2 gap-x-4 gap-y-1 text-sm border-t pt-3">
         <dt class="text-muted-foreground">{{ $t('settings.reprocess.candidates') }}</dt>
         <dd>{{ reprocessResult.candidates }}</dd>
@@ -99,13 +119,21 @@ async function runReprocessTest(): Promise<void> {
         <dd>{{ reprocessResult.llmCalls }}</dd>
         <dt class="text-muted-foreground">{{ $t('settings.reprocess.llmErrors') }}</dt>
         <dd>{{ reprocessResult.llmErrors }}</dd>
+        <template v-if="!reprocessResultWasBatch">
+          <dt class="text-muted-foreground">{{ $t('settings.reprocess.rulesFalsified') }}</dt>
+          <dd>{{ reprocessResult.rulesFalsified }}</dd>
+        </template>
       </dl>
-      <p v-if="reprocessResult?.warning" class="text-sm text-amber-600 dark:text-amber-400">
-        {{ $t('settings.reprocess.warning', { message: reprocessResult.warning }) }}
-      </p>
-      <p v-if="reprocessResult?.lastLlmError" class="text-sm text-destructive">
-        {{ $t('settings.reprocess.lastLlmError', { message: reprocessResult.lastLlmError }) }}
-      </p>
+      <SettingsMessageDetails
+        v-if="reprocessResult && reprocessOutcome?.lastWarning"
+        :text="$t('settings.reprocess.warning', { message: reprocessOutcome.lastWarning })"
+        variant="warning"
+      />
+      <SettingsMessageDetails
+        v-if="reprocessResult && reprocessOutcome?.lastLlmError"
+        :text="$t('settings.reprocess.lastLlmError', { message: reprocessOutcome.lastLlmError })"
+        variant="error"
+      />
     </CardContent>
   </Card>
 </template>

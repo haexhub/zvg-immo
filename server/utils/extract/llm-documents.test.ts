@@ -1,14 +1,27 @@
 import { deflateRawSync } from 'node:zlib'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
-import { downloadBlob, findLatestCapture, readDocumentSetItems } from '../storage-download'
+import { downloadBlob, findLatestCapture, listDistinctCaptures, readDocumentSet } from '../storage-download'
 import { markdownForPdf } from './docling'
 
+// fetchPublicUrl resolves every upstream host before fetching; answer with a
+// public address so the stubbed fetch is reached without real DNS.
+vi.mock('node:dns/promises', () => ({ lookup: vi.fn(async () => [{ address: '93.184.216.34', family: 4 }]) }))
 vi.mock('../storage-download', () => ({
   downloadBlob: vi.fn(),
   findLatestCapture: vi.fn(),
-  readDocumentSetItems: vi.fn(),
+  listDistinctCaptures: vi.fn(),
+  readDocumentSet: vi.fn(),
 }))
+vi.mock('../db', () => ({ getPool: vi.fn(() => null) }))
+vi.mock('./docling', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./docling')>()
+  return {
+    ...actual,
+    doclingBaseUrl: vi.fn(() => 'http://docling:5001'),
+    markdownForPdf: vi.fn(async () => null),
+  }
+})
 // archiveDocumentBlob/archiveDocumentText hit Postgres via getPool(), which
 // calls the Nuxt-only useRuntimeConfig() — unavailable in this plain vitest
 // environment. prepareLiveLlmDocuments's tests below only care about the
@@ -21,19 +34,18 @@ vi.mock('./pdf-text', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-text')>()
   return { ...actual, extractPdfTextFromBuffer: vi.fn(async () => 'PDF Wohnfläche 140 m²') }
 })
-// Docling is off unless a test stubs useRuntimeConfig().doclingUrl; the client
-// itself is covered by docling.test.ts, here only its effect on the prepared
-// input matters.
-vi.mock('./docling', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./docling')>()
-  return { ...actual, markdownForPdf: vi.fn(async () => null) }
-})
 vi.mock('./pdf-render', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./pdf-render')>()
   return { ...actual, renderPdfPagesJpeg: vi.fn(async () => []) }
 })
+vi.mock('~/server/crawlers/dga-ag/session', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/crawlers/dga-ag/session')>()
+  return { ...actual, getDgaAgSessionCookie: vi.fn(async () => 'fe_typo_user=session1') }
+})
 
-const { htmlToText, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments, prepareLiveLlmDocuments } = await import('./llm-documents')
+const { htmlToText, mapDocumentsBounded, pickAllLlmDocumentAttachments, prepareArchivedLlmDocuments } = await import('./llm-documents')
+const { prepareLiveLlmDocuments } = await import('./llm-documents-live')
+const { getDgaAgSessionCookie } = await import('~/server/crawlers/dga-ag/session')
 
 function att(overrides: Partial<Attachment>): Attachment {
   return {
@@ -140,8 +152,11 @@ function zipWithDocumentXml(xml: string): Buffer {
 
 beforeEach(() => {
   vi.mocked(findLatestCapture).mockResolvedValue(null)
-  vi.mocked(readDocumentSetItems).mockResolvedValue([])
+  vi.mocked(listDistinctCaptures).mockResolvedValue([])
+  vi.mocked(readDocumentSet).mockResolvedValue(null)
   vi.mocked(downloadBlob).mockResolvedValue(null)
+  vi.mocked(markdownForPdf).mockReset()
+  vi.mocked(markdownForPdf).mockResolvedValue(null)
 })
 
 describe('pickAllLlmDocumentAttachments', () => {
@@ -161,6 +176,31 @@ describe('pickAllLlmDocumentAttachments', () => {
       'terms.txt',
     ])
   })
+
+  it('skips attachments flagged as covering multiple auction lots', () => {
+    const picked = pickAllLlmDocumentAttachments([
+      att({ kind: 'brochure', filename: 'katalog.pdf', proxyUrl: 'https://example.test/katalog.pdf', excludeFromDocumentMining: true }),
+      att({ kind: 'other', filename: 'terms.txt', proxyUrl: 'https://example.test/terms.txt' }),
+    ])
+
+    expect(picked.map((item) => item.filename)).toEqual(['terms.txt'])
+  })
+})
+
+describe('mapDocumentsBounded', () => {
+  it('keeps input order while never running more than three documents at once', async () => {
+    let running = 0
+    let peak = 0
+    const result = await mapDocumentsBounded([5, 1, 4, 2, 3, 0, 6], async (delay, index) => {
+      running++
+      peak = Math.max(peak, running)
+      await new Promise((resolve) => setTimeout(resolve, delay))
+      running--
+      return index
+    })
+    expect(result).toEqual([0, 1, 2, 3, 4, 5, 6])
+    expect(peak).toBe(3)
+  })
 })
 
 describe('htmlToText', () => {
@@ -168,6 +208,10 @@ describe('htmlToText', () => {
     expect(
       htmlToText('<html><style>.x{}</style><script>alert(1)</script><body><h1>Wohnhaus</h1><p>140&nbsp;m&sup2; &amp; Garage</p></body></html>'),
     ).toContain('Wohnhaus\n140 m&sup2; & Garage')
+  })
+
+  it('replaces out-of-range numeric entities instead of throwing', () => {
+    expect(htmlToText('<p>a&#99999999;b&#x7FFFFFFF;c&#228;</p>')).toBe('a\uFFFDb\uFFFDcä')
   })
 })
 
@@ -181,14 +225,14 @@ describe('prepareArchivedLlmDocuments', () => {
       att({ kind: 'other', label: 'Scan', filename: 'scan.jpg', proxyUrl: 'https://example.test/scan.jpg' }),
       att({ kind: 'photo', label: 'Gallery', filename: 'gallery.jpg', proxyUrl: 'https://example.test/gallery.jpg' }),
     ]
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 17, items: [
       { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'gutachten.pdf', fileId: '1', sourceUrl: attachments[0]!.proxyUrl, contentHash: 'pdf', contentType: 'application/pdf' },
       { ordinal: 1, kind: 'document', label: 'Expose', filename: 'expose.docx', fileId: '2', sourceUrl: attachments[1]!.proxyUrl, contentHash: 'docx', contentType: 'application/vnd.docx' },
       { ordinal: 2, kind: 'document', label: 'HTML', filename: 'notice.html', fileId: '3', sourceUrl: attachments[2]!.proxyUrl, contentHash: 'html', contentType: 'text/html' },
       { ordinal: 3, kind: 'document', label: 'Text', filename: 'notes.txt', fileId: '4', sourceUrl: attachments[3]!.proxyUrl, contentHash: 'text', contentType: 'text/plain' },
       { ordinal: 4, kind: 'document', label: 'Scan', filename: 'scan.jpg', fileId: '5', sourceUrl: attachments[4]!.proxyUrl, contentHash: 'scan', contentType: 'image/jpeg' },
       { ordinal: 5, kind: 'document', label: 'Gallery', filename: 'gallery.jpg', fileId: '6', sourceUrl: attachments[5]!.proxyUrl, contentHash: 'gallery', contentType: 'image/jpeg' },
-    ])
+    ] })
     vi.mocked(downloadBlob).mockImplementation(async (hash) => {
       if (hash === 'pdf') return Buffer.from('%PDF-1.4\n%%EOF')
       if (hash === 'docx') {
@@ -200,7 +244,10 @@ describe('prepareArchivedLlmDocuments', () => {
       return null
     })
 
-    const prepared = await prepareArchivedLlmDocuments(auction(attachments), { nativeDocuments: false })
+    const prepared = await prepareArchivedLlmDocuments(auction(attachments), {
+      nativeDocuments: false,
+      artifactVersionId: 17,
+    })
 
     expect(prepared.input.pdfText).toContain('PDF Wohnfläche 140 m²')
     expect(prepared.input.documentText).not.toContain('PDF Wohnfläche 140 m²')
@@ -210,73 +257,161 @@ describe('prepareArchivedLlmDocuments', () => {
     expect(prepared.input.documentImages).toEqual([
       { label: 'Scan', mimeType: 'image/jpeg', data: Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xd9]).toString('base64') },
     ])
+    expect(prepared.artifactVersionId).toBe(17)
+    expect(readDocumentSet).toHaveBeenCalledWith('zvg-portal', '1', { id: 17 })
   })
 
   it('caps combined documentText across all archived text sections', async () => {
-    vi.mocked(readDocumentSetItems).mockResolvedValue([
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 18, items: [
       { ordinal: 0, kind: 'document', label: 'Long 1', filename: 'one.txt', fileId: '1', sourceUrl: 'https://example.test/one.txt', contentHash: 'one', contentType: 'text/plain' },
       { ordinal: 1, kind: 'document', label: 'Long 2', filename: 'two.txt', fileId: '2', sourceUrl: 'https://example.test/two.txt', contentHash: 'two', contentType: 'text/plain' },
       { ordinal: 2, kind: 'document', label: 'Long 3', filename: 'three.txt', fileId: '3', sourceUrl: 'https://example.test/three.txt', contentHash: 'three', contentType: 'text/plain' },
-    ])
+    ] })
     vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('x'.repeat(40_000)))
 
-    const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 18,
+    })
 
     expect(prepared.input.documentText?.length).toBeLessThanOrEqual(80_000)
   })
 
-  describe('with Docling configured', () => {
-    beforeEach(() => {
-      vi.mocked(markdownForPdf).mockReset()
-      vi.stubGlobal('useRuntimeConfig', () => ({ doclingUrl: 'http://docling:5001' }))
+  function fourPdfDocumentSet() {
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 20, items: [0, 1, 2, 3].map((i) => ({
+      ordinal: i,
+      kind: 'document' as const,
+      label: `Dokument ${i}`,
+      filename: `doc-${i}.pdf`,
+      fileId: `${i}`,
+      sourceUrl: `https://example.test/doc-${i}.pdf`,
+      contentHash: `pdf-${i}`,
+      contentType: 'application/pdf',
+    })) })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) =>
+      typeof hash === 'string' && hash.startsWith('pdf-') ? Buffer.from('%PDF-1.4\n%%EOF') : null,
+    )
+  }
+
+  it('builds per-document summary inputs instead of a combined blob once the PDF count crosses the threshold and allowMapReduce is set', async () => {
+    fourPdfDocumentSet()
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 20,
+      allowMapReduce: true,
     })
 
-    it('sends converted Markdown as text instead of the raw PDF bytes', async () => {
-      vi.mocked(markdownForPdf).mockResolvedValue('## Flurstücke\n\n| Gemarkung | m² |\n|---|---|\n| Ebingen | 1.112 |')
-      vi.mocked(readDocumentSetItems).mockResolvedValue([
+    expect(prepared.input.pdfText).toBeNull()
+    expect(prepared.input.pdfPageImages).toBeNull()
+    expect(prepared.input.pdfBytes).toBeNull()
+    expect(prepared.input.documentSummaryInputs).toHaveLength(4)
+    expect(prepared.input.documentSummaryInputs?.map((g) => g.label)).toEqual([
+      'Dokument 0', 'Dokument 1', 'Dokument 2', 'Dokument 3',
+    ])
+    for (const group of prepared.input.documentSummaryInputs ?? []) {
+      expect(group.parts.pdfText).toContain('PDF Wohnfläche 140 m²')
+    }
+  })
+
+  it('keeps the combined blob and never sets documentSummaryInputs when allowMapReduce is not set (batch-submission safety net)', async () => {
+    fourPdfDocumentSet()
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 20,
+    })
+
+    expect(prepared.input.documentSummaryInputs).toBeUndefined()
+    expect(prepared.input.pdfText).toContain('=== Dokument 0 ===')
+    expect(prepared.input.pdfText).toContain('=== Dokument 3 ===')
+  })
+
+  it('stays on the combined path when allowMapReduce is set but the PDF count is at or under the threshold', async () => {
+    vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 21, items: [0, 1, 2].map((i) => ({
+      ordinal: i,
+      kind: 'document' as const,
+      label: `Dokument ${i}`,
+      filename: `doc-${i}.pdf`,
+      fileId: `${i}`,
+      sourceUrl: `https://example.test/doc-${i}.pdf`,
+      contentHash: `pdf-${i}`,
+      contentType: 'application/pdf',
+    })) })
+    vi.mocked(downloadBlob).mockImplementation(async (hash) =>
+      typeof hash === 'string' && hash.startsWith('pdf-') ? Buffer.from('%PDF-1.4\n%%EOF') : null,
+    )
+
+    const prepared = await prepareArchivedLlmDocuments(auction(), {
+      nativeDocuments: false,
+      artifactVersionId: 21,
+      allowMapReduce: true,
+    })
+
+    expect(prepared.input.documentSummaryInputs).toBeUndefined()
+    expect(prepared.input.pdfText).toContain('=== Dokument 0 ===')
+  })
+
+  describe('with Docling configured', () => {
+    it('keeps converted Markdown as text for native providers', async () => {
+      vi.mocked(markdownForPdf).mockResolvedValue('## Flurstücke\n\n| Gemarkung | m² |')
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 22, items: [
         { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
-      ])
+      ] })
       vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
 
-      // nativeDocuments: true is the live prod setting (gemini-native).
-      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true })
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true, artifactVersionId: 22 })
 
       expect(prepared.input.pdfText).toContain('| Gemarkung | m² |')
       expect(prepared.input.pdfBytes).toBeNull()
       expect(prepared.input.pdfDocuments).toBeUndefined()
     })
 
-    // The regression this guards: a set where Docling handled some documents
-    // and not others must reach the model complete, not lose the converted
-    // half because native bytes are present.
-    it('keeps both converted text and native bytes in a mixed set', async () => {
-      vi.mocked(markdownForPdf).mockImplementation(async (_db, hash) =>
-        hash === 'converted' ? '## Konvertiert' : null)
-      vi.mocked(readDocumentSetItems).mockResolvedValue([
+    it('keeps converted text and native bytes in a mixed set', async () => {
+      vi.mocked(markdownForPdf).mockImplementation(async (_db, hash) => hash === 'converted' ? '## Konvertiert' : null)
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 23, items: [
         { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'a.pdf', fileId: '1', sourceUrl: 'https://example.test/a.pdf', contentHash: 'converted', contentType: 'application/pdf' },
         { ordinal: 1, kind: 'document', label: 'Bekanntmachung', filename: 'b.pdf', fileId: '2', sourceUrl: 'https://example.test/b.pdf', contentHash: 'failed', contentType: 'application/pdf' },
-      ])
+      ] })
       vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
 
-      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true })
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true, artifactVersionId: 23 })
 
       expect(prepared.input.pdfText).toContain('## Konvertiert')
       expect(prepared.input.pdfBytes).toBe(Buffer.from('%PDF-1.4\n%%EOF').toString('base64'))
     })
 
-    it('falls back to pdftotext when a conversion fails and the provider is not native', async () => {
-      vi.mocked(markdownForPdf).mockResolvedValue(null)
-      vi.mocked(readDocumentSetItems).mockResolvedValue([
+    it('falls back to pdftotext when Docling has no conversion', async () => {
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 24, items: [
         { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
-      ])
+      ] })
       vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
 
-      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false })
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false, artifactVersionId: 24 })
 
       expect(prepared.input.pdfText).toContain('PDF Wohnfläche 140 m²')
     })
   })
 })
+
+/** Minimal streamed Response whose `url` reflects where a redirect landed. */
+function fakeResponse(url: string, body: string): Response {
+  const bytes = new TextEncoder().encode(body)
+  let read = false
+  return {
+    ok: true,
+    url,
+    headers: new Headers(),
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (read) return { done: true, value: undefined }
+          read = true
+          return { done: false, value: bytes }
+        },
+        cancel: async () => undefined,
+      }),
+    },
+  } as unknown as Response
+}
 
 describe('prepareLiveLlmDocuments', () => {
   const identity = { platform: 'se-kronofogden', country: 'se', region: 'Schweden', externalId: '101746', caseNumber: null, authority: 'Kronofogden' }
@@ -309,6 +444,54 @@ describe('prepareLiveLlmDocuments', () => {
     expect(result.documentSetComplete).toBe(true)
     expect(result.errors).toBeUndefined()
 
+    vi.unstubAllGlobals()
+  })
+
+  it('retries a dga-ag securedl attachment once with a fresh session after landing on the login page', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf', '%PDF-1.4 real content'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dgaAgIdentity = { platform: 'dga-ag', country: 'de', region: 'Sachsen', externalId: 'S26-03-011', caseNumber: null, authority: 'DGA AG' }
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Objektunterlagen', filename: 'Unterlagen.pdf', proxyUrl: 'https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, dgaAgIdentity, '2026-08-20T08:27:35.000Z')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getDgaAgSessionCookie)).toHaveBeenCalledWith({ forceRefresh: true })
+    expect(result.documentSetComplete).toBe(true)
+    expect(result.errors).toBeUndefined()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('drops a dga-ag securedl attachment when the forced re-login still lands on the login page', async () => {
+    // A failed re-login backs off and yields no cookie (session.ts), so the
+    // retry runs anonymously and gets the login page again with HTTP 200.
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue(null)
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+      .mockResolvedValueOnce(fakeResponse('https://www.dga-ag.de/login.html?redirect=1', '<html>Bitte einloggen</html>'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const dgaAgIdentity = { platform: 'dga-ag', country: 'de', region: 'Sachsen', externalId: 'S26-03-011', caseNumber: null, authority: 'DGA AG' }
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Objektunterlagen', filename: 'Unterlagen.pdf', proxyUrl: 'https://www.dga-ag.de/securedl/sec/abc/Unterlagen.pdf' }),
+    ]
+
+    const result = await prepareLiveLlmDocuments(attachments, dgaAgIdentity, '2026-08-20T08:27:35.000Z')
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(result.documentSetItems).toEqual([])
+    expect(result.documentSetComplete).toBe(false)
+    expect(result.errors).toEqual([expect.stringContaining('dga-ag login required')])
+
+    vi.mocked(getDgaAgSessionCookie).mockResolvedValue('fe_typo_user=session1')
     vi.unstubAllGlobals()
   })
 })

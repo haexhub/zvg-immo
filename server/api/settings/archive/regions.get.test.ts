@@ -24,7 +24,8 @@ describe('/api/settings/archive/regions', () => {
     await expect(handler({})).resolves.toEqual([
       { region: 'Stockholm', count: 12, lastCapturedAt: '2026-07-27T07:30:12.000Z' },
     ])
-    expect(query.mock.calls[0]?.[0]).toContain("WHERE country = $1 AND kind = 'auction'")
-    expect(query.mock.calls[0]?.[0]).toContain('count(DISTINCT (platform, external_id))')
+    expect(query.mock.calls[0]?.[0]).toContain("WHERE a.country = $1 AND rc.kind = 'auction'")
+    expect(query.mock.calls[0]?.[0]).toContain('JOIN auctions a')
+    expect(query.mock.calls[0]?.[0]).toContain('count(DISTINCT (rc.platform, rc.external_id))')
   })
 })

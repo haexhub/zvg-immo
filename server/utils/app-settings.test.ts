@@ -1,63 +1,90 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import {
   DEFAULT_ENABLED_COUNTRIES,
+  DEFAULT_AUTOMATIC_CRAWLING_ENABLED,
+  DEFAULT_AUTOMATIC_LLM_ENABLED,
   DEFAULT_HIDE_RULES_ONLY_AUCTIONS,
   DEFAULT_LLM_EXECUTION_MODE,
+  DEFAULT_LLM_KILL_SWITCH,
   DEFAULT_LLM_MAX_TOKENS,
   clearLlmProviderOverride,
   deleteLlmProviderProfile,
   getAllLlmMaxTokens,
   getEnabledCountries,
+  getAutomaticCrawlingEnabled,
+  getAutomaticLlmEnabled,
   getHideRulesOnlyAuctions,
+  getLlmKillSwitch,
   getLlmMaxTokens,
   getLlmProviderProfileSettings,
   getLlmProviderOverride,
   getLlmProviderOverrideChain,
   setEnabledCountries,
+  setAutomaticCrawlingEnabled,
+  setAutomaticLlmEnabled,
   setHideRulesOnlyAuctions,
+  setLlmKillSwitch,
   setLlmMaxTokens,
+  getLlmExtractionChainStrategy,
   setLlmProviderAssignments,
   setLlmProviderProfiles,
   setLlmProviderProfileSettings,
   setLlmProviderOverride,
 } from './app-settings'
+import { queryText } from '~/test-support/drizzle-query'
 
 /** Minimal in-memory stand-in for the `pg` Pool, matching the exact queries
- *  app-settings.ts issues (checked via the SQL prefix), mirroring the fake
- *  pool in content-translation.test.ts. */
+ *  app-settings.ts issues (checked via the compiled SQL Drizzle sends to
+ *  `client.query()`), mirroring the fake pool in content-translation.test.ts.
+ *  app-settings.ts wraps this same Pool-shaped object in `drizzle()` itself
+ *  per call, so the constructor name below must look like a real `pg.Pool`
+ *  for `db.transaction()`'s pool-vs-client detection to take the
+ *  connect()-and-release branch. */
 function makeFakePool() {
   const rows = new Map<string, unknown>()
 
-  const query = async (sql: string, params: unknown[] = []) => {
-    if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+  const query = async (queryArg: unknown, params: unknown[] = []) => {
+    const text = queryText(queryArg)
+    const n = text.replace(/\s+/g, ' ').trim().toLowerCase()
+    if (n === 'begin' || n === 'commit' || n === 'rollback') {
       return { rows: [], rowCount: null }
     }
-    if (sql.includes('SELECT value FROM app_settings WHERE key =')) {
+    if (n.startsWith('select "value" from "app_settings"')) {
       const [key] = params as [string]
-      return rows.has(key) ? { rows: [{ value: rows.get(key) }] } : { rows: [] }
+      return rows.has(key) ? { rows: [[rows.get(key)]] } : { rows: [] }
     }
-    if (sql.includes('SELECT key, value FROM app_settings WHERE key = ANY')) {
-      const [keys] = params as [string[]]
-      return { rows: keys.filter((k) => rows.has(k)).map((k) => ({ key: k, value: rows.get(k) })) }
+    if (n.startsWith('select "key", "value" from "app_settings"')) {
+      const keys = params as string[]
+      return { rows: keys.filter((k) => rows.has(k)).map((k) => [k, rows.get(k)]) }
     }
-    if (sql.includes('INSERT INTO app_settings')) {
-      if (params.length === 2) {
-        const [key, value] = params as [string, string]
-        rows.set(key, JSON.parse(value))
-        return { rows: [], rowCount: 1 }
-      }
-      // setLlmProviderOverride's atomic upsert:
-      // [key, provider, baseUrl, model, executionMode|null, apiKey|null, defaultExecutionMode].
-      // Emulates the SQL's COALESCEs without a real jsonb engine.
-      const [key, provider, baseUrl, model, executionMode, apiKey, defaultExecutionMode] = params as [
+    if (n.startsWith('insert into "app_settings"')) {
+      // writeSetting()/the transactional upserts: [key, value, updatedAt, value, updatedAt] —
+      // value arrives JSON-stringified (Drizzle's jsonb mapToDriverValue).
+      const [key, value] = params as [string, string]
+      rows.set(key, JSON.parse(value))
+      return { rows: [], rowCount: 1 }
+    }
+    if (n.startsWith('insert into app_settings (key, value, updated_at) values ($1, $2, now())')) {
+      // The legacy-row seed below, written with hand-rolled SQL bypassing
+      // app-settings.ts entirely (simulating a pre-chain stored row).
+      const [key, value] = params as [string, string]
+      rows.set(key, JSON.parse(value))
+      return { rows: [], rowCount: 1 }
+    }
+    if (n.startsWith('insert into app_settings (key, value, updated_at)')) {
+      // setLlmProviderOverride's atomic upsert (raw sql fragment, not the
+      // query builder): [key, provider, baseUrl, model, executionMode|null,
+      // defaultExecutionMode, apiKey|null, ...same 6 again for the SET
+      // clause]. Emulates the SQL's COALESCEs without a real jsonb engine.
+      const [key, provider, baseUrl, model, executionMode, defaultExecutionMode, apiKey] = params as [
         string,
         string,
         string,
         string,
         string | null,
-        string | null,
         string,
+        string | null,
       ]
       const existing = rows.get(key) as { apiKey?: string; executionMode?: string } | undefined
       const value = {
@@ -70,21 +97,22 @@ function makeFakePool() {
       rows.set(key, value)
       return { rows: [{ value }], rowCount: 1 }
     }
-    if (sql.includes('DELETE FROM app_settings')) {
+    if (n.startsWith('delete from "app_settings"')) {
       const [key] = params as [string]
       const existed = rows.delete(key)
       return { rows: [], rowCount: existed ? 1 : 0 }
     }
-    throw new Error(`unexpected query: ${sql}`)
+    throw new Error(`unexpected query: ${text}`)
   }
 
-  return {
+  function MockPool() {}
+  return Object.assign(new (MockPool as unknown as new () => object)(), {
     query: query as unknown as Pool['query'],
     connect: async () => ({
       query: query as unknown as Pool['query'],
       release: () => undefined,
     }),
-  }
+  }) as unknown as Pool
 }
 
 describe('enabled countries', () => {
@@ -107,11 +135,11 @@ describe('enabled countries', () => {
 
   it('falls back to defaults for a malformed stored value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string) => Promise<unknown> }).query = async (sql: string) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 'de,se' }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [['de,se']] }
       throw new Error('unexpected')
     }
-    expect(await getEnabledCountries(db as unknown as Pool)).toEqual(DEFAULT_ENABLED_COUNTRIES)
+    expect(await getEnabledCountries(db)).toEqual(DEFAULT_ENABLED_COUNTRIES)
   })
 })
 
@@ -119,47 +147,48 @@ describe('getLlmMaxTokens', () => {
   it('falls back to the default when no row exists', async () => {
     const db = makeFakePool() as unknown as Pool
     expect(await getLlmMaxTokens(db, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(DEFAULT_LLM_MAX_TOKENS['usage-ideas'])
     expect(await getLlmMaxTokens(db, 'translation')).toBe(DEFAULT_LLM_MAX_TOKENS.translation)
+  })
+
+  // 'custom-kind' stands in for any kind beyond extraction/translation
+  // (LlmMaxTokensKind accepts any string) — it has no configured default, so
+  // the fallback is the hard floor (MIN_MAX_TOKENS), not a per-kind default.
+  it('falls back to the floor for a kind with no configured default', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(256)
   })
 
   it('returns a previously written value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 2048)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(2048)
+    await setLlmMaxTokens(db, 'custom-kind', 2048)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(2048)
   })
 
   it('falls back to the default on a malformed value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 'not-a-number' }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [['not-a-number']] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
+    expect(await getLlmMaxTokens(db, 'extraction')).toBe(DEFAULT_LLM_MAX_TOKENS.extraction)
   })
 
   it('clamps a stored out-of-range value that bypassed setLlmMaxTokens', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 1_000_000 }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [[1_000_000]] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'extraction')).toBe(32_768)
+    expect(await getLlmMaxTokens(db, 'extraction')).toBe(32_768)
   })
 
   it('rounds a stored fractional value that bypassed setLlmMaxTokens', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: 1024.6 }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) return { rows: [[1024.6]] }
       throw new Error('unexpected')
     }
-    expect(await getLlmMaxTokens(db as unknown as Pool, 'usage-ideas')).toBe(1025)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(1025)
   })
 })
 
@@ -169,8 +198,6 @@ describe('getAllLlmMaxTokens', () => {
     await setLlmMaxTokens(db, 'translation', 16_000)
     expect(await getAllLlmMaxTokens(db)).toEqual({
       extraction: DEFAULT_LLM_MAX_TOKENS.extraction,
-      'usage-ideas': DEFAULT_LLM_MAX_TOKENS['usage-ideas'],
-      'renovation-cost-estimate': DEFAULT_LLM_MAX_TOKENS['renovation-cost-estimate'],
       translation: 16_000,
     })
   })
@@ -179,8 +206,8 @@ describe('getAllLlmMaxTokens', () => {
 describe('setLlmMaxTokens', () => {
   it('clamps a too-low value up to the minimum', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 10)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(256)
+    await setLlmMaxTokens(db, 'custom-kind', 10)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(256)
   })
 
   it('clamps a too-high value down to the maximum', async () => {
@@ -191,15 +218,15 @@ describe('setLlmMaxTokens', () => {
 
   it('rounds a non-integer value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 1024.6)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(1025)
+    await setLlmMaxTokens(db, 'custom-kind', 1024.6)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(1025)
   })
 
   it('overwrites a previously set value', async () => {
     const db = makeFakePool() as unknown as Pool
-    await setLlmMaxTokens(db, 'usage-ideas', 2048)
-    await setLlmMaxTokens(db, 'usage-ideas', 3000)
-    expect(await getLlmMaxTokens(db, 'usage-ideas')).toBe(3000)
+    await setLlmMaxTokens(db, 'custom-kind', 2048)
+    await setLlmMaxTokens(db, 'custom-kind', 3000)
+    expect(await getLlmMaxTokens(db, 'custom-kind')).toBe(3000)
   })
 })
 
@@ -375,35 +402,31 @@ describe('getLlmProviderOverride', () => {
 
   it('returns null for a malformed stored value', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) return { rows: [{ value: { provider: 'not-a-real-provider' } }] }
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) {
+        return { rows: [[{ provider: 'not-a-real-provider' }]] }
+      }
       throw new Error('unexpected')
     }
-    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+    expect(await getLlmProviderOverride(db)).toBeNull()
   })
 
   it('returns null when a stored provider override is missing executionMode', async () => {
     const db = makeFakePool()
-    ;(db as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown> }).query = async (
-      sql: string,
-    ) => {
-      if (sql.includes('SELECT value')) {
+    ;(db as unknown as { query: (queryArg: unknown) => Promise<unknown> }).query = async (queryArg: unknown) => {
+      if (queryText(queryArg).toLowerCase().startsWith('select "value"')) {
         return {
-          rows: [{
-            value: {
-              provider: 'claude-proxy',
-              baseUrl: 'http://haex-claude-proxy:8080',
-              model: 'claude-haiku-4-5',
-              apiKey: '',
-            },
-          }],
+          rows: [[{
+            provider: 'claude-proxy',
+            baseUrl: 'http://haex-claude-proxy:8080',
+            model: 'claude-haiku-4-5',
+            apiKey: '',
+          }]],
         }
       }
       throw new Error('unexpected')
     }
-    expect(await getLlmProviderOverride(db as unknown as Pool)).toBeNull()
+    expect(await getLlmProviderOverride(db)).toBeNull()
   })
 
   it('is null again after clearLlmProviderOverride', async () => {
@@ -475,6 +498,7 @@ describe('getLlmProviderOverride', () => {
       model: 'gemini-flash-latest',
       executionMode: 'sync',
       apiKey: 'gemini-secret',
+      profileId: 'cheap-translation',
     })
     expect(await getLlmProviderOverride(db, 'extraction')).toEqual({
       provider: 'claude-proxy',
@@ -539,6 +563,7 @@ describe('getLlmProviderOverride', () => {
           model: 'gemini-3.1-flash-lite',
           executionMode: 'sync',
           apiKey: 'secret',
+          profileId: 'primary',
         },
         {
           provider: 'claude-proxy',
@@ -546,6 +571,7 @@ describe('getLlmProviderOverride', () => {
           model: 'claude-haiku-4-5-20251001',
           executionMode: 'sync',
           apiKey: '',
+          profileId: 'fallback',
         },
       ])
       // getLlmProviderOverride still returns just the primary — existing
@@ -778,7 +804,7 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
     const saved = await setLlmProviderAssignments(db, { extraction: ['gemini'], translation: ['gemini'] })
 
-    expect(saved).toEqual({ extraction: ['gemini'], translation: ['gemini'] })
+    expect(saved.assignments).toEqual({ extraction: ['gemini'], translation: ['gemini'] })
     expect(await getLlmProviderProfileSettings(db)).toEqual({
       profiles: [{
         id: 'gemini',
@@ -795,7 +821,7 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
   it('setLlmProviderAssignments drops assignments referencing an unknown profile id', async () => {
     const db = makeFakePool() as unknown as Pool
-    expect(await setLlmProviderAssignments(db, { extraction: ['does-not-exist'] })).toEqual({})
+    expect((await setLlmProviderAssignments(db, { extraction: ['does-not-exist'] })).assignments).toEqual({})
   })
 
   it('setLlmProviderAssignments dedupes and caps an oversized fallback chain', async () => {
@@ -813,7 +839,21 @@ describe('setLlmProviderProfiles / setLlmProviderAssignments / deleteLlmProvider
 
     const saved = await setLlmProviderAssignments(db, { extraction: ['a', 'b', 'a', 'c', 'd', 'e', 'f'] })
 
-    expect(saved).toEqual({ extraction: ['a', 'b', 'c', 'd', 'e'] })
+    expect(saved.assignments).toEqual({ extraction: ['a', 'b', 'c', 'd', 'e'] })
+  })
+
+  it('setLlmProviderAssignments stores a valid chain strategy and preserves it when omitted', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmExtractionChainStrategy(db)).toBe('fallback')
+
+    expect((await setLlmProviderAssignments(db, {}, 'round-robin')).strategy).toBe('round-robin')
+    expect(await getLlmExtractionChainStrategy(db)).toBe('round-robin')
+
+    // Omitted (or garbage — the PUT body is untrusted) must not silently reset
+    // the strategy to the default, same preserve-on-omit contract as apiKey.
+    expect((await setLlmProviderAssignments(db, {})).strategy).toBe('round-robin')
+    expect((await setLlmProviderAssignments(db, {}, 'nonsense')).strategy).toBe('round-robin')
+    expect(await getLlmExtractionChainStrategy(db)).toBe('round-robin')
   })
 
   it('deleteLlmProviderProfile removes the profile and prunes its assignments', async () => {
@@ -885,5 +925,47 @@ describe('getHideRulesOnlyAuctions', () => {
     const db = makeFakePool() as unknown as Pool
     await setHideRulesOnlyAuctions(db, false)
     expect(await getHideRulesOnlyAuctions(db)).toBe(false)
+  })
+})
+
+describe('getLlmKillSwitch', () => {
+  it('defaults to false when no row exists', async () => {
+    const db = makeFakePool() as unknown as Pool
+    expect(await getLlmKillSwitch(db)).toBe(DEFAULT_LLM_KILL_SWITCH)
+  })
+
+  it('returns a previously written value', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setLlmKillSwitch(db, true)
+    expect(await getLlmKillSwitch(db)).toBe(true)
+  })
+
+  it('fails closed (reports on) when the setting cannot be read', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const db = Object.assign(makeFakePool(), {
+      query: async () => { throw new Error('query_timeout') },
+    }) as unknown as Pool
+    expect(await getLlmKillSwitch(db)).toBe(true)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+})
+
+describe('automatic processing preferences', () => {
+  it('defaults both automatic pipelines to enabled', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(DEFAULT_AUTOMATIC_CRAWLING_ENABLED)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(DEFAULT_AUTOMATIC_LLM_ENABLED)
+  })
+
+  it('persists crawler and LLM automation independently', async () => {
+    const db = makeFakePool() as unknown as Pool
+    await setAutomaticCrawlingEnabled(db, false)
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(true)
+
+    await setAutomaticLlmEnabled(db, false)
+    await expect(getAutomaticLlmEnabled(db)).resolves.toBe(false)
+    await expect(getAutomaticCrawlingEnabled(db)).resolves.toBe(false)
   })
 })

@@ -135,6 +135,9 @@ function mapItem(inner: SearchItemInner, platformId: string): MappedAuction | nu
 export interface ListResult {
   totalReported: number
   auctions: MappedAuction[]
+  /** False when a page failed or fewer distinct hits arrived than the index
+   *  reported — the missing lots must not be treated as gone. */
+  complete: boolean
 }
 
 /** Walks the paginated search endpoint once and maps every hit. The total
@@ -143,20 +146,15 @@ export interface ListResult {
 export async function fetchAllPublicSales(platformId: string): Promise<ListResult> {
   const first = await fetchSearchPage(0)
   const total = first.totalElements
-  const mapped: MappedAuction[] = first.content
-    .map((h) => mapItem(h.content, platformId))
-    .filter((x): x is MappedAuction => x != null)
-
-  if (first.totalPages <= 1) return { totalReported: total, auctions: mapped }
+  const hits: SearchHit[] = [...first.content]
 
   // Pages 1..N — bounded concurrency keeps us well behind the rate limit
   // and parallelises the bulk of the fetches. 13 pages at concurrency 4
   // finishes in roughly 4 sequential round trips.
-  const remaining = first.totalPages - 1
+  const queue = Array.from({ length: Math.max(0, first.totalPages - 1) }, (_, i) => i + 1)
   const concurrency = 4
-  const queue = Array.from({ length: remaining }, (_, i) => i + 1)
   let cursor = 0
-  const results: MappedAuction[][] = []
+  let failedPages = 0
   async function worker(): Promise<void> {
     while (cursor < queue.length) {
       const idx = cursor++
@@ -164,28 +162,37 @@ export async function fetchAllPublicSales(platformId: string): Promise<ListResul
       if (pageNum == null) continue
       try {
         const page = await fetchSearchPage(pageNum)
-        results.push(
-          page.content
-            .map((h) => mapItem(h.content, platformId))
-            .filter((x): x is MappedAuction => x != null),
-        )
+        hits.push(...page.content)
       } catch (err) {
+        failedPages++
         console.warn(`[biddit] page ${pageNum} failed: ${(err as Error).message}`)
       }
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
-  for (const arr of results) mapped.push(...arr)
   // The Elasticsearch index ranks results live, so when several pages
   // fetch concurrently a lot can appear on two adjacent pages. Dedup by
   // referenceCode — without this, `auctions.length > totalReported` and
   // the same property gets two pins on the map.
   const seen = new Set<string>()
-  const unique = mapped.filter((m) => {
-    const k = m.auction.externalId
-    if (seen.has(k)) return false
-    seen.add(k)
-    return true
-  })
-  return { totalReported: total, auctions: unique }
+  let distinctHits = 0
+  const auctions: MappedAuction[] = []
+  for (const hit of hits) {
+    const code = hit.content.referenceCode
+    if (code) {
+      if (seen.has(code)) continue
+      seen.add(code)
+    }
+    distinctHits++
+    const mapped = mapItem(hit.content, platformId)
+    if (mapped) auctions.push(mapped)
+  }
+  // Each duplicate pushed some other lot past a page boundary, so with a
+  // stable total it is missing from this run. A lot added mid-crawl can mask
+  // one that slipped this way — ponytail: count-based check only; a stable
+  // sort parameter on the search API, if biddit ever offers one, would close it.
+  if (distinctHits < total) {
+    console.warn(`[biddit] ${distinctHits} distinct hits for ${total} reported lots — run incomplete`)
+  }
+  return { totalReported: total, auctions, complete: failedPages === 0 && distinctHits >= total }
 }

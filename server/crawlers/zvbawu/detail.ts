@@ -67,7 +67,9 @@ export interface DetailInfo {
 
 const FETCH_TIMEOUT_MS = 15_000
 
-async function fetchDetail(link: string, identity: DocumentIdentity): Promise<DetailPage | null> {
+/** Throws on every failure, keeping the cause, so the enrich task can tell an
+ *  upstream problem apart from a broken raw archive. */
+async function fetchDetail(link: string, identity: DocumentIdentity): Promise<DetailPage> {
   const url = `${ZVBAWU_BASE}${link.startsWith('/') ? link : `/${link}`}`
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
@@ -80,15 +82,19 @@ async function fetchDetail(link: string, identity: DocumentIdentity): Promise<De
         'Accept-Language': 'de-DE,de;q=0.9',
       },
     })
-    if (!res.ok) return null
+    if (!res.ok) throw new Error(`zvbawü detail ${url}: HTTP ${res.status}`)
     const body = await res.text()
     // zvbawü is an Inertia.js SSR shell — the facts live in a `data-page` JSON
     // attribute (extractInertiaPage below), not in prosaic HTML. Archived
     // anyway: the raw response body still preserves the facts.
-    await archiveDetailCapture(Buffer.from(body, 'utf8'), identity, url, new Date().toISOString())
-    return extractInertiaPage<DetailPage>(body)
-  } catch {
-    return null
+    try {
+      await archiveDetailCapture(Buffer.from(body, 'utf8'), identity, url, new Date().toISOString())
+    } catch (err) {
+      throw new Error(`zvbawü detail ${url}: raw archive failed`, { cause: err })
+    }
+    const page = extractInertiaPage<DetailPage>(body)
+    if (!page) throw new Error(`zvbawü detail ${url}: no Inertia page payload`)
+    return page
   } finally {
     clearTimeout(timer)
   }
@@ -175,9 +181,8 @@ export function buildDetailInfo(a: DetailPage['props']['auction']): DetailInfo {
   }
 }
 
-export async function fetchDetailFor(link: string, identity: DocumentIdentity): Promise<DetailInfo | null> {
+export async function fetchDetailFor(link: string, identity: DocumentIdentity): Promise<DetailInfo> {
   const page = await fetchDetail(link, identity)
-  if (!page) return null
   return buildDetailInfo(page.props.auction)
 }
 
@@ -185,10 +190,11 @@ export async function enrichInBatches(
   items: Auction[],
   onEnriched: (item: Auction, info: DetailInfo) => void,
   concurrency = 8,
-): Promise<{ enriched: number; errors: number }> {
+): Promise<{ enriched: number; errors: number; firstError?: unknown }> {
   let cursor = 0
   let enriched = 0
   let errors = 0
+  let firstError: unknown
   async function worker(): Promise<void> {
     while (cursor < items.length) {
       const idx = cursor++
@@ -210,19 +216,14 @@ export async function enrichInBatches(
           authority: item.authority,
         }
         const info = await fetchDetailFor(item.detailUrlUpstream.replace(ZVBAWU_BASE, ''), identity)
-        if (info) {
-          onEnriched(item, info)
-          enriched++
-        } else {
-          // Null = fetch failed or upstream returned non-OK / unparsable HTML.
-          // Surface as an error so the aggregate count reflects reality.
-          errors++
-        }
-      } catch {
+        onEnriched(item, info)
+        enriched++
+      } catch (err) {
         errors++
+        firstError ??= err
       }
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
-  return { enriched, errors }
+  return { enriched, errors, firstError }
 }

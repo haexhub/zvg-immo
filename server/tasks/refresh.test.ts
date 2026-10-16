@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { crawlSingle, listRegions } from '../crawlers/registry'
-import { regionListCacheAgeMs } from '../utils/list-cache'
+import { regionCrawlAgeMs } from '../utils/crawl-state'
 import { drainOutbox } from '../utils/storage-uploader'
 
 vi.mock('../crawlers/registry', () => ({
@@ -12,11 +12,13 @@ vi.mock('../crawlers/crawl-cadence', () => ({ regionRefreshIntervalMs: vi.fn(() 
 vi.mock('../utils/alert-matching', () => ({ matchAlerts: vi.fn() }))
 vi.mock('../utils/history', () => ({ recordObservations: vi.fn() }))
 vi.mock('../utils/raw-archive', () => ({ archiveAuction: vi.fn() }))
-vi.mock('../utils/list-cache', () => ({
-  regionListCacheAgeMs: vi.fn(async () => null),
-  writeListCache: vi.fn(),
+vi.mock('../utils/current-auctions', () => ({ ensureAuctionIdentity: vi.fn() }))
+vi.mock('../utils/auction-fetch-state', () => ({ writeAuctionCrawlFetchState: vi.fn() }))
+vi.mock('../utils/crawl-state', () => ({
+  regionCrawlAgeMs: vi.fn(async () => null),
+  recordCrawlScope: vi.fn(),
 }))
-vi.mock('../utils/storage-uploader', () => ({ drainOutbox: vi.fn(async () => ({ uploaded: 0, failed: 0 })) }))
+vi.mock('../utils/storage-uploader', () => ({ drainOutbox: vi.fn(async () => ({ uploaded: 0, failed: 0, missing: 0 })) }))
 
 // defineTask is a Nitro auto-import — same stubbing pattern as enrich.test.ts.
 vi.stubGlobal('defineTask', (def: unknown) => def)
@@ -69,9 +71,20 @@ describe('refresh failure reporting', () => {
     expect(outcome.result).toMatchObject({ ok: 1, failed: 0 })
   })
 
+  it('does not fail the run for missing local archive outbox files', async () => {
+    vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
+    vi.mocked(crawlSingle).mockResolvedValue({ auctions: [] } as never)
+    vi.mocked(drainOutbox).mockResolvedValue({ uploaded: 0, failed: 0, missing: 440 } as never)
+    const task = await loadTask()
+
+    const outcome = await task.run()
+
+    expect(outcome.result).toMatchObject({ ok: 1, failed: 0 })
+  })
+
   it('skips a region whose list cache is still within its refresh interval', async () => {
     vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
-    vi.mocked(regionListCacheAgeMs).mockResolvedValue(60_000)
+    vi.mocked(regionCrawlAgeMs).mockResolvedValue(60_000)
     const task = await loadTask()
 
     const outcome = await task.run()

@@ -1,26 +1,34 @@
 // Manually refreshes one country from /settings: force-crawl the source once,
-// write list_cache + raw auction captures, run the full enrich archive/document
+// record the crawl scope + raw auction captures, run the full enrich archive/document
 // pipeline, then fire reprocess (rules + LLM) against the raw archive.
 //
 // Every long-running phase goes through its task wrapper so /settings can poll
-// status and a newer run can supersede an older one. The request awaits only
-// the crawl/archive phase; reprocess and external enrichment are detached
-// because a country-wide extraction run takes far longer than the reverse proxy
-// keeps a request open. Their failures are not lost: both record their outcome
-// via server/utils/task-runs.ts, which /settings polls and renders next to this
-// button (enrichStatus / reprocessStatus / externalEnrichmentStatus).
+// status (enrich queues behind an active run; reprocess and external
+// enrichment let a newer run supersede an older one). The whole chain is
+// detached: a country-wide crawl alone can take far longer than the reverse
+// proxy keeps a request open, so the request only validates and answers
+// {started:true}. Reprocess and external enrichment are chained via .then so
+// they only start once the crawl/archive phase has finished. Failures are not
+// lost: every phase records its outcome via server/utils/task-runs.ts, which
+// /settings polls and renders next to this button (enrichStatus /
+// reprocessStatus / externalEnrichmentStatus).
 
-import type { runEnrich } from '~/server/tasks/enrich'
+import { runReprocessTask } from '~/server/tasks/reprocess'
+import { runEnrichTask } from '~/server/tasks/enrich'
+import { runExternalEnrichmentTask } from '~/server/tasks/external-enrichment'
 import { ensureEnabledCountriesLoaded, isCountryEnabled, listRegisteredCountries } from '~/server/crawlers/registry'
 
 interface EnrichCountryBody {
   forceExtraction?: boolean
+  /** Set by the dashboard's crawler action when LLM extraction is started separately. */
+  runExtraction?: boolean
 }
 
 export default defineEventHandler(async (event) => {
   const country = (getRouterParam(event, 'country') ?? '').trim().toLowerCase()
-  const body = await readBody<EnrichCountryBody>(event).catch((): EnrichCountryBody => ({}))
+  const body = await readBody<EnrichCountryBody>(event).catch(() => undefined) ?? ({} as EnrichCountryBody)
   const forceExtraction = body.forceExtraction === true
+  const runExtraction = body.runExtraction !== false
   await ensureEnabledCountriesLoaded()
   const registered = listRegisteredCountries().find((candidate) => candidate.code === country)
   if (!registered) {
@@ -30,24 +38,22 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: `${registered.name} ist deaktiviert.` })
   }
 
-  const outcome = (await runTask('enrich', { payload: { country, force: true, writeListCache: true } })) as Awaited<ReturnType<typeof runEnrich>>
-  // Detached on purpose — see the file header. A rejection here is still
-  // recorded as the task's lastError by its own defineTask wrapper; the catch
-  // only keeps the trigger itself from becoming an unhandled rejection.
-  void runTask('reprocess', { payload: { country, force: forceExtraction } }).catch((err: unknown) => {
-    console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
-  })
-  void runTask('external-enrichment', { payload: { country } }).catch((err: unknown) => {
-    console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
-  })
-  return {
-    ...outcome,
-    result: outcome?.result
-      ? {
-          ...outcome.result,
-          warning: outcome.warning ?? null,
-          followUpTasksStarted: true,
-        }
-      : outcome?.result,
-  }
+  // Detached on purpose — see the file header. A rejection is still recorded
+  // as the failing task's lastError by its own wrapper; the catches only keep
+  // the triggers from becoming unhandled rejections.
+  void runEnrichTask({ country, force: true, recordCrawlScope: true, trigger: 'manual' })
+    .then(() => {
+      if (runExtraction) {
+        void runReprocessTask({ country, force: forceExtraction, trigger: 'manual' }).catch((err: unknown) => {
+          console.error('[settings/enrich] reprocess trigger failed:', (err as Error).message)
+        })
+      }
+      void runExternalEnrichmentTask({ country, trigger: 'manual' }).catch((err: unknown) => {
+        console.error('[settings/enrich] external enrichment trigger failed:', (err as Error).message)
+      })
+    })
+    .catch((err: unknown) => {
+      console.error('[settings/enrich] enrich trigger failed:', (err as Error).message)
+    })
+  return { started: true as const }
 })

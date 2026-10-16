@@ -8,10 +8,12 @@
 //   Model availability genuinely varies by key (see providers/gemini-native.ts
 //   DEFAULT_MODEL comment — 'gemini-2.5-flash' 404s for newly created keys),
 //   so this is queried live rather than hard-coded.
+// - openrouter: OpenRouter's own /models catalog (public, no auth needed).
 // - openai-compatible: arbitrary self-hosted/third-party endpoints with no
 //   common discovery contract — the UI keeps a free-text input for it and
 //   never calls this route.
 
+import { apiErrorStatusCode } from '~/lib/api-error'
 import { getPool } from '~/server/utils/db'
 import { getLlmProviderOverride, getLlmProviderProfiles, type LlmProviderScope } from '~/server/utils/app-settings'
 
@@ -26,6 +28,17 @@ async function fetchClaudeProxyModels(baseUrl: string): Promise<LlmModelOption[]
     { signal: AbortSignal.timeout(10_000) },
   )
   return (res.data ?? []).map((m) => ({ id: m.id, label: m.display_name || m.id }))
+}
+
+// Extraction sends `response_format: { type: 'json_schema', strict: true }`
+// (see providers/openai-compatible.ts), so only models whose endpoint
+// actually supports structured_outputs are offered here.
+export async function fetchOpenRouterModels(baseUrl: string): Promise<LlmModelOption[]> {
+  const res = await $fetch<{ data: { id: string; name?: string }[] }>(
+    `${baseUrl.replace(/\/$/, '')}/models`,
+    { query: { supported_parameters: 'structured_outputs' }, signal: AbortSignal.timeout(10_000) },
+  )
+  return (res.data ?? []).map((m) => ({ id: m.id, label: m.name || m.id }))
 }
 
 async function fetchGeminiModels(apiKey: string): Promise<LlmModelOption[]> {
@@ -50,6 +63,20 @@ async function fetchGeminiModels(apiKey: string): Promise<LlmModelOption[]> {
   return options
 }
 
+// Logs the upstream failure and keeps it as `cause`, so a rejected key, a TLS
+// error and a schema break are told apart in the log. Always 502: passing an
+// upstream 401 through would trip the settings UI's session-expiry handling.
+function upstreamModelsError(label: string, err: unknown) {
+  console.warn(`[settings/llm-models] ${label} model list failed`, err)
+  const status = apiErrorStatusCode(err)
+  const statusMessage = status === 401 || status === 403
+    ? `${label}: API-Key abgelehnt (HTTP ${status}), Modelle konnten nicht geladen werden.`
+    : status !== null
+      ? `${label} antwortete mit HTTP ${status}, Modelle konnten nicht geladen werden.`
+      : `${label} nicht erreichbar, Modelle konnten nicht geladen werden.`
+  return createError({ statusCode: 502, statusMessage, cause: err })
+}
+
 export default defineEventHandler(async (event) => {
   const body = (await readBody<{
     provider?: string
@@ -68,8 +95,17 @@ export default defineEventHandler(async (event) => {
     if (!baseUrl) throw createError({ statusCode: 400, statusMessage: 'baseUrl fehlt.' })
     try {
       return { models: await fetchClaudeProxyModels(baseUrl) }
-    } catch {
-      throw createError({ statusCode: 502, statusMessage: 'Proxy nicht erreichbar, Modelle konnten nicht geladen werden.' })
+    } catch (err) {
+      throw upstreamModelsError('Proxy', err)
+    }
+  }
+
+  if (provider === 'openrouter') {
+    if (!baseUrl) throw createError({ statusCode: 400, statusMessage: 'baseUrl fehlt.' })
+    try {
+      return { models: await fetchOpenRouterModels(baseUrl) }
+    } catch (err) {
+      throw upstreamModelsError('OpenRouter', err)
     }
   }
 
@@ -89,8 +125,8 @@ export default defineEventHandler(async (event) => {
     if (!apiKey) return { models: [], keyRequired: true }
     try {
       return { models: await fetchGeminiModels(apiKey) }
-    } catch {
-      throw createError({ statusCode: 502, statusMessage: 'Gemini-API nicht erreichbar, Modelle konnten nicht geladen werden.' })
+    } catch (err) {
+      throw upstreamModelsError('Gemini-API', err)
     }
   }
 

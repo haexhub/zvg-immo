@@ -2,6 +2,7 @@
 // already verified event.context.user and 401'd otherwise).
 
 import { getServiceClient } from '../../utils/supabase'
+import { publicError } from '../../utils/public-error'
 
 export interface SavedSearch {
   id: string
@@ -21,7 +22,7 @@ export default defineEventHandler(async (event): Promise<SavedSearch[]> => {
     .eq('user_id', event.context.user!.id)
     .order('created_at', { ascending: false })
   if (error) {
-    throw createError({ statusCode: 500, statusMessage: error.message })
+    throw publicError('GET /api/saved-searches', 500, 'Gespeicherte Suchen konnten nicht geladen werden.', error)
   }
   return (data ?? []).map((row) => ({
     id: row.id as string,

@@ -7,7 +7,9 @@
 
 import { getServiceClient } from './supabase'
 
-const CONTENT_TYPE: Record<string, string> = {
+type ImageContentType = 'image/jpeg' | 'image/png' | 'image/webp'
+
+const CONTENT_TYPE: Record<string, ImageContentType> = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   png: 'image/png',
@@ -34,7 +36,7 @@ function extOf(key: string): string {
 /** Content-type for a filename/key by its extension, or the generic binary
  *  fallback for an unrecognized one. Shared with callers that need to label
  *  bytes read off disk (e.g. sending a photo to an LLM as an image part). */
-export function mimeTypeFor(key: string): string {
+export function mimeTypeFor(key: string): ImageContentType | 'application/octet-stream' {
   return CONTENT_TYPE[extOf(key)] ?? 'application/octet-stream'
 }
 

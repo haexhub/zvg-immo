@@ -24,6 +24,25 @@ describe('buildAuctionSearchFilter', () => {
     expect(values[0]).toEqual(['de', 'at'])
   })
 
+  it('hides auctions the last completed crawl of their scope no longer returned', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    // Dateless platforms (kip, bima, gb, ...) have no other expiry signal.
+    expect(predicate).toContain('NOT EXISTS')
+    expect(predicate).toContain('FROM crawl_state cs')
+    expect(predicate).toContain('cs.region = a.crawl_region')
+    expect(predicate).toContain('cs.platform = a.platform')
+    expect(predicate).toContain('a.last_seen_at < cs.last_success_at')
+  })
+
+  it('keeps the date filter alongside the staleness filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+  })
+
   it('drops a requested country that the admin paused', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { values } = await buildAuctionSearchFilter(db, { country: 'de,se', llmOnly: '0' })
@@ -45,14 +64,29 @@ describe('buildAuctionSearchFilter', () => {
     const { predicate } = await buildAuctionSearchFilter(db, {})
 
     expect(getHideRulesOnlyAuctions).toHaveBeenCalledWith(db)
-    expect(predicate).toContain(`a.extraction_source = 'llm'`)
+    expect(predicate).toContain(`d.extraction_source = 'llm'`)
   })
 
   it('lets an explicit llmOnly=0 override the admin default', async () => {
     const { buildAuctionSearchFilter } = await import('./auction-search-filters')
     const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
 
-    expect(predicate).not.toContain(`a.extraction_source = 'llm'`)
+    expect(predicate).not.toContain(`d.extraction_source = 'llm'`)
+  })
+
+  it('adds a platform equality clause for a set Herkunft filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { platform: 'zvg-portal,dga-ag', llmOnly: '0' })
+
+    expect(predicate).toContain('a.platform = ANY(')
+    expect(values).toContainEqual(['zvg-portal', 'dga-ag'])
+  })
+
+  it('omits the platform clause when no origin is selected', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
+
+    expect(predicate).not.toContain('a.platform = ANY(')
   })
 
   it('treats an empty numeric parameter as unset instead of 0', async () => {
@@ -67,5 +101,133 @@ describe('buildAuctionSearchFilter', () => {
     const { predicate } = await buildAuctionSearchFilter(db, { llmOnly: '0' })
 
     expect(predicate).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+  })
+
+  it('adds an auction_geo_metrics proximity clause for a set Umgebung filter', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearSea: '5', llmOnly: '0' })
+
+    expect(predicate).toContain('m.dist_sea_m <=')
+    expect(values).toContain(5_000)
+  })
+
+  it('adds a metrics-column clause per Umgebung filter, unscoped by country', async () => {
+    // GIS WP-5: distances are precomputed against the auction's exact
+    // position, not tag-matched per country — unlike the live query this
+    // replaced, there is no more per-category country constraint to test.
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLake: '20', nearSki: '50', llmOnly: '0' })
+
+    expect(predicate).toContain('m.dist_lake_m <=')
+    expect(predicate).toContain('m.dist_ski_m <=')
+    expect(values).toContain(20_000)
+    expect(values).toContain(50_000)
+  })
+
+  it('accepts a radius exactly at the category cutoff unchanged', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+
+    for (const { param, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const { values } = await buildAuctionSearchFilter(db, { [param]: String(cutoffMeters / 1000), llmOnly: '0' })
+      expect(values).toContain(cutoffMeters)
+    }
+  })
+
+  it('clamps a radius beyond the cutoff instead of asking for distances the precompute stores as NULL', async () => {
+    const { GEO_METRIC_CATEGORIES } = await import('./geo-metric-categories')
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+
+    for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+      const overLimitKm = cutoffMeters / 1000 + 100
+      const { predicate, values } = await buildAuctionSearchFilter(db, { [param]: String(overLimitKm), llmOnly: '0' })
+
+      // Still filtered (dropping the filter would return auctions nowhere
+      // near the feature), but never against a radius the metrics table has
+      // no data for — beyond the cutoff every row is NULL, so the wider
+      // request would match strictly fewer rows than the narrower one.
+      expect(predicate).toContain(`m.${column} <=`)
+      expect(values).toContain(cutoffMeters)
+      expect(values).not.toContain(overLimitKm * 1000)
+    }
+  })
+
+  it('ignores a zero or unset Umgebung distance', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { nearSea: '0', llmOnly: '0' })
+
+    expect(predicate).not.toContain('dist_sea_m')
+  })
+
+  it('negates the place-proximity clause for a rural request', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { urbanRural: 'rural', llmOnly: '0' })
+
+    expect(predicate).toContain('NOT (')
+    expect(values).toContain('place')
+  })
+
+  it('filters by geolocated distance once lat/lng/radius are all present', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, {
+      nearLat: '52.5',
+      nearLng: '13.4',
+      nearRadius: '25',
+      llmOnly: '0',
+    })
+
+    expect(predicate).toContain('ST_DWithin')
+    // lat/lng live on auctions ("a"), not the versioned auction_details ("d")
+    // — WP-0 moved them; a.lat/a.lng is a compile-time-invisible SQL string,
+    // so nothing but a test catches a regression back to d.lat/d.lng.
+    expect(predicate).toContain('a.lat')
+    expect(predicate).toContain('a.lng')
+    expect(predicate).not.toContain('d.lat')
+    expect(predicate).not.toContain('d.lng')
+    expect(values).toContain(52.5)
+    expect(values).toContain(13.4)
+    expect(values).toContain(25_000)
+  })
+
+  it('defaults to a 25km radius so a coordinate pair without an explicit radius still filters by distance', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, { nearLat: '52.5', nearLng: '13.4', llmOnly: '0' })
+
+    expect(predicate).toContain('ST_DWithin')
+    expect(values).toContain(25_000)
+  })
+
+  it('does not send out-of-range coordinates to PostGIS', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, {
+      nearLat: '91', nearLng: '13.4', nearRadius: '25', llmOnly: '0',
+    })
+
+    expect(predicate).not.toContain('ST_DWithin')
+  })
+
+  it('adds a bounding-box clause on a.lat/a.lng once the map viewport is complete', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate, values } = await buildAuctionSearchFilter(db, {
+      north: '54.1',
+      south: '53.9',
+      east: '14.5',
+      west: '14.0',
+      llmOnly: '0',
+    })
+
+    expect(predicate).toContain('a.lat BETWEEN')
+    expect(predicate).toContain('a.lng BETWEEN')
+    expect(values).toContain(54.1)
+    expect(values).toContain(53.9)
+    expect(values).toContain(14.5)
+    expect(values).toContain(14.0)
+  })
+
+  it('skips the bounding-box clause when only part of the viewport is given', async () => {
+    const { buildAuctionSearchFilter } = await import('./auction-search-filters')
+    const { predicate } = await buildAuctionSearchFilter(db, { north: '54.1', south: '53.9', llmOnly: '0' })
+
+    expect(predicate).not.toContain('a.lat BETWEEN')
   })
 })

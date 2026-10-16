@@ -29,15 +29,19 @@ ENV NODE_ENV=production \
 # runner stage doesn't need node_modules or pnpm.
 COPY --from=builder /app/.output ./.output
 
-# Not part of Nitro's bundle — server/utils/db.ts's runMigrations() reads this
-# at runtime via fs.readFile(), which Nitro's bundler can't see and won't pull
-# into .output on its own.
-COPY --from=builder /app/server/db/schema.sql ./server/db/schema.sql
+# Not part of Nitro's bundle — server/utils/db.ts's runMigrations() reads
+# these at runtime via drizzle-orm's migrator (fs.readFileSync), which
+# Nitro's bundler can't see and won't pull into .output on its own.
+COPY --from=builder /app/server/db/migrations ./server/db/migrations
 
 # Cache directory — mount as a named volume in compose to persist across
 # restarts. process.cwd() is /app at runtime, matching the paths in
 # server/utils/geocode.ts and server/api/zvg-thumb.get.ts.
-RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs \
+# .raw_outbox (NUXT_RAW_OUTBOX_DIR, see server/utils/raw-archive.ts) must exist
+# here too: a fresh named volume only inherits node ownership when its mount
+# point exists in the image, otherwise its root is root:root and every archive
+# write fails with EACCES.
+RUN mkdir -p /app/.cache_zvg/geocode /app/.cache_zvg/thumbs /app/.raw_outbox \
     && chown -R node:node /app
 
 USER node

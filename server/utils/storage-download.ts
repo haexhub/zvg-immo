@@ -25,8 +25,13 @@ export interface CaptureRef {
   capturedAt: string
 }
 
+export interface ArchivedDocumentSet {
+  artifactVersionId: number
+  items: ArchivedDocumentSetItem[]
+}
+
 /**
- * Most recent `raw_captures` row for `(kind, platform, externalId)`,
+ * Most recent `artifact_captures` row for `(kind, platform, externalId)`,
  * optionally narrowed to a specific `sourceUrl` — used to pick the capture of
  * one particular attachment among several 'document' captures for the same
  * auction. Null when none exists or the archive isn't configured.
@@ -42,13 +47,13 @@ export async function findLatestCapture(
   try {
     const { rows } = sourceUrl
       ? await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
-          `SELECT content_hash, source_url, captured_at FROM raw_captures
+          `SELECT content_hash, source_url, captured_at FROM artifact_captures
            WHERE kind = $1 AND platform = $2 AND external_id = $3 AND source_url = $4
            ORDER BY captured_at DESC LIMIT 1`,
           [kind, platform, externalId, sourceUrl],
         )
       : await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
-          `SELECT content_hash, source_url, captured_at FROM raw_captures
+          `SELECT content_hash, source_url, captured_at FROM artifact_captures
            WHERE kind = $1 AND platform = $2 AND external_id = $3
            ORDER BY captured_at DESC LIMIT 1`,
           [kind, platform, externalId],
@@ -62,55 +67,102 @@ export async function findLatestCapture(
   }
 }
 
-export async function readDocumentSetItems(
+/**
+ * Newest-first `artifact_captures` rows for `(kind, platform, externalId)`,
+ * one per distinct `content_hash`. A crawl re-archives an unchanged listing
+ * on every run (same hash, new row), so without the dedupe a handful of
+ * identical listing snapshots would push an older, different one out of any
+ * `limit` window. Empty when none exists or the archive isn't configured.
+ */
+export async function listDistinctCaptures(
+  kind: CaptureKind,
   platform: string,
   externalId: string,
-  opts: { setHash?: string | null; version?: number | null } = {},
-): Promise<ArchivedDocumentSetItem[] | null> {
+  limit: number,
+): Promise<CaptureRef[]> {
+  const db = getPool()
+  if (!db) return []
+  try {
+    const { rows } = await db.query<{ content_hash: string; source_url: string | null; captured_at: string }>(
+      `SELECT content_hash, max(source_url) AS source_url, max(captured_at) AS captured_at
+       FROM artifact_captures
+       WHERE kind = $1 AND platform = $2 AND external_id = $3
+       GROUP BY content_hash
+       ORDER BY max(captured_at) DESC
+       LIMIT $4`,
+      [kind, platform, externalId, limit],
+    )
+    return rows.map((row) => ({ contentHash: row.content_hash, sourceUrl: row.source_url, capturedAt: row.captured_at }))
+  } catch (err) {
+    console.warn(`[storage-download] listDistinctCaptures failed: ${(err as Error).message}`)
+    return []
+  }
+}
+
+export async function readDocumentSet(
+  platform: string,
+  externalId: string,
+  opts: { id?: number | null; setHash?: string | null; version?: number | null } = {},
+): Promise<ArchivedDocumentSet | null> {
   const db = getPool()
   if (!db) return null
   try {
     const conditions = ['platform = $1', 'external_id = $2']
     const params: unknown[] = [platform, externalId]
+    if (opts.id != null) conditions.push(`id = $${params.push(opts.id)}`)
     if (opts.setHash) conditions.push(`set_hash = $${params.push(opts.setHash)}`)
     if (opts.version != null) conditions.push(`version = $${params.push(opts.version)}`)
     const { rows } = await db.query<{
-      ordinal: number
-      kind: string
+      set_id: string | number
+      ordinal: number | null
+      kind: string | null
       label: string | null
       filename: string | null
       file_id: string | null
       source_url: string
-      content_hash: string
-      content_type: string
+      content_hash: string | null
+      content_type: string | null
     }>(
       `WITH selected_set AS (
          SELECT id
-         FROM raw_document_sets
+         FROM artifact_versions
          WHERE ${conditions.join(' AND ')}
          ORDER BY version DESC
          LIMIT 1
        )
-       SELECT ordinal, kind, label, filename, file_id, source_url, content_hash, content_type
-       FROM raw_document_set_items
-       WHERE set_id = (SELECT id FROM selected_set)
-       ORDER BY ordinal ASC`,
+       SELECT selected_set.id AS set_id, item.ordinal, item.kind, item.label,
+              item.filename, item.file_id, item.source_url, item.content_hash,
+              item.content_type
+       FROM selected_set
+       LEFT JOIN artifact_version_items item ON item.set_id = selected_set.id
+       ORDER BY item.ordinal ASC`,
       params,
     )
-    return rows.map((row) => ({
+    const first = rows[0]
+    if (!first) return null
+    const items = rows.flatMap((row): ArchivedDocumentSetItem[] => row.ordinal == null ? [] : [{
       ordinal: row.ordinal,
       kind: row.kind as ArchivedDocumentSetItem['kind'],
       label: row.label,
       filename: row.filename,
       fileId: row.file_id,
       sourceUrl: row.source_url,
-      contentHash: row.content_hash,
+      contentHash: row.content_hash!,
       contentType: row.content_type as ArchivedDocumentSetItem['contentType'],
-    }))
+    }])
+    return { artifactVersionId: Number(first.set_id), items }
   } catch (err) {
-    console.warn(`[storage-download] readDocumentSetItems failed: ${(err as Error).message}`)
+    console.warn(`[storage-download] readDocumentSet failed: ${(err as Error).message}`)
     return null
   }
+}
+
+export async function readDocumentSetItems(
+  platform: string,
+  externalId: string,
+  opts: { id?: number | null; setHash?: string | null; version?: number | null } = {},
+): Promise<ArchivedDocumentSetItem[] | null> {
+  return (await readDocumentSet(platform, externalId, opts))?.items ?? null
 }
 
 /**
@@ -124,7 +176,7 @@ export async function downloadBlob(contentHash: string): Promise<Buffer | null> 
   if (!db) return null
   try {
     const { rows } = await db.query<{ s3_key: string; content_type: string }>(
-      'SELECT s3_key, content_type FROM raw_blobs WHERE content_hash = $1',
+      'SELECT s3_key, content_type FROM artifact_blobs WHERE content_hash = $1',
       [contentHash],
     )
     const row = rows[0]

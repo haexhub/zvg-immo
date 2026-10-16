@@ -7,6 +7,16 @@
 import type { Pool } from 'pg'
 import { ensureEnabledCountriesLoaded, getEnabledCountryCodes } from '~/server/crawlers/registry'
 import { getHideRulesOnlyAuctions } from '~/server/utils/app-settings'
+import { GEO_METRIC_CATEGORIES } from '~/server/utils/geo-metric-categories'
+import { proximityConditionAnyOf } from '~/server/utils/osm-proximity'
+import { commaList, finiteNumber, hasExplicitHideRulesOnly, parseAuctionSearchFilters } from '~/lib/auction-search-filter-contract'
+
+// A settlement counts as "urban" if a city/town-sized OSM place node sits
+// within this radius; otherwise the auction is "rural". Arbitrary but easy
+// to retune later — there's no existing urban/rural concept in this codebase
+// to anchor to.
+const URBAN_PLACE_TAGS = ['city', 'town']
+const URBAN_RADIUS_METERS = 5_000
 
 export interface AuctionSearchFilter {
   /** `WHERE …`, or '' when nothing is constrained. */
@@ -15,22 +25,13 @@ export interface AuctionSearchFilter {
   values: unknown[]
 }
 
-export function commaList(value: unknown): string[] {
-  const raw = Array.isArray(value) ? value.join(',') : String(value ?? '')
-  return [...new Set(raw.split(',').map((entry) => entry.trim()).filter(Boolean))]
-}
-
-/** '' must yield null, not Number('') === 0 — callers use null to mean "unset". */
-export function finiteNumber(value: unknown): number | null {
-  if (value == null || value === '') return null
-  const parsed = Number(Array.isArray(value) ? value[0] : value)
-  return Number.isFinite(parsed) ? parsed : null
-}
+export { commaList, finiteNumber } from '~/lib/auction-search-filter-contract'
 
 export async function buildAuctionSearchFilter(
   db: Pool,
   query: Record<string, unknown>,
 ): Promise<AuctionSearchFilter> {
+  const filters = parseAuctionSearchFilters(query)
   const values: unknown[] = []
   const where: string[] = []
   const add = (value: unknown): string => {
@@ -44,72 +45,152 @@ export async function buildAuctionSearchFilter(
   // applied here — unlike the list caches this replaced, which filtered on read.
   await ensureEnabledCountriesLoaded()
   const enabled = getEnabledCountryCodes()
-  const requested = commaList(query.country)
-    .filter((entry) => /^[a-z]{2}$/i.test(entry))
-    .map((entry) => entry.toLowerCase())
+  const requested = filters.countries
   const countries = requested.length ? requested.filter((entry) => enabled.includes(entry)) : enabled
   where.push(`a.country = ANY(${add(countries)}::text[])`)
 
   // `auctions` is upserted row-by-row (current-auctions.ts) and never pruned,
-  // so an auction whose date has passed keeps its row indefinitely once the
-  // crawl stops returning it — unlike list_cache, which replaced the whole
-  // region blob per crawl and so dropped concluded auctions for free. Filter
-  // it here instead, the same way the enabled-country scope above is applied
-  // at read time rather than by deleting rows.
+  // so an auction whose date has passed keeps its row indefinitely. Filter it
+  // here, the same way the enabled-country scope above is applied at read time
+  // rather than by deleting rows.
   where.push(`(a.auction_date_iso IS NULL OR a.auction_date_iso >= now())`)
+
+  // Expiry, part two. The date filter above only reaches auctions that have a
+  // date, and several platforms (and classifieds-style sources) do not always
+  // publish one. No portal publishes a "sold"/"withdrawn" flag either. The
+  // one remaining signal is that a crawl which DID complete stopped returning
+  // the listing — recorded as auctions.last_seen_at vs crawl_state.last_success_at
+  // (server/utils/crawl-state.ts).
+  //
+  // Written as NOT EXISTS so every uncertainty resolves to "keep showing it":
+  // no crawl_state row for the scope (never crawled, or crawl_region still
+  // NULL from before this column existed) means no row to compare against, so
+  // nothing is hidden. A broken crawler therefore goes stale rather than
+  // silently emptying its source out of the search results.
+  where.push(`NOT EXISTS (
+    SELECT 1 FROM crawl_state cs
+     WHERE cs.country = a.country
+       AND cs.region = a.crawl_region
+       AND cs.platform = a.platform
+       AND a.last_seen_at < cs.last_success_at
+  )`)
 
   const regionNames = commaList(query.regionNames)
   if (regionNames.length) where.push(`(a.country || ':' || a.region) = ANY(${add(regionNames)}::text[])`)
 
-  const search = String(query.q ?? '').trim()
+  const search = filters.search.trim()
   if (search) {
-    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, a.address, a.description) ILIKE ${add(`%${search}%`)}`)
+    where.push(`concat_ws(' ', a.case_number, a.authority, a.title, d.address, d.description) ILIKE ${add(`%${search}%`)}`)
   }
-  const authority = String(query.authority ?? '')
+  const authority = filters.authority
   if (authority && authority !== 'all') where.push(`a.authority = ${add(authority)}`)
-  const category = String(query.category ?? '')
-  if (category && category !== 'all') where.push(`a.property_type = ${add(category)}`)
-  const condition = String(query.condition ?? '')
-  if (condition && condition !== 'all') where.push(`a.condition #>> '{}' = ${add(condition)}`)
-  const features = commaList(query.features)
-  if (features.length) where.push(`a.features && ${add(features)}::text[]`)
-  if (String(query.photos ?? '') === '1') where.push('a.photo_count > 0')
-  if (String(query.cancelled ?? '') !== '1') where.push('a.cancelled = false')
+  const category = filters.category
+  if (category && category !== 'all') where.push(`d.property_type = ${add(category)}`)
+  if (filters.platform.length) where.push(`a.platform = ANY(${add(filters.platform)}::text[])`)
+  // Comma-list (not a single exact match) so the landing page's "best
+  // maintained" rail can ask for multiple condition tiers at once
+  // (neuwertig,gepflegt) — pages/search.vue's single-select UI still works
+  // unchanged since commaList('x') === ['x'].
+  const conditions = commaList(filters.condition).filter((entry) => entry !== 'all')
+  if (conditions.length) where.push(`d.condition #>> '{}' = ANY(${add(conditions)}::text[])`)
+  const features = filters.features
+  if (features.length) where.push(`d.features && ${add(features)}::text[]`)
+  if (filters.onlyWithPhotos) where.push('d.photo_count > 0')
+  if (!filters.includeCancelled) where.push('a.cancelled = false')
 
   // pages/search.vue only puts llmOnly in the URL when the user overrode the
   // admin-configured default (/api/display-settings), so an absent parameter
   // means "use that default" — not "no filter".
-  const llmOnlyParam = String(query.llmOnly ?? '')
-  const hideRulesOnly = llmOnlyParam === '1'
-    ? true
-    : llmOnlyParam === '0'
-      ? false
-      : await getHideRulesOnlyAuctions(db)
+  const hideRulesOnly = hasExplicitHideRulesOnly(query)
+    ? filters.hideRulesOnly
+    : await getHideRulesOnlyAuctions(db)
   if (hideRulesOnly) {
+    // The jsonb columns keep AuctionExtraction's "never checked" (SQL NULL)
+    // vs "checked, found nothing" (jsonb null) distinction, so IS NOT NULL
+    // here means the same as the `? 'condition'` key-existence test it
+    // replaces (see auction-details.ts's json()).
     where.push(`(
-      a.extraction_source = 'llm'
-      OR ec.extraction ? 'llmAnalyzedAt'
-      OR ec.extraction ? 'condition'
-      OR ec.extraction ? 'features'
-      OR ec.extraction ? 'insights'
+      d.extraction_source = 'llm'
+      OR d.llm_analyzed_at IS NOT NULL
+      OR d.condition IS NOT NULL
+      OR d.features IS NOT NULL
+      OR d.insights IS NOT NULL
     )`)
   }
 
   const ranges: Array<[unknown, string, '>=' | '<=']> = [
-    [query.priceMin, 'a.market_value_eur', '>='],
-    [query.priceMax, 'a.market_value_eur', '<='],
-    [query.landMin, 'a.land_area_sqm', '>='],
-    [query.landMax, 'a.land_area_sqm', '<='],
-    [query.livMin, 'a.living_area_sqm', '>='],
-    [query.livMax, 'a.living_area_sqm', '<='],
-    [query.yearBuiltMin, 'a.year_built', '>='],
-    [query.yearBuiltMax, 'a.year_built', '<='],
-    [query.renovationYearMin, 'a.last_renovation_year', '>='],
-    [query.renovationYearMax, 'a.last_renovation_year', '<='],
+    [filters.priceMin, 'd.market_value_eur', '>='],
+    [filters.priceMax, 'd.market_value_eur', '<='],
+    [filters.landMin, 'd.land_area_sqm', '>='],
+    [filters.landMax, 'd.land_area_sqm', '<='],
+    [filters.livMin, 'd.living_area_sqm', '>='],
+    [filters.livMax, 'd.living_area_sqm', '<='],
+    [filters.yearBuiltMin, 'd.year_built', '>='],
+    [filters.yearBuiltMax, 'd.year_built', '<='],
+    [filters.renovationYearMin, 'd.last_renovation_year', '>='],
+    [filters.renovationYearMax, 'd.last_renovation_year', '<='],
   ]
   for (const [raw, column, operator] of ranges) {
     const value = finiteNumber(raw)
     if (value != null) where.push(`${column} ${operator} ${add(value)}`)
+  }
+
+  // Umgebung ("environment") proximity filters — GIS WP-5: a plain column
+  // comparison against auction_geo_metrics (precomputed nightly from
+  // geo_features, see server/tasks/build-auction-geo-metrics.ts) instead of a
+  // live EXISTS/ST_DWithin join against osm_local_elements. Requires the
+  // caller's FROM to LEFT JOIN auction_geo_metrics AS m — see
+  // GEO_METRICS_JOIN_SQL (auctions.get.ts).
+  for (const { param, column, cutoffMeters } of GEO_METRIC_CATEGORIES) {
+    const candidate = filters[param as keyof typeof filters]
+    const km = typeof candidate === 'number' ? candidate : null
+    if (km == null || km <= 0) continue
+    // Clamping, not rejecting: past the cutoff the precompute stores NULL, so
+    // a larger radius would match strictly *fewer* rows than a smaller one
+    // (see geo-metric-categories.ts). Everything within the cutoff is still a
+    // correct answer to the wider request; dropping the filter entirely would
+    // instead return auctions nowhere near the feature.
+    const meters = Math.min(km * 1000, cutoffMeters)
+    // A LEFT JOINed m with no row (ungeocoded auction) makes m.<column>
+    // NULL, and NULL <= x is NULL — false in a WHERE clause, so an
+    // ungeocoded auction correctly drops out only once a geofilter like this
+    // one is actually active, same as the live query it replaces.
+    where.push(`m.${column} <= ${add(meters)}`)
+  }
+
+  const urbanRural = filters.urbanRural
+  if (urbanRural === 'urban' || urbanRural === 'rural') {
+    const nearCity = proximityConditionAnyOf('place', URBAN_PLACE_TAGS, URBAN_RADIUS_METERS, add)
+    where.push(urbanRural === 'urban' ? nearCity : `NOT (${nearCity})`)
+  }
+
+  // Search-Grid: server-side viewport scoping — pages/search.vue sends the
+  // map's current bounds once it has one, so the list can be paginated by
+  // what's actually on screen instead of a relevance/date/price order that
+  // has nothing to do with geography. A row with no lat/lng (not yet
+  // geocoded) can never be known to be inside the viewport, and BETWEEN
+  // against a NULL column is NULL — false in a WHERE clause — so it drops
+  // out here the same way it would if it were simply missing from the map.
+  const north = finiteNumber(query.north)
+  const south = finiteNumber(query.south)
+  const east = finiteNumber(query.east)
+  const west = finiteNumber(query.west)
+  if (north != null && south != null && east != null && west != null) {
+    where.push(`a.lat BETWEEN ${add(south)} AND ${add(north)} AND a.lng BETWEEN ${add(west)} AND ${add(east)}`)
+  }
+
+  // "Immobilien in der Nähe" — the user's own browser-geolocated position,
+  // filtered directly against the auction's own geocoded coordinates. No OSM
+  // data involved, so it works everywhere an auction already has lat/lng.
+  const nearLat = filters.nearLat
+  const nearLng = filters.nearLng
+  const nearRadiusKm = filters.nearRadius
+  if (nearLat != null && nearLng != null && nearRadiusKm != null && nearRadiusKm > 0) {
+    where.push(`a.lat IS NOT NULL AND a.lng IS NOT NULL AND ST_DWithin(
+      ST_MakePoint(a.lng, a.lat)::geography,
+      ST_MakePoint(${add(nearLng)}, ${add(nearLat)})::geography,
+      ${add(nearRadiusKm * 1000)}
+    )`)
   }
 
   return { predicate: where.length ? `WHERE ${where.join(' AND ')}` : '', values }

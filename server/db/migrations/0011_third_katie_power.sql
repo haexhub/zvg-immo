@@ -1,0 +1,1 @@
+ALTER TABLE "auction_fetch_state" ADD COLUMN "photo_last_attempted_at" timestamp with time zone;
