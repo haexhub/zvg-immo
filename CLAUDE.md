@@ -17,7 +17,7 @@ Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`
 | Card | Routen | Modus |
 |---|---|---|
 | SettingsCountryStatusOverview | GET `/api/settings/{crawl-status,llm-status,translation-status-by-language,osm-import,status-snapshots}`, GET `/api/settings/{crawl,llm,translation,osm}-status/[country]`, POST `/api/settings/countries/[code]/{enrich,enrich-backlog,enrich-retry-failed,reprocess-backlog,reprocess-retry-failed,reprocess-force,translation-retry-open,translation-retry-failed}`, POST `/api/settings/auction/[platform]/[id]/{enrich,reprocess,translation}-retry`, POST `/api/settings/osm-enrichment/[country]`, POST `/api/settings/osm-import/[country]` | alle POSTs detached (Enrich verkettet Reprocess/External-Enrichment nach dem Crawl); `osm-import` merkt die Anforderung pro Land nur vor, importiert wird vom täglichen Host-Job (nicht in dieser App). Verschachtelt: SettingsAutomationControlsCard, SettingsCountrySourcesCard, SettingsTranslationLanguageStatusCard |
-| SettingsAutomationControlsCard | GET/PUT `/api/settings/automation` | sync |
+| SettingsAutomationControlsCard | GET/PUT `/api/settings/automation` | sync; neben den zwei Schaltern das Budget `llmMaxPerRun` (LLM-Aufrufe je Reprocess-Lauf, 1–1000, `null` = Env-Default `NUXT_EXTRACT_LLM_MAX_PER_RUN`; wirkt ab dem nächsten Lauf, `resolveMaxLlmPerRun` in `reprocess-input.ts`) |
 | SettingsCountrySourcesCard | GET/PUT `/api/settings/countries` | sync |
 | SettingsOperationsCard | GET `/api/settings/operations` | sync |
 | SettingsGeoMetricsCard | GET/POST `/api/settings/geo-metrics` | detached, **nur ganz Europa** (kein Pro-Land-Scoping) |

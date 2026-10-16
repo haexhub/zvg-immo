@@ -8,16 +8,22 @@ import {
   DEFAULT_AUTOMATIC_LLM_ENABLED,
   getAutomaticCrawlingEnabled,
   getAutomaticLlmEnabled,
+  getLlmMaxPerRun,
 } from '~/server/utils/app-settings'
+import { readMaxLlmPerRun } from '~/server/utils/tasks/reprocess-input'
 
 export default defineEventHandler(async () => {
+  // `llmMaxPerRun` is the admin-set cap (null = none stored); `llmMaxPerRunDefault`
+  // is what applies then (NUXT_EXTRACT_LLM_MAX_PER_RUN or the built-in default).
+  const llmMaxPerRunDefault = readMaxLlmPerRun()
   const db = getPool()
   if (!db) {
-    return { crawlersEnabled: DEFAULT_AUTOMATIC_CRAWLING_ENABLED, llmEnabled: DEFAULT_AUTOMATIC_LLM_ENABLED }
+    return { crawlersEnabled: DEFAULT_AUTOMATIC_CRAWLING_ENABLED, llmEnabled: DEFAULT_AUTOMATIC_LLM_ENABLED, llmMaxPerRun: null, llmMaxPerRunDefault }
   }
-  const [crawlersEnabled, llmEnabled] = await Promise.all([
+  const [crawlersEnabled, llmEnabled, llmMaxPerRun] = await Promise.all([
     getAutomaticCrawlingEnabled(db),
     getAutomaticLlmEnabled(db),
+    getLlmMaxPerRun(db),
   ])
-  return { crawlersEnabled, llmEnabled }
+  return { crawlersEnabled, llmEnabled, llmMaxPerRun, llmMaxPerRunDefault }
 })

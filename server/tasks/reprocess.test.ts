@@ -50,7 +50,7 @@ vi.mock('../utils/extract/llm-task-config', () => ({
   readExtractionChainStrategy: vi.fn(),
   readExtractionLlmConfigChain: vi.fn(),
 }))
-vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn() }))
+vi.mock('../utils/app-settings', () => ({ readLlmExecutionMode: vi.fn(), getLlmMaxPerRun: vi.fn(async () => null) }))
 vi.mock('../utils/extract/llm-batch', () => ({
   isLlmBatchPending: vi.fn(() => false),
   isLlmBatchProviderBroken: vi.fn(async () => false),

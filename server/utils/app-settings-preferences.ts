@@ -69,15 +69,28 @@ export async function setAutomaticLlmEnabled(db: Pool, value: boolean): Promise<
   await writeSetting(db, AUTOMATIC_LLM_ENABLED_KEY, value)
 }
 
-/** Writes both automation preferences in one transaction, so a failure on the
- * second upsert cannot leave one preference changed while the caller's error
- * handling assumes neither write took effect. */
+const LLM_MAX_PER_RUN_KEY = 'llm_max_per_run'
+export const MAX_LLM_MAX_PER_RUN = 1000
+
+/** Admin-set cap on LLM calls per scheduled reprocess run, or null when none
+ * is stored (the env/default value in reprocess-input.ts applies then). Takes
+ * effect on the next run — no redeploy. */
+export async function getLlmMaxPerRun(db: Pool): Promise<number | null> {
+  const value = (await readSetting(db, LLM_MAX_PER_RUN_KEY))?.value
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_LLM_MAX_PER_RUN ? value : null
+}
+
+/** Writes the automation preferences in one transaction, so a failure on a
+ * later upsert cannot leave one preference changed while the caller's error
+ * handling assumes none of the writes took effect. `llmMaxPerRun` is left
+ * untouched when undefined and cleared (back to the env default) when null. */
 export async function setAutomationSettings(
   db: Pool,
-  value: { crawlersEnabled: boolean; llmEnabled: boolean },
+  value: { crawlersEnabled: boolean; llmEnabled: boolean; llmMaxPerRun?: number | null },
 ): Promise<void> {
   await drizzle(db).transaction(async (tx) => {
     await upsertSetting(tx, AUTOMATIC_CRAWLING_ENABLED_KEY, value.crawlersEnabled)
     await upsertSetting(tx, AUTOMATIC_LLM_ENABLED_KEY, value.llmEnabled)
+    if (value.llmMaxPerRun !== undefined) await upsertSetting(tx, LLM_MAX_PER_RUN_KEY, value.llmMaxPerRun)
   })
 }
