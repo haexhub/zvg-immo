@@ -26,6 +26,16 @@ describe('readCrawlStatusByCountry', () => {
     })
   })
 
+  it('counts only current auctions, not expired or no-longer-listed ones', async () => {
+    const query = vi.fn(async () => ({ rows: [] }))
+    vi.mocked(getPool).mockReturnValue({ query } as never)
+
+    await readCrawlStatusByCountry()
+    const sql = String((query.mock.calls[0] as unknown[])[0])
+    expect(sql).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+    expect(sql).toContain('a.last_seen_at < cs.last_success_at')
+  })
+
   it('returns an empty object when no DB is configured', async () => {
     vi.mocked(getPool).mockReturnValue(null)
     await expect(readCrawlStatusByCountry()).resolves.toEqual({})

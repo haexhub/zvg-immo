@@ -6,6 +6,7 @@
 
 import { CONTENT_TARGET_LANGS, isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
 import { AUCTION_TRANSLATION_CLAIM_LEASE_MS } from './content-translation'
+import { CURRENT_AUCTION_CONDITIONS } from './current-auction-sql'
 import { getPool } from './db'
 
 export type TranslationStatusBucket = 'done' | 'error' | 'open' | 'pending'
@@ -131,6 +132,7 @@ async function readTranslationCandidates(filters: TranslationCandidateFilters = 
          ON t.platform = a.platform AND t.external_id = a.external_id
         AND t.version = d.version AND t.lang = target.lang
       WHERE ($2::text IS NULL OR lower(a.country) = $2)
+        AND ${CURRENT_AUCTION_CONDITIONS.join(' AND ')}
         AND (a.title IS NOT NULL OR d.address IS NOT NULL OR d.description IS NOT NULL
           OR d.document_summary IS NOT NULL OR d.extraction_texts IS NOT NULL)`,
     [targetLanguages, country ?? null],
