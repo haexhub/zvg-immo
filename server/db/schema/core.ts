@@ -124,6 +124,19 @@ export const artifactBlobs = pgTable('artifact_blobs', {
   uploadedAt: timestamp('uploaded_at', { withTimezone: true }),
 }).enableRLS()
 
+// Content-addressed Docling Markdown for archived PDFs. A failed_at row is
+// terminal only; transient conversion outages are deliberately not cached.
+export const documentMarkdown = pgTable('document_markdown', {
+  pdfContentHash: text('pdf_content_hash').primaryKey().references(() => artifactBlobs.contentHash),
+  markdownContentHash: text('markdown_content_hash').references(() => artifactBlobs.contentHash),
+  pageCount: integer('page_count'),
+  convertedAt: timestamp('converted_at', { withTimezone: true }),
+  failedAt: timestamp('failed_at', { withTimezone: true }),
+  error: text('error'),
+}, (table) => [
+  index('idx_document_markdown_failed').on(table.failedAt),
+]).enableRLS()
+
 // Deduplicated capture index. country/region/authority/case_number were
 // dropped in favor of joining `auctions` once the identity redesign
 // guaranteed that row always exists before any capture is written.

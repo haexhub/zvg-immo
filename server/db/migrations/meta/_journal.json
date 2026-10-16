@@ -225,6 +225,13 @@
       "when": 1791921841792,
       "tag": "0031_restrict_own_rows_policies_to_select",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792145498055,
+      "tag": "0032_mushy_natasha_romanoff",
+      "breakpoints": true
     }
   ]
 }

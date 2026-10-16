@@ -157,10 +157,10 @@ function compactDocumentText(text: string, limit: number): string {
 }
 
 /**
- * Assemble provider-neutral content parts from an LlmInput. When `pdfBytes`
- * is set (a provider with native document understanding is in play),
- * `pdfText`/`pdfPageImages` are left out — sending both would double the
- * token cost for the same information.
+ * Assemble provider-neutral content parts from an LlmInput. Rendered page
+ * images are omitted when native PDF parts are present, but pdfText is kept:
+ * Docling Markdown describes PDFs whose native bytes are withheld, so a mixed
+ * set must reach the model complete.
  */
 export function buildParts(input: LlmInput): ContentPart[] {
   const text: string[] = []
@@ -188,7 +188,7 @@ export function buildParts(input: LlmInput): ContentPart[] {
       ? [{ label: 'Gutachten/Exposé', data: input.pdfBytes }]
       : []
   const usingDocumentPart = nativeDocuments.length > 0
-  if (input.pdfText && !usingDocumentPart) {
+  if (input.pdfText) {
     text.push(`Auszug aus Gutachten/Exposé (PDF):\n${compactDocumentText(input.pdfText, MAX_PDF_CHARS)}`)
   }
   if (input.pdfPageImages?.length && !usingDocumentPart) {

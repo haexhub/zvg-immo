@@ -6,14 +6,21 @@ import {
   type BlobContentType,
   type DocumentIdentity,
 } from '../raw-archive'
+import { getPool } from '../db'
 import { downloadBlob, findLatestCapture, readDocumentSet } from '../storage-download'
 import { readArchivedAuctionSnapshot } from '../archived-auction'
 import { detectImageExt, type ImageExt } from './image-bytes'
+import { doclingBaseUrl, markdownForPdf } from './docling'
 import { docxBufferToText } from './docx-text'
 import { buildDocumentLlmParts, buildDocumentSummaryInputs, MAP_REDUCE_DOCUMENT_THRESHOLD, type DocumentSummaryInput } from './pdf-documents'
 import { extractPdfTextFromBuffer, pdfHasTrustworthyEncoding } from './pdf-text'
 import { renderPdfPagesJpeg } from './pdf-render'
 import type { LlmInput } from './llm'
+
+// llm.ts's provider-facing PDF cap is shared by all PDF text, including the
+// legacy pdftotext fallback. Keep that fallback at its previous per-document
+// budget while allowing Docling's structured Markdown to use the larger cap.
+const LEGACY_PDFTOTEXT_MAX_CHARS = 60_000
 
 type LlmAttachmentFormat = 'pdf' | 'docx' | 'html' | 'text' | 'image' | 'unsupported'
 
@@ -222,8 +229,10 @@ async function buildPreparedInput(
   const pdfSources = pdfs.map((doc) => ({
     source: doc,
     label: doc.label,
-    text: opts.nativeDocuments ? null : doc.text,
-    data: opts.nativeDocuments ? doc.bytes.toString('base64') : undefined,
+    // Converted PDFs carry Markdown even for native providers. Unconverted
+    // PDFs keep their bytes so a mixed document set remains complete.
+    text: doc.text,
+    data: opts.nativeDocuments && !doc.text ? doc.bytes.toString('base64') : undefined,
   }))
   const renderOpts = {
     native: opts.nativeDocuments,
@@ -235,7 +244,9 @@ async function buildPreparedInput(
   const documentImages = documents
     .filter((doc) => doc.format === 'image' && doc.attachment.kind !== 'photo')
     .map((doc) => ({ label: doc.label, mimeType: doc.contentType, data: doc.bytes.toString('base64') }))
-  const textDocuments = opts.nativeDocuments ? documents : documents.filter((doc) => doc.format !== 'pdf')
+  // PDF prose is assembled into pdfText; keeping it in documentText would
+  // duplicate converted Markdown for native providers.
+  const textDocuments = documents.filter((doc) => doc.format !== 'pdf')
   const documentText = combineDocumentText(textDocuments, opts.extraText)
 
   // Skip building the combined pdfText/pdfPageImages/pdfBytes blob entirely
@@ -288,7 +299,15 @@ export async function prepareDocument(
   attachment: Attachment,
   ordinal: number,
   bytes: Buffer,
-  opts: { identity?: DocumentIdentity; capturedAt?: string; nativeDocuments: boolean; contentHash?: string | null },
+  opts: {
+    identity?: DocumentIdentity
+    capturedAt?: string
+    nativeDocuments: boolean
+    contentHash?: string | null
+    /** Only archived/reprocessing documents pay the Docling conversion cost. */
+    docling?: boolean
+    country?: string | null
+  },
 ): Promise<PreparedAttachmentDocument> {
   const { format, contentType } = inferFormat(attachment, bytes)
   const contentHash = opts.contentHash ?? (
@@ -296,9 +315,21 @@ export async function prepareDocument(
       ? await archiveDocumentBlob(bytes, contentType, opts.identity, attachment.proxyUrl, opts.capturedAt)
       : null
   )
-  let text = format === 'pdf'
-    ? opts.nativeDocuments ? null : await extractPdfTextFromBuffer(bytes)
-    : textForPrepared(format, bytes)
+  const label = attachmentLabel(attachment)
+  let text: string | null = null
+  if (format === 'pdf') {
+    if (opts.docling) {
+      text = await markdownForPdf(getPool(), contentHash, bytes, {
+        label,
+        country: opts.country ?? opts.identity?.country,
+      })
+    }
+    if (text == null && !opts.nativeDocuments) {
+      text = (await extractPdfTextFromBuffer(bytes))?.slice(0, LEGACY_PDFTOTEXT_MAX_CHARS) ?? null
+    }
+  } else {
+    text = textForPrepared(format, bytes)
+  }
   // A PDF whose fonts use a CJK CID encoding (seen from scanner OCR software
   // that mismapped Cyrillic onto a Japanese font) still yields plenty of
   // characters from pdftotext, just not real text — treat it the same as no
@@ -313,7 +344,7 @@ export async function prepareDocument(
   return {
     attachment,
     ordinal,
-    label: attachmentLabel(attachment),
+    label,
     format,
     contentType,
     bytes,
@@ -345,8 +376,10 @@ async function prepareArchivedDocumentSetItems(
     extraText?: string[]
     sourceAttachments?: readonly Attachment[]
     allowMapReduce?: boolean
+    country?: string | null
   } = { nativeDocuments: false },
 ): Promise<PreparedLlmDocuments> {
+  const docling = !!doclingBaseUrl()
   const prepared = (
     await mapDocumentsBounded(items, async (item) => {
       const bytes = await downloadBlob(item.contentHash)
@@ -354,6 +387,8 @@ async function prepareArchivedDocumentSetItems(
       return prepareDocument(attachmentFromDocumentSetItem(item, opts.sourceAttachments), item.ordinal, bytes, {
         nativeDocuments: opts.nativeDocuments,
         contentHash: item.contentHash,
+        docling,
+        country: opts.country,
       })
     })
   ).filter((doc): doc is PreparedAttachmentDocument => doc != null)
@@ -395,6 +430,7 @@ export async function prepareArchivedLlmDocuments(
     ...opts,
     extraText,
     sourceAttachments: auction.attachments,
+    country: auction.country,
   })
   if (opts.artifactVersionId == null) return prepared
   return documentSet == null ? { ...prepared, documentSetComplete: false } : prepared

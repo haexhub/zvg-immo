@@ -2,6 +2,7 @@ import { deflateRawSync } from 'node:zlib'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction } from '~/types/auction'
 import { downloadBlob, findLatestCapture, listDistinctCaptures, readDocumentSet } from '../storage-download'
+import { markdownForPdf } from './docling'
 
 // fetchPublicUrl resolves every upstream host before fetching; answer with a
 // public address so the stubbed fetch is reached without real DNS.
@@ -12,6 +13,15 @@ vi.mock('../storage-download', () => ({
   listDistinctCaptures: vi.fn(),
   readDocumentSet: vi.fn(),
 }))
+vi.mock('../db', () => ({ getPool: vi.fn(() => null) }))
+vi.mock('./docling', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./docling')>()
+  return {
+    ...actual,
+    doclingBaseUrl: vi.fn(() => 'http://docling:5001'),
+    markdownForPdf: vi.fn(async () => null),
+  }
+})
 // archiveDocumentBlob/archiveDocumentText hit Postgres via getPool(), which
 // calls the Nuxt-only useRuntimeConfig() — unavailable in this plain vitest
 // environment. prepareLiveLlmDocuments's tests below only care about the
@@ -145,6 +155,8 @@ beforeEach(() => {
   vi.mocked(listDistinctCaptures).mockResolvedValue([])
   vi.mocked(readDocumentSet).mockResolvedValue(null)
   vi.mocked(downloadBlob).mockResolvedValue(null)
+  vi.mocked(markdownForPdf).mockReset()
+  vi.mocked(markdownForPdf).mockResolvedValue(null)
 })
 
 describe('pickAllLlmDocumentAttachments', () => {
@@ -336,6 +348,47 @@ describe('prepareArchivedLlmDocuments', () => {
 
     expect(prepared.input.documentSummaryInputs).toBeUndefined()
     expect(prepared.input.pdfText).toContain('=== Dokument 0 ===')
+  })
+
+  describe('with Docling configured', () => {
+    it('keeps converted Markdown as text for native providers', async () => {
+      vi.mocked(markdownForPdf).mockResolvedValue('## Flurstücke\n\n| Gemarkung | m² |')
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 22, items: [
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
+      ] })
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true, artifactVersionId: 22 })
+
+      expect(prepared.input.pdfText).toContain('| Gemarkung | m² |')
+      expect(prepared.input.pdfBytes).toBeNull()
+      expect(prepared.input.pdfDocuments).toBeUndefined()
+    })
+
+    it('keeps converted text and native bytes in a mixed set', async () => {
+      vi.mocked(markdownForPdf).mockImplementation(async (_db, hash) => hash === 'converted' ? '## Konvertiert' : null)
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 23, items: [
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'a.pdf', fileId: '1', sourceUrl: 'https://example.test/a.pdf', contentHash: 'converted', contentType: 'application/pdf' },
+        { ordinal: 1, kind: 'document', label: 'Bekanntmachung', filename: 'b.pdf', fileId: '2', sourceUrl: 'https://example.test/b.pdf', contentHash: 'failed', contentType: 'application/pdf' },
+      ] })
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: true, artifactVersionId: 23 })
+
+      expect(prepared.input.pdfText).toContain('## Konvertiert')
+      expect(prepared.input.pdfBytes).toBe(Buffer.from('%PDF-1.4\n%%EOF').toString('base64'))
+    })
+
+    it('falls back to pdftotext when Docling has no conversion', async () => {
+      vi.mocked(readDocumentSet).mockResolvedValue({ artifactVersionId: 24, items: [
+        { ordinal: 0, kind: 'document', label: 'Gutachten', filename: 'g.pdf', fileId: '1', sourceUrl: 'https://example.test/g.pdf', contentHash: 'pdf', contentType: 'application/pdf' },
+      ] })
+      vi.mocked(downloadBlob).mockResolvedValue(Buffer.from('%PDF-1.4\n%%EOF'))
+
+      const prepared = await prepareArchivedLlmDocuments(auction(), { nativeDocuments: false, artifactVersionId: 24 })
+
+      expect(prepared.input.pdfText).toContain('PDF Wohnfläche 140 m²')
+    })
   })
 })
 

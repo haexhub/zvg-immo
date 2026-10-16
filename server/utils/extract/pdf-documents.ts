@@ -16,6 +16,13 @@ const SCANNED_PDF_TEXT_THRESHOLD = 200
 const MAX_SCANNED_DOCUMENTS = 3
 const MAX_PAGES_PER_DOCUMENT = 8
 const MAX_RENDERED_PAGES = 20
+
+function labelledText<T>(documents: Array<DocumentLlmSource<T>>): string | null {
+  return documents
+    .filter((document): document is DocumentLlmSource<T> & { text: string } => !!document.text?.trim())
+    .map((document) => `=== ${document.label} ===\n${document.text}`)
+    .join('\n\n') || null
+}
 // ponytail: one fixed inline budget (base64 chars across all native PDFs of a
 // request), sized below Gemini's ~20 MB inline-request limit — the only
 // provider honoring `document` parts. A request past it fails identically on
@@ -85,17 +92,17 @@ export async function buildDocumentLlmParts<T>(
       console.warn(`[extract/documents] native PDF budget exceeded, omitted: ${omittedLabels.join(', ')}`)
     }
     return {
-      pdfText: null,
+      // A native request can contain converted Markdown for some PDFs and
+      // native bytes for others. Keep both representations so mixed sets do
+      // not silently lose the converted documents.
+      pdfText: labelledText(documents),
       pdfPageImages: null,
       pdfBytes: nativeDocuments.length === 1 ? nativeDocuments[0]!.data : null,
       pdfDocuments: nativeDocuments.length > 1 ? nativeDocuments : undefined,
     }
   }
 
-  const combinedPdfText = documents
-    .filter((document): document is DocumentLlmSource<T> & { text: string } => !!document.text?.trim())
-    .map((document) => `=== ${document.label} ===\n${document.text}`)
-    .join('\n\n') || null
+  const combinedPdfText = labelledText(documents)
   const pdfText = combinedPdfText && opts.maxTextChars != null
     ? compactDocumentText(combinedPdfText, opts.maxTextChars)
     : combinedPdfText
