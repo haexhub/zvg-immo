@@ -75,13 +75,13 @@ describe('convertPdfToMarkdown', () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false, error: 'Docling URL is not configured' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('returns a non-terminal result on a non-2xx response — an outage must not blacklist the PDF', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false, error: 'Docling HTTP 503' })
   })
 
   it('returns a terminal result when a successful response carries no markdown', async () => {
@@ -90,12 +90,16 @@ describe('convertPdfToMarkdown', () => {
       status: 200,
       json: async () => ({ status: 'failure', document: { md_content: '   ' } }),
     })))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: true })
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({
+      markdown: null,
+      terminal: true,
+      error: 'Docling returned no usable Markdown (status=failure)',
+    })
   })
 
   it('returns a non-terminal result when the request throws', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED') }))
-    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false })
+    expect(await convertPdfToMarkdown(PDF, 'x.pdf')).toEqual({ markdown: null, terminal: false, error: 'ECONNREFUSED' })
   })
 
   // Two concurrent conversions would double peak memory in the Docling
@@ -126,7 +130,7 @@ describe('convertPdfToMarkdown', () => {
       .mockResolvedValueOnce(okResponse('# danach'))
     vi.stubGlobal('fetch', fetchMock)
 
-    expect(await convertPdfToMarkdown(PDF, 'a.pdf')).toEqual({ markdown: null, terminal: false })
+    expect(await convertPdfToMarkdown(PDF, 'a.pdf')).toEqual({ markdown: null, terminal: false, error: 'boom' })
     expect(await convertPdfToMarkdown(PDF, 'b.pdf')).toEqual({ markdown: '# danach', terminal: false })
   })
 })
@@ -172,6 +176,7 @@ describe('markdownForPdf', () => {
     expect(await markdownForPdf(db, 'pdf-hash', PDF, { label: 'a.pdf', country: 'de' })).toBeNull()
     const insert = db.query.mock.calls.find((call) => /INSERT INTO document_markdown/i.test(call[0]))
     expect(insert?.[1]?.[1]).toBeNull()
+    expect(insert?.[1]?.[2]).toBe('Docling returned no usable Markdown (status=success)')
   })
 
   // A Docling outage (5xx/network) must not durably blacklist every PDF an

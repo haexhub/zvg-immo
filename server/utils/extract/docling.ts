@@ -76,6 +76,8 @@ export interface DoclingConversion {
    *  unreachable, non-2xx, thrown error): those are transient outages and
    *  must not blacklist a PDF that a retry could still convert. */
   terminal: boolean
+  /** Concrete diagnostic for transient and terminal failures. */
+  error?: string
 }
 
 /**
@@ -91,7 +93,7 @@ export interface DoclingConversion {
  */
 export async function convertPdfToMarkdown(bytes: Buffer, label: string): Promise<DoclingConversion> {
   const baseUrl = doclingBaseUrl()
-  if (!baseUrl) return { markdown: null, terminal: false }
+  if (!baseUrl) return { markdown: null, terminal: false, error: 'Docling URL is not configured' }
 
   const form = new FormData()
   form.append('files', new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }), label)
@@ -106,19 +108,22 @@ export async function convertPdfToMarkdown(bytes: Buffer, label: string): Promis
       signal: AbortSignal.timeout(DOCLING_TIMEOUT_MS),
     }))
     if (!res.ok) {
-      console.warn(`[docling] ${label}: HTTP ${res.status}`)
-      return { markdown: null, terminal: false }
+      const error = `Docling HTTP ${res.status}`
+      console.warn(`[docling] ${label}: ${error}`)
+      return { markdown: null, terminal: false, error }
     }
     const body = (await res.json()) as DoclingConvertResponse
     const markdown = body.document?.md_content?.trim()
     if (!markdown) {
-      console.warn(`[docling] ${label}: response carried no markdown (status=${body.status ?? '?'})`)
-      return { markdown: null, terminal: true }
+      const error = `Docling returned no usable Markdown (status=${body.status ?? '?'})`
+      console.warn(`[docling] ${label}: ${error}`)
+      return { markdown: null, terminal: true, error }
     }
     return { markdown, terminal: false }
   } catch (err) {
-    console.warn(`[docling] ${label}: ${(err as Error).message}`)
-    return { markdown: null, terminal: false }
+    const error = err instanceof Error ? err.message : String(err)
+    console.warn(`[docling] ${label}: ${error}`)
+    return { markdown: null, terminal: false, error }
   }
 }
 
@@ -197,7 +202,7 @@ export async function markdownForPdf(
     // usable content) is worth caching — a transient outage must not
     // blacklist a PDF that a later retry could still convert.
     if (conversion.terminal) {
-      await recordConversion(db, pdfContentHash, null, 'conversion returned no markdown').catch(() => undefined)
+      await recordConversion(db, pdfContentHash, null, conversion.error ?? 'conversion returned no markdown').catch(() => undefined)
     }
     return null
   }
