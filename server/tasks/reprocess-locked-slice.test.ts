@@ -96,6 +96,7 @@ describe('runLockedRetrySlice', () => {
       batch: false,
       limit: 7,
       trigger: 'cron',
+      preserveCandidateOrder: true,
     }, undefined)
   })
 
@@ -158,5 +159,55 @@ describe('runReprocessTask locked slice', () => {
     expect(recordTaskRunEnd).toHaveBeenCalledWith('reprocess', expect.objectContaining({
       warning: 'slice-warning full-warning',
     }))
+  })
+
+  it('records and returns the combined slice and full-pass counters', async () => {
+    const sliceResult = result({
+      candidates: 7,
+      processed: 5,
+      skipped: 2,
+      llmCalls: 6,
+      llmErrors: 1,
+      rulesFalsified: 2,
+      durationMs: 250,
+      lastLlmError: 'slice-error',
+    })
+    const fullResult = result({
+      candidates: 20,
+      processed: 18,
+      skipped: 2,
+      llmCalls: 4,
+      llmErrors: 3,
+      rulesFalsified: 1,
+      durationMs: 900,
+      lastLlmError: 'full-error',
+    })
+    vi.mocked(runReprocess).mockResolvedValueOnce(sliceResult as never).mockResolvedValueOnce(fullResult as never)
+
+    const outcome = await runReprocessTask({})
+
+    expect(outcome).toEqual({ result: {
+      candidates: 27,
+      processed: 23,
+      skipped: 4,
+      llmCalls: 10,
+      llmErrors: 4,
+      rulesFalsified: 3,
+      durationMs: 1150,
+      lastLlmError: 'full-error',
+    } })
+    expect(recordTaskRunEnd).toHaveBeenCalledWith('reprocess', {
+      result: {
+        candidates: 27,
+        processed: 23,
+        skipped: 4,
+        llmCalls: 10,
+        llmErrors: 4,
+        rulesFalsified: 3,
+        durationMs: 1150,
+      },
+      warning: undefined,
+      llmError: 'full-error',
+    })
   })
 })

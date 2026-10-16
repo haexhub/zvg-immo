@@ -50,6 +50,7 @@ export async function runLockedRetrySlice(signal?: AbortSignal): Promise<Reproce
     batch: false,
     limit,
     trigger: 'cron',
+    preserveCandidateOrder: true,
   }, signal)
   console.log(
     `[reprocess] locked retry slice: candidates=${result.candidates} processed=${result.processed} llmCalls=${result.llmCalls} llmErrors=${result.llmErrors}${result.warning ? ` warning="${result.warning}"` : ''}`,
