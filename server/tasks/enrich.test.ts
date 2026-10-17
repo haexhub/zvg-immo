@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction, CrawlResult } from '~/types/auction'
+import type { PlatformCrawler } from '../crawlers/types'
 import type { AuctionFetchState } from '../utils/auction-fetch-state'
 import { crawlAll, platforms } from '../crawlers/registry'
 import { SourceRateLimitedError } from '../utils/source-rate-limit'
@@ -79,6 +80,10 @@ vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticCrawlingEnabled: vi.
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runEnrich, runEnrichTask } = await import('./enrich')
+
+// The production registry intentionally exposes an immutable platform list;
+// this test's mocked list is mutable so it can install a single fake crawler.
+const testPlatforms = platforms as unknown as PlatformCrawler[]
 
 function auction(): Auction {
   return {
@@ -338,7 +343,7 @@ describe('runEnrich structured persistence', () => {
 describe('runEnrich source rate limiting', () => {
   it('stops fetching a throttled platform and reports it once instead of once per auction', async () => {
     const enrichOne = vi.fn().mockRejectedValue(new SourceRateLimitedError('alo.bg rate limit: HTTP 429'))
-    platforms.push({ id: 'test-platform', enrichOne } as never)
+    testPlatforms.push({ id: 'test-platform', enrichOne } as never)
     try {
       const listings = Array.from({ length: 30 }, (_, i) => ({ ...auction(), externalId: String(100 + i) }))
       vi.mocked(crawlAll).mockResolvedValue(crawlResult(listings))
@@ -352,7 +357,7 @@ describe('runEnrich source rate limiting', () => {
       // Nothing was stamped as fetched, so they all stay open for the next run.
       expect(outcome.result).toMatchObject({ archived: 30 })
     } finally {
-      platforms.splice(0, platforms.length)
+      testPlatforms.splice(0, testPlatforms.length)
     }
   })
 })
