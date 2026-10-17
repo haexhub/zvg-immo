@@ -85,6 +85,9 @@ export function toEur(amount: number, currency: string, rates: Record<string, nu
   return Math.round(amount / rate)
 }
 
+/** The stored fields an EUR conversion falls back to (see storedEurConversion). */
+export type StoredMarketValue = Pick<Auction, 'currency' | 'marketValue' | 'marketValueEur'>
+
 /**
  * Fills `marketValueEur` from `marketValue`+`currency` — the single place
  * that turns a crawler's native value into the cross-country EUR figure used
@@ -96,7 +99,7 @@ export function toEur(amount: number, currency: string, rates: Record<string, nu
  * `marketValueEur` directly (unchanged, Phase A behavior) — this backfills
  * `marketValue`/`currency` from that so both models agree.
  */
-export function deriveMarketValueEur(auction: Auction, rates: Record<string, number>, previous?: Auction): void {
+export function deriveMarketValueEur(auction: Auction, rates: Record<string, number>, previous?: StoredMarketValue): void {
   if (auction.currency == null) {
     if (auction.marketValueEur != null) {
       auction.currency = 'EUR'
@@ -119,7 +122,7 @@ export function deriveMarketValueEur(auction: Auction, rates: Record<string, num
  * drop every foreign auction out of price filters, sorting and alerts until
  * ECB answers again.
  */
-export function storedEurConversion(auction: Auction, previous: Auction | undefined): number | null {
+export function storedEurConversion(auction: Auction, previous: StoredMarketValue | undefined): number | null {
   if (previous == null || previous.currency !== auction.currency || previous.marketValue !== auction.marketValue) return null
   return previous.marketValueEur
 }

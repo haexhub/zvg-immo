@@ -87,7 +87,7 @@ Einrichtung und Tool-Liste: `tools/admin-mcp/README.md`.
 
 ## Datensätze laden (Speicher)
 
-Nie die ganze Auktionstabelle in den Speicher holen: ein Voll-Load von ~54.000 Auktionen kostet ~330–530 MB Spitze und hält 220–350 MB, drei gleichzeitige ~1,5 GB — auf dem Host ohne Reserve führte das zu OOM-Kills der App. In `server/utils/auction-record.ts`: `iterateAuctionRecords` (gestreamt, feste Blockgröße) für reine Auswertungen/Zähler, `readAuctionRecordsByKeys` für eine bekannte Schlüsselliste, `createCandidateRecordLoader` für Läufe, die eine Kandidatenliste der Reihe nach abarbeiten (Reprocess). `readAuctionRecords`/`readAuctionRecordMap` materialisieren alles und laufen deshalb seriell durch ein Gate; Enrich-Worker und -Selektion nutzen sie noch.
+Nie die ganze Auktionstabelle in den Speicher holen: ein Voll-Load von ~54.000 Auktionen kostet ~330–530 MB Spitze und hält 220–350 MB, drei gleichzeitige ~1,5 GB — auf dem Host ohne Reserve führte das zu OOM-Kills der App. In `server/utils/auction-record.ts`: `iterateAuctionRecords` (gestreamt, feste Blockgröße) für reine Auswertungen/Zähler, `readAuctionRecordsByKeys` für eine bekannte Schlüsselliste, `createCandidateRecordLoader` für Läufe, die eine Kandidatenliste der Reihe nach abarbeiten (Reprocess). `readAuctionRecords`/`readAuctionRecordMap` materialisieren alles und laufen deshalb seriell durch ein Gate; kein Task nutzt sie mehr. Enrich liest zu Laufbeginn nur schlanke `StoredAuctionSummary` (Extraktion vorhanden, Fotozahl, gespeicherter Marktwert; gestreamt über `readStoredAuctionSummaries`) und je Auktion den vollen Record neu.
 
 ## Speicher-Diagnose
 

@@ -1,7 +1,8 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import { MULTI_PLATFORM } from '~/lib/auction-constants'
 import { platforms } from '~/server/crawlers/registry'
-import { readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
+import { iterateAuctionRecords, readAuctionRecordsByKeys, type AuctionRecord } from '~/server/utils/auction-record'
+import type { StoredMarketValue } from '~/server/utils/exchange-rate'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { loadRatesOrPegged } from '~/server/utils/exchange-rate'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
@@ -18,23 +19,47 @@ const KRONOFOGDEN_GALLERY_PHOTO_PIPELINE_VERSION = 5
  *  auction's gallery (see excludeFromDocumentMining). */
 const DGA_AG_PHOTO_PIPELINE_VERSION = 6
 
+/** What the run-start eligibility check (and the EUR-conversion fallback) needs
+ *  from a stored auction. The full record — extraction, photos, description —
+ *  is re-read per auction when it is actually processed; keeping every record
+ *  of the table for the whole (hours-long) run cost ~220-350 MB of heap. */
+export interface StoredAuctionSummary {
+  hasExtraction: boolean
+  photoCount: number
+  marketValue: StoredMarketValue
+}
+
+export function summarizeRecord(record: AuctionRecord): StoredAuctionSummary {
+  const { auction } = record
+  return {
+    hasExtraction: auction.extraction != null,
+    photoCount: auction.extraction?.photos?.length ?? 0,
+    marketValue: { currency: auction.currency, marketValue: auction.marketValue, marketValueEur: auction.marketValueEur },
+  }
+}
+
+/** Summaries of every stored auction (optionally of one country), folded from a
+ *  streamed read so only one block of records is ever in memory. */
+export async function readStoredAuctionSummaries(country?: string): Promise<Map<string, StoredAuctionSummary>> {
+  const summaries = new Map<string, StoredAuctionSummary>()
+  for await (const record of iterateAuctionRecords(country)) {
+    summaries.set(cacheKey(record.auction.platform, record.auction.externalId), summarizeRecord(record))
+  }
+  return summaries
+}
+
 /** Builds a crawlAll()-shaped result for exactly the requested identities,
- *  loaded from the same records map the rest of a scoped retry run needs
- *  anyway (`records`, returned alongside for reuse as runEnrich's
- *  `preloadedRecords`) — instead of paying for a live crawlAll() to
- *  rediscover auctions the caller already knows about. */
+ *  read by key from the store (`summaries`, returned alongside, is what
+ *  prepareEnrichWork needs for them) — instead of paying for a live crawlAll()
+ *  to rediscover auctions the caller already knows about. */
 export async function loadScopedRetryResult(
-  country: string | undefined,
   identities: { platform: string; externalId: string }[],
   capturedAt: string,
-): Promise<{ result: CrawlResult & { errors: [] }; records: Map<string, AuctionRecord> }> {
-  const records = await readAuctionRecordMap(country)
-  const wanted = new Set(identities.map((i) => cacheKey(i.platform, i.externalId)))
-  const auctions = [...records.values()]
-    .filter((r) => wanted.has(cacheKey(r.auction.platform, r.auction.externalId)))
-    .map((r) => r.auction)
+): Promise<{ result: CrawlResult & { errors: [] }; summaries: Map<string, StoredAuctionSummary> }> {
+  const records = await readAuctionRecordsByKeys(identities)
+  const auctions = [...records.values()].map((r) => r.auction)
   return {
-    records,
+    summaries: new Map([...records].map(([key, record]) => [key, summarizeRecord(record)])),
     result: {
       platform: MULTI_PLATFORM, source: '', countries: [...new Set(auctions.map((a) => a.country))],
       // Replayed from stored records, not crawled — no platform may be marked
@@ -51,13 +76,13 @@ export async function prepareEnrichWork({
   auctions,
   fetchStates,
   artifactVersions,
-  records,
+  stored,
 }: {
   opts: EnrichOptions
   auctions: Auction[]
   fetchStates: Awaited<ReturnType<typeof readAuctionFetchStates>>
   artifactVersions: Awaited<ReturnType<typeof readLatestArtifactVersions>>
-  records: Map<string, AuctionRecord>
+  stored: Map<string, StoredAuctionSummary>
 }) {
   const byPlatform = new Map(platforms.map((p) => [p.id, p]))
   // opts.identities means `auctions` is already exactly the caller's scoped
@@ -149,9 +174,8 @@ export async function prepareEnrichWork({
   // itself done with zero photos — wiping a previously good photo set.
   const needsPhotoBackfill = (a: Auction, phase: 'eligibility' | 'extraction' = 'extraction'): boolean => {
     const key = cacheKey(a.platform, a.externalId)
-    const hit = records.get(key)?.auction.extraction
     const state = fetchStates.get(key)
-    const photos = hit?.photos?.length ?? 0
+    const photos = stored.get(key)?.photoCount ?? 0
     const targetVersion = targetPhotoPipelineVersion(a)
     const pipelineDue =
       state?.photosCheckedAt == null ||
@@ -169,7 +193,7 @@ export async function prepareEnrichWork({
   const eligible = auctions.filter(
     (a) =>
       scopedForce ||
-      !records.get(cacheKey(a.platform, a.externalId))?.auction.extraction ||
+      !stored.get(cacheKey(a.platform, a.externalId))?.hasExtraction ||
       needsEnrich(a) ||
       needsDocumentSetCheck(a) ||
       needsPhotoBackfill(a, 'eligibility'),
