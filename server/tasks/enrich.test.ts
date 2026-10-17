@@ -6,7 +6,7 @@ import { crawlAll, platforms } from '../crawlers/registry'
 import { SourceRateLimitedError } from '../utils/source-rate-limit'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
-import { readAuctionRecord, readAuctionRecordMap } from '../utils/auction-record'
+import { iterateAuctionRecords, readAuctionRecord, readAuctionRecordMap } from '../utils/auction-record'
 import { readLatestArtifactVersions } from '../utils/artifact-version-state'
 import {
   readAuctionFetchStates,
@@ -32,8 +32,14 @@ vi.mock('../utils/auction-relationships', () => ({ rebuildAutomaticAuctionRelati
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../utils/auction-record', () => {
   const readAuctionRecordMap = vi.fn()
-  // Finalize re-reads just the run's auctions; serve that from the map each test prepares.
-  return { readAuctionRecord: vi.fn(), readAuctionRecordMap, readAuctionRecordsByKeys: (...args: unknown[]) => readAuctionRecordMap(...args) }
+  // By-key reads (finalize, scoped retry) are served from the map each test
+  // prepares; the run-start summaries come from the streamed read.
+  return {
+    readAuctionRecord: vi.fn(),
+    readAuctionRecordMap,
+    readAuctionRecordsByKeys: (...args: unknown[]) => readAuctionRecordMap(...args),
+    iterateAuctionRecords: vi.fn(),
+  }
 })
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
 vi.mock('../utils/auction-fetch-state', () => ({
@@ -158,6 +164,7 @@ beforeEach(() => {
   vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map())
   vi.mocked(readLatestArtifactVersions).mockResolvedValue(new Map())
   vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map())
+  vi.mocked(iterateAuctionRecords).mockImplementation(async function* () {})
   vi.mocked(readAuctionRecord).mockResolvedValue(null)
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 1, changed: true })
   vi.mocked(downloadNativeImages).mockResolvedValue([])
@@ -420,10 +427,10 @@ describe('runEnrich concurrent extraction writes', () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
       ['test-platform:42', fetchState({ photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 99 })],
     ]))
+    vi.mocked(iterateAuctionRecords).mockImplementation(async function* () {
+      yield { auction: { ...listing, extraction: rulesExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }
+    })
     vi.mocked(readAuctionRecordMap)
-      .mockResolvedValueOnce(new Map([
-        ['test-platform:42', { auction: { ...listing, extraction: rulesExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }],
-      ]))
       .mockResolvedValueOnce(new Map([
         ['test-platform:42', { auction: { ...listing, extraction: llmExtraction }, detailsId: 2, detailsVersion: 2, artifactVersionId: 5 }],
       ]))

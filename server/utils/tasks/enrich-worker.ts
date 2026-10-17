@@ -2,7 +2,7 @@ import type { AuctionExtraction } from '~/types/auction'
 import { crawlAll, ensureEnabledCountriesLoaded, listRegions, platforms } from '~/server/crawlers/registry'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '~/server/utils/current-auctions'
 import { writeAuctionDetails } from '~/server/utils/auction-details'
-import { readAuctionRecord, readAuctionRecordMap, type AuctionRecord } from '~/server/utils/auction-record'
+import { readAuctionRecord } from '~/server/utils/auction-record'
 import { applyAuctionExtraction } from '~/server/utils/auction-extraction'
 import { mergeStoredAuction } from '~/server/utils/auction-merge'
 import { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
@@ -22,7 +22,7 @@ import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { isSourceRateLimited } from '~/server/utils/source-rate-limit'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
-import { loadScopedRetryResult, prepareEnrichWork } from './enrich-work-selection'
+import { loadScopedRetryResult, prepareEnrichWork, readStoredAuctionSummaries, type StoredAuctionSummary } from './enrich-work-selection'
 import { finalizeEnrichPersistence } from './enrich-persistence'
 import { processEnrichPhotos } from './enrich-photos'
 
@@ -54,6 +54,7 @@ export interface EnrichOptions {
    *  persists everything these identities need. */
   identities?: { platform: string; externalId: string }[]
 }
+/** Crawls, selects, enriches, and persists the auctions in one enrich run. */
 export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()
     const capturedAt = new Date(startedAt).toISOString()
@@ -109,14 +110,14 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // instead of one per auction — and stay 'open' for the next one.
     const rateLimitedPlatforms = new Set<string>()
     // Scoped retry skips the live region crawl entirely — see
-    // loadScopedRetryResult. `preloadedRecords` is reused below instead of
-    // re-reading the same records map a second time.
-    let preloadedRecords: Map<string, AuctionRecord> | undefined
+    // loadScopedRetryResult. `preloadedSummaries` is reused below instead of
+    // reading the stored summaries a second time.
+    let preloadedSummaries: Map<string, StoredAuctionSummary> | undefined
     let result: Awaited<ReturnType<typeof crawlAll>>
     if (scopedRetry) {
-      const scoped = await loadScopedRetryResult(opts.country, opts.identities!, capturedAt)
+      const scoped = await loadScopedRetryResult(opts.identities!, capturedAt)
       result = scoped.result
-      preloadedRecords = scoped.records
+      preloadedSummaries = scoped.summaries
     } else {
       result = await crawlAll({
         immobilienOnly: true,
@@ -160,7 +161,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     await writeAuctionCrawlFetchState(result.auctions)
     const fetchStates = await readAuctionFetchStates()
     const artifactVersions = await readLatestArtifactVersions()
-    const records = preloadedRecords ?? await readAuctionRecordMap(opts.country)
+    const stored = preloadedSummaries ?? await readStoredAuctionSummaries(opts.country)
     const cachedGeocodes = await fillAuctionGeocodes(result.auctions, { fetchMissing: false })
     if (cachedGeocodes.geocoded > 0 || cachedGeocodes.failed > 0) {
       console.log(
@@ -181,7 +182,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       auctions: result.auctions,
       fetchStates,
       artifactVersions,
-      records,
+      stored,
     })
     let vwCache = initialVwCache
     console.log(`[enrich] crawled ${result.auctions.length}, ${todo.length} to (re)archive`)
@@ -254,7 +255,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
               // The live record is only re-read further down (photo/extraction
               // step); the run-start snapshot is enough to keep a stored EUR
               // conversion of the same native amount.
-              deriveMarketValueEur(a, rates, records.get(key)?.auction)
+              deriveMarketValueEur(a, rates, stored.get(key)?.marketValue)
               a.detailFetchedAt = at
               // Re-archive now that detail data (description/attachments/
               // source*) is on the auction — a new content hash whenever
@@ -296,11 +297,11 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
           }
 
-          // Re-read the live row instead of trusting the run-start snapshot in
-          // `records`: by now it can be hours old, and reprocess/llm-batch-poll
+          // Re-read the live row instead of trusting the run-start summaries in
+          // `stored`: by now it can be hours old, and reprocess/llm-batch-poll
           // may have stored a newer (LLM) extraction that writing the snapshot
           // back below would silently roll back.
-          const priorRecord = (await readAuctionRecord(a.platform, a.externalId)) ?? records.get(key)
+          const priorRecord = await readAuctionRecord(a.platform, a.externalId)
           const priorEntry = priorRecord?.auction.extraction ?? undefined
 
           // Photo pipeline — see enrich-photos.ts.
