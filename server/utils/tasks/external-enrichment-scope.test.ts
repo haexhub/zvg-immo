@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 import type { Auction } from '~/types/auction'
-import type { LocationEnrichmentCache } from '~/server/utils/external-data/location-enrichment'
 import { inScope, orderByStaleness } from './external-enrichment-scope'
 
 function auction(overrides: Partial<Auction> = {}): Auction {
@@ -37,9 +36,9 @@ describe('orderByStaleness', () => {
   it('puts never-checked auctions ahead of any previously-checked one', () => {
     const checked = auction({ externalId: 'checked' })
     const neverChecked = auction({ externalId: 'never' })
-    const existing = {
-      'test:checked': { checkedAt: '2026-08-18T00:00:00.000Z' },
-    } as unknown as LocationEnrichmentCache
+    const existing = new Map([
+      ['test:checked', { checkedAt: '2026-08-18T00:00:00.000Z' }],
+    ])
 
     const ordered = orderByStaleness([checked, neverChecked], existing)
 
@@ -49,10 +48,10 @@ describe('orderByStaleness', () => {
   it('orders previously-checked auctions oldest checkedAt first', () => {
     const older = auction({ externalId: 'older' })
     const newer = auction({ externalId: 'newer' })
-    const existing = {
-      'test:older': { checkedAt: '2026-08-01T00:00:00.000Z' },
-      'test:newer': { checkedAt: '2026-08-18T00:00:00.000Z' },
-    } as unknown as LocationEnrichmentCache
+    const existing = new Map([
+      ['test:older', { checkedAt: '2026-08-01T00:00:00.000Z' }],
+      ['test:newer', { checkedAt: '2026-08-18T00:00:00.000Z' }],
+    ])
 
     const ordered = orderByStaleness([newer, older], existing)
 
@@ -64,7 +63,7 @@ describe('orderByStaleness', () => {
     const second = auction({ externalId: 'b' })
     const input = [first, second]
 
-    orderByStaleness(input, {} as LocationEnrichmentCache)
+    orderByStaleness(input, new Map())
 
     expect(input).toEqual([first, second])
   })

@@ -1,5 +1,4 @@
 import type { Auction } from '~/types/auction'
-import type { LocationEnrichmentCache } from '~/server/utils/external-data/location-enrichment'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 
 export interface ScopeOptions {
@@ -20,10 +19,13 @@ export function inScope(auction: Pick<Auction, 'country' | 'platform' | 'externa
 // batch's still-unprocessed tail — the same overdue auctions sort back to
 // the front on the very next run instead of a fixed scan order letting
 // whatever sits late in the list starve indefinitely.
-export function orderByStaleness<T extends { platform: string; externalId: string }>(auctions: T[], existing: LocationEnrichmentCache): T[] {
+export function orderByStaleness<T extends { platform: string; externalId: string }>(
+  auctions: T[],
+  staleness: ReadonlyMap<string, { checkedAt?: string }>,
+): T[] {
   return [...auctions].sort((a, b) => {
-    const aChecked = existing[cacheKey(a.platform, a.externalId)]?.checkedAt ?? ''
-    const bChecked = existing[cacheKey(b.platform, b.externalId)]?.checkedAt ?? ''
+    const aChecked = staleness.get(cacheKey(a.platform, a.externalId))?.checkedAt ?? ''
+    const bChecked = staleness.get(cacheKey(b.platform, b.externalId))?.checkedAt ?? ''
     return aChecked < bChecked ? -1 : aChecked > bChecked ? 1 : 0
   })
 }

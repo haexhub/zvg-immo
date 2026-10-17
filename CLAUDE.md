@@ -114,4 +114,4 @@ fehlende Geocodes erzeugt ausschließlich der exklusive geplante/Admin-Task.
 `pages/search.vue` pollt nur den Cache-Fortschritt und bricht einen laufenden
 Poll beim Stoppen ab. Detail-Reads für `location_enrichment` sind per
 `platform` und `external_id` abgefragt und haben einen eigenen invalidierbaren
-Key-Cache; die Volltabellen-Cache-Funktion bleibt allein für Batch-Enrichment.
+Key-Cache. Das Batch-Enrichment liest nur `readLocationEnrichmentStaleness` (Prüfzeit + Kontextquelle je Auktion, zwei Spalten) und je Batch-Auktion `readLocationEnrichment`; `readLocationEnrichmentCache` hält die ganze Tabelle (~800 MB JSON, dauerhaft im Heap) und gehört in keinen Task.

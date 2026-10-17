@@ -32,11 +32,29 @@ vi.mock('~/server/utils/auction-record', () => {
   }
 })
 vi.mock('~/server/utils/geocode', () => ({ geocodeAddress: vi.fn() }))
-vi.mock('~/server/utils/external-data/location-enrichment', () => ({
-  readLocationEnrichment: vi.fn(),
-  readLocationEnrichmentCache: vi.fn(),
-  writeLocationEnrichmentCache: vi.fn(),
-}))
+vi.mock('~/server/utils/external-data/location-enrichment', () => {
+  type Entry = { checkedAt: string; locationContext?: { source: { id: string } } | null }
+  // Tests stub the stored enrichment as one cache object. The task reads two
+  // columns for every auction plus the stored entry of each batch item, so both
+  // readers are derived from that object (and stay overridable per test).
+  const readLocationEnrichmentCache = vi.fn()
+  const readLocationEnrichment = vi.fn(async (platform: string, externalId: string) =>
+    ((await readLocationEnrichmentCache()) as Record<string, Entry> | undefined)?.[`${platform}:${externalId}`] ?? null)
+  const toLocationEnrichmentStaleness = (entry: Entry) => ({
+    checkedAt: entry.checkedAt,
+    locationContextSourceId: entry.locationContext?.source.id ?? null,
+  })
+  return {
+    readLocationEnrichment,
+    readLocationEnrichmentCache,
+    readLocationEnrichmentStaleness: async () => new Map(
+      Object.entries(((await readLocationEnrichmentCache()) as Record<string, Entry> | undefined) ?? {})
+        .map(([key, entry]) => [key, toLocationEnrichmentStaleness(entry)]),
+    ),
+    toLocationEnrichmentStaleness,
+    writeLocationEnrichmentCache: vi.fn(),
+  }
+})
 // No Postgres in tests by default — matches getPool()'s own "no databaseUrl
 // configured" contract instead of the real module memoizing a Pool (or null)
 // for the whole file the first time any test happens to call it.
@@ -228,7 +246,9 @@ describe('runExternalEnrichment', () => {
       detailsVersion: null,
       artifactVersionId: null,
     })
-    vi.mocked(readLocationEnrichment).mockResolvedValue(null)
+    // Read twice for a single-auction run: once to pick the batch, once for the item's previous entry.
+    // `Once`, not a persistent override: the default derives it from the stubbed cache for every later test.
+    vi.mocked(readLocationEnrichment).mockResolvedValueOnce(null).mockResolvedValueOnce(null)
     vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
 
     const { runExternalEnrichment } = await import('./external-enrichment')
@@ -263,6 +283,38 @@ describe('runExternalEnrichment', () => {
       locationContextAdapters: [],
     })).rejects.toThrow('query_timeout')
     expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
+  })
+
+  it('skips only an auction whose detail read fails and continues the batch', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichment, readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'failed-read' }),
+      auction({ externalId: 'healthy' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(readLocationEnrichment)
+      .mockRejectedValueOnce(new Error('query_timeout'))
+      .mockResolvedValueOnce(null)
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary).toMatchObject({ processed: 2, written: 1 })
+    expect(summary.errors).toEqual([
+      'Gespeichertes Enrichment für test/failed-read konnte nicht gelesen werden: query_timeout',
+    ])
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledTimes(1)
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:healthy': expect.anything(),
+    })
   })
 
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
