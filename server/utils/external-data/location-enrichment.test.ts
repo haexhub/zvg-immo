@@ -155,6 +155,21 @@ describe('readLocationEnrichmentCache', () => {
 
     expect(pool.query).toHaveBeenCalledTimes(1)
   })
+
+  it('serves an evicted detail entry from the full in-memory cache', async () => {
+    const { getPool } = await import('../db')
+    vi.mocked(getPool).mockReturnValue(null)
+    const { readLocationEnrichment, readLocationEnrichmentStaleness, writeLocationEnrichmentCache } = await import('./location-enrichment')
+    const entries = Object.fromEntries(Array.from({ length: 501 }, (_, index) => [
+      `zvg-portal:${index}`,
+      { ...enrichment, externalId: String(index) },
+    ]))
+
+    await writeLocationEnrichmentCache(entries)
+
+    expect((await readLocationEnrichmentStaleness()).has('zvg-portal:0')).toBe(true)
+    await expect(readLocationEnrichment('zvg-portal', '0')).resolves.toEqual(entries['zvg-portal:0'])
+  })
 })
 
 describe('readLocationEnrichmentStaleness', () => {

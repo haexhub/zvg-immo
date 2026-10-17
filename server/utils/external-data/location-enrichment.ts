@@ -101,7 +101,12 @@ export async function readLocationEnrichment(
     return cached
   }
   const db = getPool()
-  if (!db) return null
+  if (!db) {
+    const memory = await cachePromise?.catch(() => null)
+    const entry = memory?.[key]
+    if (entry) cacheDetail(key, entry)
+    return entry ?? null
+  }
   const { rows } = await db.query<LocationEnrichmentRow>(
     `SELECT platform, external_id, enrichment, checked_at
      FROM location_enrichment
