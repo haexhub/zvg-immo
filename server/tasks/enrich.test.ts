@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Attachment, Auction, CrawlResult } from '~/types/auction'
+import type { PlatformCrawler } from '../crawlers/types'
 import type { AuctionFetchState } from '../utils/auction-fetch-state'
-import { crawlAll } from '../crawlers/registry'
+import { crawlAll, platforms } from '../crawlers/registry'
+import { SourceRateLimitedError } from '../utils/source-rate-limit'
 import { ensureAuctionIdentity, upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { readAuctionRecord, readAuctionRecordMap } from '../utils/auction-record'
@@ -78,6 +80,10 @@ vi.mock('../utils/automatic-task-gate', () => ({ isAutomaticCrawlingEnabled: vi.
 vi.stubGlobal('defineTask', (definition: unknown) => definition)
 
 const { runEnrich, runEnrichTask } = await import('./enrich')
+
+// The production registry intentionally exposes an immutable platform list;
+// this test's mocked list is mutable so it can install a single fake crawler.
+const testPlatforms = platforms as unknown as PlatformCrawler[]
 
 function auction(): Auction {
   return {
@@ -331,6 +337,28 @@ describe('runEnrich structured persistence', () => {
       photoPipelineVersion: null,
       photoAttempted: true,
     })
+  })
+})
+
+describe('runEnrich source rate limiting', () => {
+  it('stops fetching a throttled platform and reports it once instead of once per auction', async () => {
+    const enrichOne = vi.fn().mockRejectedValue(new SourceRateLimitedError('alo.bg rate limit: HTTP 429'))
+    testPlatforms.push({ id: 'test-platform', enrichOne } as never)
+    try {
+      const listings = Array.from({ length: 30 }, (_, i) => ({ ...auction(), externalId: String(100 + i) }))
+      vi.mocked(crawlAll).mockResolvedValue(crawlResult(listings))
+
+      const outcome = await runEnrich({ country: 'de' })
+
+      // Only the lanes already in flight when the first error landed still asked.
+      expect(enrichOne.mock.calls.length).toBeLessThanOrEqual(8)
+      expect(outcome.warning?.match(/pausiert \(Rate-Limit\)/g)).toHaveLength(1)
+      expect(outcome.warning).not.toContain('Detailabruf test-platform:')
+      // Nothing was stamped as fetched, so they all stay open for the next run.
+      expect(outcome.result).toMatchObject({ archived: 30 })
+    } finally {
+      testPlatforms.splice(0, testPlatforms.length)
+    }
   })
 })
 

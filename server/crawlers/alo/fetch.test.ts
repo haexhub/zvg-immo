@@ -8,6 +8,8 @@ async function loadFetch() {
   return (await import('./fetch')).fetchAloPage
 }
 
+const tooMany = () => new Response('', { status: 429 })
+
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => {
   vi.useRealTimers()
@@ -76,5 +78,73 @@ describe('fetchAloPage', () => {
     expect(calledAt).toHaveLength(3)
     expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(1_000)
     expect(calledAt[2]! - calledAt[1]!).toBeGreaterThanOrEqual(1_000)
+  })
+
+  it('widens the gap after a 429 and narrows it again after a run of successes', async () => {
+    const calledAt: number[] = []
+    let throttle = true
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calledAt.push(Date.now())
+      if (throttle) { throttle = false; return tooMany() }
+      return new Response('ok')
+    }))
+    const fetchAloPage = await loadFetch()
+
+    const first = fetchAloPage('https://www.alo.bg/a')
+    await vi.advanceTimersByTimeAsync(60_000)
+    await first
+    // 429, then the retry after the shared pause: gap doubled to 2 s, pause 10 s.
+    expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(10_000)
+
+    for (let i = 0; i < 25; i++) {
+      const p = fetchAloPage(`https://www.alo.bg/n${i}`)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await p
+    }
+    // Two overlapping callers show the gap that is in force now: back at the 1 s floor.
+    calledAt.length = 0
+    const pair = Promise.all([fetchAloPage('https://www.alo.bg/x'), fetchAloPage('https://www.alo.bg/y')])
+    await vi.advanceTimersByTimeAsync(10_000)
+    await pair
+    expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(1_000)
+    expect(calledAt[1]! - calledAt[0]!).toBeLessThan(2_000)
+  })
+
+  it('pauses every caller for the shared back-off, not just the one that was throttled', async () => {
+    const calledAt: number[] = []
+    let first = true
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calledAt.push(Date.now())
+      if (first) { first = false; return tooMany() }
+      return new Response('ok')
+    }))
+    const fetchAloPage = await loadFetch()
+
+    const all = Promise.all([fetchAloPage('https://www.alo.bg/a'), fetchAloPage('https://www.alo.bg/b')])
+    await vi.advanceTimersByTimeAsync(120_000)
+    await all
+
+    // The second caller's request was already queued behind the 429 and had to sit out the pause too.
+    expect(calledAt[1]! - calledAt[0]!).toBeGreaterThanOrEqual(10_000)
+  })
+
+  it('stops asking once alo keeps refusing, then fails fast without any request', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => tooMany())
+    vi.stubGlobal('fetch', fetchMock)
+    const fetchAloPage = await loadFetch()
+    const { SourceRateLimitedError } = await import('~/server/utils/source-rate-limit')
+
+    // Each auction gets 3 attempts; the second one's last 429 is the 6th in a row and opens the breaker.
+    for (const id of ['a', 'b']) {
+      const failed = fetchAloPage(`https://www.alo.bg/${id}`).catch((e: unknown) => e)
+      await vi.advanceTimersByTimeAsync(20 * 60_000)
+      expect(await failed).toBeInstanceOf(SourceRateLimitedError)
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+
+    const third = fetchAloPage('https://www.alo.bg/c').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(await third).toBeInstanceOf(SourceRateLimitedError)
+    expect(fetchMock).toHaveBeenCalledTimes(6) // breaker open: nothing was sent
   })
 })

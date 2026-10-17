@@ -19,6 +19,7 @@ import { applyDescriptionMarketValue } from '~/server/utils/description-market-v
 import { normalizeAuctionDescription, normalizeAuctionDescriptions } from '~/server/utils/description-normalization'
 import { recordTaskRunEnd, recordTaskRunProgress, recordTaskRunStart, type TaskRunSummary } from '~/server/utils/task-runs'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
+import { isSourceRateLimited } from '~/server/utils/source-rate-limit'
 import { runExclusiveTask, throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { fillAuctionGeocodes } from '~/server/utils/auction-geocoding'
 import { loadScopedRetryResult, prepareEnrichWork } from './enrich-work-selection'
@@ -103,6 +104,10 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       runErrors.push(message)
       void recordTaskRunError('enrich', { category, message, platform: identity?.platform, externalId: identity?.externalId })
     }
+    // Platforms whose source is rate-limiting us (see source-rate-limit.ts):
+    // their remaining detail fetches are skipped for this run — one run error
+    // instead of one per auction — and stay 'open' for the next one.
+    const rateLimitedPlatforms = new Set<string>()
     // Scoped retry skips the live region crawl entirely — see
     // loadScopedRetryResult. `preloadedRecords` is reused below instead of
     // re-reading the same records map a second time.
@@ -212,7 +217,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           // don't re-fetch the same empty response on every future run.
           let enriched = false
           let fetchDone = !crawler?.enrichOne
-          if (crawler?.enrichOne) {
+          if (crawler?.enrichOne && !rateLimitedPlatforms.has(a.platform)) {
             try {
               await crawler.enrichOne(a)
               fetchDone = true
@@ -227,7 +232,14 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
                 (a.photoUrls?.length ?? 0) > 0 ||
                 a.lat != null
             } catch (err) {
-              pushRunError('detail_fetch', `Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
+              if (isSourceRateLimited(err)) {
+                if (!rateLimitedPlatforms.has(a.platform)) {
+                  rateLimitedPlatforms.add(a.platform)
+                  pushRunError('detail_fetch', `Detailabrufe ${a.platform} pausiert (Rate-Limit): ${err.message}`, { platform: a.platform })
+                }
+              } else {
+                pushRunError('detail_fetch', `Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
+              }
             }
           }
           // Runs regardless of whether this platform has its own enrichOne step
