@@ -1157,6 +1157,7 @@ describe('runReprocess parallel lanes', () => {
   })
 
   describe('a lost provider connection (proxy restart)', () => {
+    /** Makes the first provider request fail as a proxy restart would. */
     function loseConnectionOnce(): void {
       const lost = new Error('claude-proxy: <no response> fetch failed')
       vi.mocked(isLlmProviderError).mockImplementation((err) => err === lost)
@@ -1171,6 +1172,7 @@ describe('runReprocess parallel lanes', () => {
 
     afterEach(() => {
       vi.mocked(isLlmProviderError).mockReset().mockReturnValue(false)
+      vi.mocked(isLlmProviderUnavailable).mockReset().mockReturnValue(false)
       vi.mocked(isConnectionLostError).mockReset().mockReturnValue(false)
       vi.mocked(waitForProviderRecovery).mockReset().mockResolvedValue(false)
     })
@@ -1200,6 +1202,35 @@ describe('runReprocess parallel lanes', () => {
 
       expect(result.warning).toContain('LLM-Providerfehler')
       expect(result.processed).toBe(0)
+    })
+
+    it('probes the fallback provider that actually failed', async () => {
+      seedCandidates()
+      const primary = { baseUrl: 'https://primary.example.test', apiKey: 'primary', model: 'primary', provider: 'gemini-native' as const }
+      const fallback = { baseUrl: 'http://proxy:8080/', apiKey: '', model: 'fallback', provider: 'claude-proxy' as const }
+      vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([primary, fallback])
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      const primaryUnavailable = new Error('primary unavailable')
+      const fallbackLost = new Error('claude-proxy: <no response> fetch failed')
+      vi.mocked(isLlmProviderError).mockImplementation((err) => err === primaryUnavailable || err === fallbackLost)
+      vi.mocked(isLlmProviderUnavailable).mockImplementation((err) => err === primaryUnavailable || err === fallbackLost)
+      vi.mocked(isConnectionLostError).mockImplementation((err) => err === fallbackLost)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      let calls = 0
+      vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        calls++
+        if (calls === 1) throw primaryUnavailable
+        if (calls === 2) throw fallbackLost
+        return null
+      })
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).toHaveBeenCalledWith(fallback)
+      expect(result.warning).toBeUndefined()
+      expect(result).toMatchObject({ candidates: 12, skipped: 1, processed: 11 })
     })
   })
 })

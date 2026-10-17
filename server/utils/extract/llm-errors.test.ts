@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { LlmProviderError, isConnectionDroppedError, isConnectionLostError } from './llm-errors'
 
+/** Creates the undici-style error shape returned by a failed fetch. */
 const fetchFailed = (code: string) => Object.assign(
   new TypeError('[POST] "http://proxy:8080/v1/messages": <no response> fetch failed'),
   { cause: { code, message: 'x' } },

@@ -10,6 +10,7 @@ const DEFAULT_INTERVAL_MS = 3_000
 
 const probes = new Map<string, Promise<boolean>>()
 
+/** Returns whether the provider's health endpoint answered successfully. */
 async function isUp(baseUrl: string): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/healthz`, { signal: AbortSignal.timeout(3_000) })

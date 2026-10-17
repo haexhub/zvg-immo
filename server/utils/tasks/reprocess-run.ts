@@ -21,6 +21,7 @@ import { persistReprocessEntry } from './reprocess-persist'
 import { reprocessAuction } from './reprocess-single'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
+/** Reprocesses eligible auction records while preserving run-level LLM limits. */
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
   const startedAt = Date.now()
   if (opts.force && !opts.country && !opts.platform && !opts.externalId && !opts.caseNumber && !opts.limit) {
@@ -157,6 +158,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return err instanceof Error && persistFailureMark in err
   }
 
+  /** Processes one candidate and records its result or recoverable failure. */
   async function handleCandidate({ platform, externalId, country }: Candidate): Promise<void> {
     throwIfTaskAborted(signal)
     // Calls promised to this candidate but not yet started. Released one at a
@@ -192,6 +194,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     // reaches persistEntry.
     let syncLlmAttempted = false
     let priorLlmFailures = 0
+    let lastLlmConfig: LlmConfig | null = null
     // Hoisted like syncLlmAttempted: whether writeAuctionLlmClaim ran, since
     // syncConfigs itself is scoped inside the try block below.
     let llmClaimed = false
@@ -365,6 +368,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           lastLlmError = `${platform}:${externalId}: ${message}`
         },
         onLlmCall: async ({ config, durationMs, usage, status, errorMessage }) => {
+          // A thrown provider error can come from a fallback config. Keep the
+          // config that actually made the request so recovery probes that
+          // provider rather than the chain's primary config.
+          lastLlmConfig = config
           await recordLlmUsage({
             task: 'extraction',
             executionMode: 'sync',
@@ -448,7 +455,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // candidate is not re-sent (the proxy may already have accepted it, so
         // that could pay twice) — it stays open for the next run — but the run
         // itself carries on once the provider answers again.
-        if (isConnectionLostError(err) && await waitForProviderRecovery(llmConfig)) {
+        if (isConnectionLostError(err) && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
           console.warn('[reprocess] LLM provider connection was lost but it is back — continuing this run')
           return
         }
