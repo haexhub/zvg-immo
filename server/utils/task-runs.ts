@@ -7,6 +7,7 @@
 // in-memory-fallback pattern as llm-batch-jobs.ts's recordLlmBatchCapability.
 
 import { getPool } from './db'
+import { logTaskMemory } from './memory-diagnostics'
 
 export type TrackedTask =
   | 'enrich'
@@ -180,6 +181,7 @@ export async function getTaskRunStatus(task: TrackedTask): Promise<TaskRunStatus
 
 export async function recordTaskRunStart(task: TrackedTask): Promise<void> {
   lastProgressWriteAt.delete(task)
+  logTaskMemory(task, 'start')
   await enqueue(task, async () => {
     const current = await getTaskRunStatus(task)
     await writeTaskRunStatus(task, {
@@ -199,6 +201,7 @@ export async function recordTaskRunEnd(
   outcome: { result: TaskRunSummary; warning?: string | null; llmError?: string | null } | { error: string },
 ): Promise<void> {
   lastProgressWriteAt.delete(task)
+  logTaskMemory(task, 'end')
   await enqueue(task, async () => {
     const current = await getTaskRunStatus(task)
     await writeTaskRunStatus(task, {
