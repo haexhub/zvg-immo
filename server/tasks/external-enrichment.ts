@@ -233,7 +233,16 @@ export async function runExternalEnrichment(
       // An entry computed before the geocode was corrected describes another
       // place: its fallbacks below and the enhancer merge (noise bands, air
       // quality) would otherwise pin the old position's data indefinitely.
-      const stored = await readLocationEnrichment(auction.platform, auction.externalId)
+      let stored: Awaited<ReturnType<typeof readLocationEnrichment>>
+      try {
+        stored = await readLocationEnrichment(auction.platform, auction.externalId)
+      } catch (err) {
+        if (summary.errors.length < 100) {
+          const message = err instanceof Error ? err.message : String(err)
+          summary.errors.push(`Gespeichertes Enrichment für ${auction.platform}/${auction.externalId} konnte nicht gelesen werden: ${message}`)
+        }
+        continue
+      }
       const previous = stored && !coordinatesMovedSignificantly(stored, point) ? stored : undefined
 
       const marketComparison = await firstMarketComparison(auction, marketAdapters, summary)

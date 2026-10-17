@@ -285,6 +285,38 @@ describe('runExternalEnrichment', () => {
     expect(writeLocationEnrichmentCache).not.toHaveBeenCalled()
   })
 
+  it('skips only an auction whose detail read fails and continues the batch', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readLocationEnrichment, readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      auction({ externalId: 'failed-read' }),
+      auction({ externalId: 'healthy' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(readLocationEnrichment)
+      .mockRejectedValueOnce(new Error('query_timeout'))
+      .mockResolvedValueOnce(null)
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({
+      marketAdapters: [],
+      landValueAdapters: [],
+      hazardAdapters: [],
+      locationContextAdapters: [],
+    })
+
+    expect(summary).toMatchObject({ processed: 2, written: 1 })
+    expect(summary.errors).toEqual([
+      'Gespeichertes Enrichment für test/failed-read konnte nicht gelesen werden: query_timeout',
+    ])
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledTimes(1)
+    expect(writeLocationEnrichmentCache).toHaveBeenCalledWith({
+      'test:healthy': expect.anything(),
+    })
+  })
+
   it('writes cached enrichment from market, land-value and hazard adapters', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
