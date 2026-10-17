@@ -54,6 +54,7 @@ export interface EnrichOptions {
    *  persists everything these identities need. */
   identities?: { platform: string; externalId: string }[]
 }
+/** Crawls, selects, enriches, and persists the auctions in one enrich run. */
 export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) {
     const startedAt = Date.now()
     const capturedAt = new Date(startedAt).toISOString()

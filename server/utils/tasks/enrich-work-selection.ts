@@ -29,6 +29,7 @@ export interface StoredAuctionSummary {
   marketValue: StoredMarketValue
 }
 
+/** Extracts the fields needed for eligibility from one stored auction record. */
 export function summarizeRecord(record: AuctionRecord): StoredAuctionSummary {
   const { auction } = record
   return {
@@ -71,6 +72,7 @@ export async function loadScopedRetryResult(
   }
 }
 
+/** Builds the ordered work list and the per-auction helpers for an enrich run. */
 export async function prepareEnrichWork({
   opts,
   auctions,
