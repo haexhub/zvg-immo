@@ -4,10 +4,13 @@ import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-s
 import { GEO_METRICS_JOIN_SQL, LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
 import { countryCentroid } from '~/lib/country-bounds'
 
-// A map beyond this many pins is not readable anyway, and every row here can
-// cost a geocode lookup — so cap the marker set instead of streaming the whole
-// auctions table through the geocoder on an unfiltered search.
-const MAX_MARKERS = 5000
+// Safety cap on the marker set. The rows are ordered by platform, so a cap
+// below the number of current auctions silently drops every platform sorted
+// after the first ones — at 5000 an unfiltered Europe search returned only
+// bg-alo pins (~39,600 current auctions) and the map looked empty everywhere
+// else. Stored coordinates make a row cheap, and the client clusters with
+// supercluster, so keep the cap well above the full current set.
+export const MAX_MARKERS = 60_000
 
 export interface GeoAuction {
   platform: string

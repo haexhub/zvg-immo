@@ -47,6 +47,13 @@ afterEach(() => {
 })
 
 describe('/api/auctions-geo', () => {
+  it('keeps the marker cap above the full current auction set', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { MAX_MARKERS } = await import('./auctions-geo.get')
+    // Ordering is by platform: a lower cap drops later platforms entirely.
+    expect(MAX_MARKERS).toBeGreaterThanOrEqual(50_000)
+  })
+
   it('returns markers only and never leaks card or detail data', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     vi.stubGlobal('getQuery', () => ({ country: 'de', fetch: '0' }))
