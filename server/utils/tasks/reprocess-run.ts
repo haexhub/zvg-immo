@@ -191,8 +191,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     // cooldown timestamp needs recording even though this candidate never
     // reaches persistEntry.
     let syncLlmAttempted = false
-    let priorLlmFailures = 0
-    let lastLlmConfig: LlmConfig | null = null
+    let priorLlmFailures = 0, lastLlmConfig: LlmConfig | null = null
     // Hoisted like syncLlmAttempted: whether writeAuctionLlmClaim ran, since
     // syncConfigs itself is scoped inside the try block below.
     let llmClaimed = false
