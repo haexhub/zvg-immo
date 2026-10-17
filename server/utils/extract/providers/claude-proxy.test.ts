@@ -134,6 +134,19 @@ describe('ClaudeProxyProvider.extract', () => {
       await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
       expect(fetchMock).toHaveBeenCalledTimes(1)
     })
+
+    it('does not re-send an ambiguous connection reset after the POST may have been accepted', async () => {
+      const reset = Object.assign(new TypeError('[POST] "x": <no response> fetch failed'), { cause: { code: 'ECONNRESET' } })
+      const fetchMock = vi.fn().mockRejectedValue(reset)
+      vi.stubGlobal('$fetch', fetchMock)
+      const onRequestError = vi.fn()
+      const promise = new ClaudeProxyProvider(config).extract(req, { onRequestError })
+      promise.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(onRequestError).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('resolves a truncated response to null when reprocess supplies onRequestError', async () => {

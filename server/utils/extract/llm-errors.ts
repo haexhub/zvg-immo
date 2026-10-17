@@ -105,16 +105,17 @@ export function isTransientRequestError(err: unknown): boolean {
  *  gives up as before. */
 export const CONNECTION_RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 
-/** Whether a request failed at the connection level — refused/reset/closed
- *  before any HTTP response came back — as opposed to an HTTP error status or
- *  the client's own timeout/abort. Only this kind is safe to retry for
- *  reprocess's expensive multimodal prompts: an error response or a timeout
- *  means the provider did work (or may still be doing it), while a dropped
- *  connection means the proxy was restarted or unreachable. */
+/** Whether a request failed before the connection could deliver the request —
+ *  as opposed to an HTTP error status, a timeout, or an ambiguous disconnect.
+ *  Only errors whose operating-system code proves that no connection was
+ *  established are safe to retry for reprocess's expensive multimodal
+ *  prompts. A reset/closed socket can happen after the proxy accepted the
+ *  POST, so those errors must not be retried without request deduplication. */
 export function isConnectionDroppedError(err: unknown): boolean {
   if ((err as { response?: unknown })?.response != null) return false
-  const cause = (err as { cause?: { name?: string; message?: string } })?.cause
+  const cause = (err as { cause?: { code?: unknown; name?: string; message?: string } })?.cause
   const text = `${(err as Error)?.name ?? ''} ${(err as Error)?.message ?? ''} ${cause?.name ?? ''} ${cause?.message ?? ''}`
   if (/abort|timeout|timed out/i.test(text)) return false
-  return /fetch failed|ECONNREFUSED|ECONNRESET|EPIPE|socket|network|terminated/i.test(text)
+  const code = (err as { code?: unknown })?.code ?? cause?.code
+  return typeof code === 'string' && /^(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)$/.test(code)
 }
