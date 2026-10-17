@@ -12,12 +12,13 @@ import { readAuctionFetchStates, writeAuctionLlmClaim, writeAuctionLlmPipelineSt
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
 import { recordTaskRunError } from '~/server/utils/task-run-errors'
-import { recordTaskRunProgress, type TaskRunSummary } from '~/server/utils/task-runs'
+import { recordTaskRunProgress } from '~/server/utils/task-runs'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { runPool } from '~/server/utils/run-pool'
 import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, type Candidate, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
 import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
 import { persistReprocessEntry } from './reprocess-persist'
+import { createReprocessProgress } from './reprocess-progress'
 import { reprocessAuction } from './reprocess-single'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
@@ -106,32 +107,16 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   // smaller platforms' listings are ever reached (same rationale enrich.ts
   // used to apply — see interleave-by-platform.ts).
   const llmPlatformCount = new Set(candidates.map((c) => c.platform)).size || 1
-  const llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
+  let llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
+  // Candidates held back because their platform used up its fair share while
+  // budget was still left; they get a second pass with the cap lifted.
+  const deferred: Candidate[] = []
   const llmCallsByPlatform = new Map<string, number>()
 
-  // Per-country breakdown for /settings, kept by `bump` (below) right next to
-  // the aggregate counters.
-  const candidatesTotalByCountry = new Map<string, number>()
-  for (const c of candidates) candidatesTotalByCountry.set(c.country, (candidatesTotalByCountry.get(c.country) ?? 0) + 1)
-  // Seeded at 0/N so every country in scope shows up right away instead of
-  // appearing one by one as the loop reaches it — and so a run that stops
-  // early (rate limit) still reports the countries it never got to.
-  const progressByCountry = new Map<string, TaskRunSummary>(
-    [...candidatesTotalByCountry].map(([country, candidatesTotal]) => [
-      country,
-      { candidatesTotal, processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0 },
-    ]),
-  )
-
-  // Candidates run in parallel lanes (see runPool below), so the counters are
-  // bumped where they happen — the aggregate and the per-country snapshot
+  // Candidates run in parallel lanes (see runPool below): counters are bumped
+  // where they happen — aggregate and per-country snapshot (for /settings)
   // together — instead of being diffed per iteration.
-  const totals = { processed: 0, skipped: 0, llmCalls: 0, llmErrors: 0 }
-  function bump(country: string, counter: keyof typeof totals): void {
-    totals[counter]++
-    const prev = progressByCountry.get(country)
-    if (prev) progressByCountry.set(country, { ...prev, [counter]: (prev[counter] ?? 0) + 1 })
-  }
+  const { totals, bump, progressByCountry } = createReprocessProgress(candidates)
   let rulesFalsified = 0
   let stopRun = false
   // LLM calls promised to candidates still in flight, so lanes started
@@ -157,7 +142,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     return err instanceof Error && persistFailureMark in err
   }
 
-  async function handleCandidate({ platform, externalId, country }: Candidate): Promise<void> {
+  async function handleCandidate(candidate: Candidate): Promise<void> {
+    const { platform, externalId, country } = candidate
     throwIfTaskAborted(signal)
     // Calls promised to this candidate but not yet started. Released one at a
     // time as onLlmAttempt increments llmCalls, or all at once in finally.
@@ -232,11 +218,15 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       }
 
       const platformLlmCalls = llmCallsByPlatform.get(platform) ?? 0
-      const llmReady = !!llmConfig && (
-        opts.ignoreLlmBudget ||
-        (totals.llmCalls + llmReserved < maxLlmPerRun &&
-          platformLlmCalls + (llmReservedByPlatform.get(platform) ?? 0) < llmCapPerPlatform)
-      )
+      const budgetLeft = totals.llmCalls + llmReserved < maxLlmPerRun
+      const platformRoom = platformLlmCalls + (llmReservedByPlatform.get(platform) ?? 0) < llmCapPerPlatform
+      // The fair share is a first-pass limit, not a waste of budget: a capped
+      // candidate waits for the second pass instead of going rules-only now.
+      if (llmConfig && !opts.ignoreLlmBudget && !opts.force && budgetLeft && !platformRoom) {
+        deferred.push(candidate)
+        return
+      }
+      const llmReady = !!llmConfig && (opts.ignoreLlmBudget || (budgetLeft && platformRoom))
       // Held until `finally`: from here to there other lanes see this
       // candidate's call as already spoken for. Taken in the same tick as the
       // check above, so two lanes can't both claim the last slot.
@@ -469,6 +459,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   }
 
   await runPool(candidates, concurrency, handleCandidate, () => stopRun)
+  // Fair-share pass done: whatever budget the other platforms did not use goes
+  // to the deferred candidates (alo is ~95 % of the bulgarian backlog but only
+  // one platform among ~13). Each candidate is handled exactly once overall.
+  if (deferred.length > 0 && !stopRun) {
+    llmCapPerPlatform = Infinity
+    console.log(`[reprocess] second pass: ${deferred.length} candidates deferred by the per-platform share, ${Math.max(0, maxLlmPerRun - totals.llmCalls)} calls left`)
+    await runPool(deferred, concurrency, handleCandidate, () => stopRun)
+  }
   // The per-country snapshot outlives the run in /settings, so its final
   // state has to get past the progress throttle — with a fast loop the last
   // in-loop reports above are routinely swallowed by it.
