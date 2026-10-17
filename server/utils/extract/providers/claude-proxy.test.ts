@@ -97,6 +97,45 @@ describe('ClaudeProxyProvider.extract', () => {
     expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
   })
 
+  describe('reprocess (onRequestError) and a restarting proxy', () => {
+    const okResponse = { content: [{ type: 'tool_use', name: 'final_result', input: { propertyType: 'haus' } }] }
+    const dropped = () => Object.assign(new TypeError('[POST] "http://proxy:8080/v1/messages": <no response> fetch failed'), { cause: { code: 'ECONNREFUSED' } })
+
+    it('waits out a dropped connection and re-sends instead of reporting the provider as down', async () => {
+      const fetchMock = vi.fn().mockRejectedValueOnce(dropped()).mockRejectedValueOnce(dropped()).mockResolvedValue(okResponse)
+      vi.stubGlobal('$fetch', fetchMock)
+      const onRequestError = vi.fn()
+      const promise = new ClaudeProxyProvider(config).extract(req, { onRequestError })
+      await vi.runAllTimersAsync()
+      await expect(promise).resolves.toEqual({ propertyType: 'haus' })
+      expect(fetchMock).toHaveBeenCalledTimes(3)
+      expect(onRequestError).not.toHaveBeenCalled()
+    })
+
+    it('still gives up (and reports it) once the proxy stays unreachable', async () => {
+      const fetchMock = vi.fn().mockImplementation(() => Promise.reject(dropped()))
+      vi.stubGlobal('$fetch', fetchMock)
+      const onRequestError = vi.fn()
+      const promise = new ClaudeProxyProvider(config).extract(req, { onRequestError })
+      promise.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+      expect(fetchMock).toHaveBeenCalledTimes(4)
+      expect(onRequestError).toHaveBeenCalledTimes(1)
+    })
+
+    it('does not re-send after a client timeout, which may still be running on the proxy', async () => {
+      const timeout = Object.assign(new Error('[POST] "x": <no response> The operation was aborted due to timeout'), { cause: { name: 'TimeoutError' } })
+      const fetchMock = vi.fn().mockRejectedValue(timeout)
+      vi.stubGlobal('$fetch', fetchMock)
+      const promise = new ClaudeProxyProvider(config).extract(req, { onRequestError: vi.fn() })
+      promise.catch(() => {})
+      await vi.runAllTimersAsync()
+      await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('resolves a truncated response to null when reprocess supplies onRequestError', async () => {
     const truncated = { content: [{ type: 'tool_use', input: null }], stop_reason: 'max_tokens' }
     vi.stubGlobal('$fetch', vi.fn().mockResolvedValue(truncated))

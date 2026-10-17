@@ -97,3 +97,24 @@ export function isTransientRequestError(err: unknown): boolean {
   if (status == null) return true
   return status === 404 || status === 408 || status >= 500
 }
+
+/** Waits before re-sending a request whose connection dropped without any
+ *  response (see isConnectionDroppedError). Sized to outlast a restart of the
+ *  claude-proxy container (a few seconds, e.g. `podman auto-update` swapping
+ *  in a new image), not an actual outage — after the last wait the caller
+ *  gives up as before. */
+export const CONNECTION_RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
+
+/** Whether a request failed at the connection level — refused/reset/closed
+ *  before any HTTP response came back — as opposed to an HTTP error status or
+ *  the client's own timeout/abort. Only this kind is safe to retry for
+ *  reprocess's expensive multimodal prompts: an error response or a timeout
+ *  means the provider did work (or may still be doing it), while a dropped
+ *  connection means the proxy was restarted or unreachable. */
+export function isConnectionDroppedError(err: unknown): boolean {
+  if ((err as { response?: unknown })?.response != null) return false
+  const cause = (err as { cause?: { name?: string; message?: string } })?.cause
+  const text = `${(err as Error)?.name ?? ''} ${(err as Error)?.message ?? ''} ${cause?.name ?? ''} ${cause?.message ?? ''}`
+  if (/abort|timeout|timed out/i.test(text)) return false
+  return /fetch failed|ECONNREFUSED|ECONNRESET|EPIPE|socket|network|terminated/i.test(text)
+}

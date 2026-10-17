@@ -6,6 +6,8 @@
 
 import type { ContentPart, ExtractionProvider, ExtractionRequest, LlmConfig, LlmUsage } from '../llm'
 import {
+  CONNECTION_RETRY_DELAYS_MS,
+  isConnectionDroppedError,
   isRateLimitError,
   isTransientRequestError,
   LlmProviderError,
@@ -125,6 +127,18 @@ export class ClaudeProxyProvider implements ExtractionProvider {
             `[extract/llm] request failed, retry ${attempt + 1}/${TRANSIENT_RETRY_DELAYS_MS.length}: ${(err as Error).message}`,
           )
           await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
+          continue
+        }
+        // The proxy is restarted from time to time (auto-update swapping its
+        // image), which drops every in-flight connection at once. Reprocess
+        // would read that as "provider unavailable" and stop the whole run, so
+        // wait out the restart and re-send — but only for a dropped connection,
+        // never for an error status or a timeout (see isConnectionDroppedError).
+        if (opts?.onRequestError && isConnectionDroppedError(err) && attempt < CONNECTION_RETRY_DELAYS_MS.length) {
+          console.warn(
+            `[extract/llm] claude-proxy connection dropped, retry ${attempt + 1}/${CONNECTION_RETRY_DELAYS_MS.length} in ${CONNECTION_RETRY_DELAYS_MS[attempt]! / 1000}s: ${(err as Error).message}`,
+          )
+          await new Promise((resolve) => setTimeout(resolve, CONNECTION_RETRY_DELAYS_MS[attempt]))
           continue
         }
         // `onRequestError` is observability, not permission to turn a
