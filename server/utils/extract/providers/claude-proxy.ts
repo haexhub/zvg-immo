@@ -39,6 +39,54 @@ export function parseExtractionResponse(resp: unknown): Record<string, unknown> 
 // process, and every retry is recorded as a provider failure.
 const CLAUDE_PROXY_REQUEST_TIMEOUT_MS = 11 * 60 * 1000
 
+/** Upper bound for all text sent to the proxy in one request, in UTF-8 *bytes*.
+ *  The proxy hands the whole prompt to the `claude` CLI as a single command-line
+ *  argument, and Linux rejects any one argument over 128 KiB (MAX_ARG_STRLEN)
+ *  with E2BIG — which the proxy does not catch, so the *whole proxy process
+ *  crashes* and every in-flight request dies with it. The document-text caps
+ *  upstream count characters (80,000), but Cyrillic/Greek text takes 2 bytes
+ *  per character: a Bulgarian appraisal of 78,166 characters crashed the proxy
+ *  on every reprocess run (34 crashes in 26 h). Kept well below 128 KiB to
+ *  leave room for the proxy's own prompt wrapper. */
+export const MAX_PROXY_TEXT_BYTES = 100_000
+const TRUNCATION_MARKER = '\n[… Text wegen Größenlimit gekürzt]'
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, 'utf8')
+}
+
+/** Cuts `text` to at most `maxBytes` UTF-8 bytes without splitting a character. */
+function truncateToBytes(text: string, maxBytes: number): string {
+  if (maxBytes <= 0) return ''
+  const cut = Buffer.from(text, 'utf8').subarray(0, maxBytes).toString('utf8')
+  // A multi-byte character cut in half decodes to U+FFFD at the end.
+  return cut.endsWith('\uFFFD') ? cut.slice(0, -1) : cut
+}
+
+/** Shrinks the largest text block(s) until all text fits MAX_PROXY_TEXT_BYTES.
+ *  Only the oversized document text is shortened; the short instruction blocks
+ *  around it stay intact. Returns the input untouched when it already fits. */
+export function clampTextToProxyLimit<T extends { type: string; text?: string }>(blocks: T[]): T[] {
+  const sizes = blocks.map((b) => (b.type === 'text' && b.text != null ? byteLength(b.text) : 0))
+  let excess = sizes.reduce((a, b) => a + b, 0) - MAX_PROXY_TEXT_BYTES
+  if (excess <= 0) return blocks
+  const out = blocks.map((b) => ({ ...b }))
+  while (excess > 0) {
+    let largest = 0
+    for (let i = 1; i < sizes.length; i++) if (sizes[i]! > sizes[largest]!) largest = i
+    const block = out[largest]!
+    const target = Math.max(0, sizes[largest]! - excess - byteLength(TRUNCATION_MARKER))
+    if (target >= sizes[largest]!) break
+    block.text = truncateToBytes(block.text ?? '', target) + TRUNCATION_MARKER
+    const newSize = byteLength(block.text)
+    excess -= sizes[largest]! - newSize
+    sizes[largest] = newSize
+    if (newSize <= byteLength(TRUNCATION_MARKER)) break
+  }
+  console.warn(`[extract/llm] claude-proxy: text exceeded ${MAX_PROXY_TEXT_BYTES} bytes, truncated to fit the CLI argument limit`)
+  return out
+}
+
 /** This proxy path forwards only text and image blocks: `document` parts are
  *  intentionally dropped here — the transitional proxy doesn't relay native
  *  PDF documents — so callers on this provider rely on the `pdfText`/
@@ -76,7 +124,7 @@ export class ClaudeProxyProvider implements ExtractionProvider {
       // curation array — the old budget truncated the larger JSON payload.
       max_tokens: this.config.maxTokens ?? 4096,
       system: req.systemPrompt,
-      messages: [{ role: 'user', content: toClaudeContent(req.parts) }],
+      messages: [{ role: 'user', content: clampTextToProxyLimit(toClaudeContent(req.parts)) }],
       tools: [
         {
           name: 'final_result',

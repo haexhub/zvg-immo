@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ExtractionRequest } from '../llm'
-import { ClaudeProxyProvider, parseClaudeUsage } from './claude-proxy'
+import { ClaudeProxyProvider, MAX_PROXY_TEXT_BYTES, clampTextToProxyLimit, parseClaudeUsage } from './claude-proxy'
 
 describe('parseClaudeUsage', () => {
   it('reads input/output tokens', () => {
@@ -175,5 +175,38 @@ describe('ClaudeProxyProvider.extract', () => {
     const onUsage = vi.fn()
     await provider.extract(req, { onUsage }).catch(() => {})
     expect(onUsage).not.toHaveBeenCalled()
+  })
+})
+
+describe('clampTextToProxyLimit', () => {
+  const bytes = (blocks: { text?: string }[]) => blocks.reduce((n, b) => n + Buffer.byteLength(b.text ?? '', 'utf8'), 0)
+
+  it('leaves a request that fits untouched', () => {
+    const blocks = [{ type: 'text', text: 'kurz' }]
+    expect(clampTextToProxyLimit(blocks)).toBe(blocks)
+  })
+
+  it('counts bytes, not characters: 78k Cyrillic characters (the one that crashed the proxy) get cut', () => {
+    const cyrillic = 'д'.repeat(78_166) // 2 bytes each = 156 KB, over the 128 KiB argument limit
+    const out = clampTextToProxyLimit([
+      { type: 'text', text: 'Objektbezeichnung: Апартамент' },
+      { type: 'text', text: cyrillic },
+    ])
+    expect(bytes(out)).toBeLessThanOrEqual(MAX_PROXY_TEXT_BYTES)
+    expect(out[0]!.text).toBe('Objektbezeichnung: Апартамент') // the short block is kept whole
+    expect(out[1]!.text).toContain('gekürzt')
+  })
+
+  it('never cuts through a multi-byte character', () => {
+    const out = clampTextToProxyLimit([{ type: 'text', text: 'д'.repeat(80_000) }])
+    expect(out[0]!.text).not.toContain('\uFFFD')
+  })
+
+  it('does not touch image blocks and shrinks the largest text block first', () => {
+    const image = { type: 'image', source: { data: 'x'.repeat(500_000) } } as never
+    const out = clampTextToProxyLimit([{ type: 'text', text: 'a'.repeat(60_000) }, image, { type: 'text', text: 'b'.repeat(70_000) }])
+    expect(out[1]).toEqual(image)
+    expect(out[0]!.text).toBe('a'.repeat(60_000))
+    expect(bytes(out as never)).toBeLessThanOrEqual(MAX_PROXY_TEXT_BYTES)
   })
 })
