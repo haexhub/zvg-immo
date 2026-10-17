@@ -1177,6 +1177,13 @@ describe('runReprocess parallel lanes', () => {
 
     const result = await runReprocess({ country: 'de' })
 
+    const expectedIds = rows.map((row) => `${row.platform}:${row.external_id}`)
+    const processedIds = vi.mocked(writeAuctionDetails).mock.calls.map(([updated]) =>
+      `${updated.platform}:${updated.externalId}`,
+    )
+    expect(processedIds).toHaveLength(expectedIds.length)
+    expect(new Set(processedIds)).toEqual(new Set(expectedIds))
+
     const usageByPlatform = (platform: string) =>
       vi.mocked(recordLlmUsage).mock.calls.filter(([entry]) => entry.platform === platform).length
     expect(stats.calls).toBe(6) // the whole budget is used, not 5

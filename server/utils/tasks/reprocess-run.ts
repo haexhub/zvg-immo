@@ -110,7 +110,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   let llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
   // Candidates held back because their platform used up its fair share while
   // budget was still left; they get a second pass with the cap lifted.
-  const deferred: Candidate[] = []
+  const candidateOrder = new Map(candidates.map((candidate, index) => [cacheKey(candidate.platform, candidate.externalId), index]))
+  const deferred: { candidate: Candidate; order: number }[] = []
   const llmCallsByPlatform = new Map<string, number>()
 
   // Candidates run in parallel lanes (see runPool below): counters are bumped
@@ -223,7 +224,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // The fair share is a first-pass limit, not a waste of budget: a capped
       // candidate waits for the second pass instead of going rules-only now.
       if (llmConfig && !opts.ignoreLlmBudget && !opts.force && budgetLeft && !platformRoom) {
-        deferred.push(candidate)
+        deferred.push({ candidate, order: candidateOrder.get(key) ?? Number.MAX_SAFE_INTEGER })
         return
       }
       const llmReady = !!llmConfig && (opts.ignoreLlmBudget || (budgetLeft && platformRoom))
@@ -465,7 +466,8 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   if (deferred.length > 0 && !stopRun) {
     llmCapPerPlatform = Infinity
     console.log(`[reprocess] second pass: ${deferred.length} candidates deferred by the per-platform share, ${Math.max(0, maxLlmPerRun - totals.llmCalls)} calls left`)
-    await runPool(deferred, concurrency, handleCandidate, () => stopRun)
+    deferred.sort((a, b) => a.order - b.order)
+    await runPool(deferred.map(({ candidate }) => candidate), concurrency, handleCandidate, () => stopRun)
   }
   // The per-country snapshot outlives the run in /settings, so its final
   // state has to get past the progress throttle — with a fast loop the last
