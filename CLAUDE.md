@@ -89,6 +89,10 @@ Einrichtung und Tool-Liste: `tools/admin-mcp/README.md`.
 
 Nie die ganze Auktionstabelle in den Speicher holen: ein Voll-Load von ~54.000 Auktionen kostet ~330–530 MB Spitze und hält 220–350 MB, drei gleichzeitige ~1,5 GB — auf dem Host ohne Reserve führte das zu OOM-Kills der App. In `server/utils/auction-record.ts`: `iterateAuctionRecords` (gestreamt, feste Blockgröße) für reine Auswertungen/Zähler, `readAuctionRecordsByKeys` für eine bekannte Schlüsselliste, `createCandidateRecordLoader` für Läufe, die eine Kandidatenliste der Reihe nach abarbeiten (Reprocess). `readAuctionRecords`/`readAuctionRecordMap` materialisieren alles und laufen deshalb seriell durch ein Gate; Enrich-Worker und -Selektion nutzen sie noch.
 
+## Speicher-Diagnose
+
+Die App loggt `[memory] … rss= heapUsed= heapTotal= external= arrayBuffers= running=…` beim Start/Ende jedes getrackten Tasks (`recordTaskRunStart/End`), bei RSS-Sprüngen ab 64 MB und als 10-Minuten-Heartbeat (`server/utils/memory-diagnostics.ts`, abschaltbar mit `ZVG_MEMORY_LOG=0`). Zuordnung auf dem Host: `podman logs -t zvg-immo | grep '\[memory\]'`.
+
 ## Modulgrößen
 
 Produktionsdateien unter `server`, `components`, `composables`, `pages`, `lib`
