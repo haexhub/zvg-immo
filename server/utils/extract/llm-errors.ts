@@ -119,3 +119,20 @@ export function isConnectionDroppedError(err: unknown): boolean {
   const code = (err as { code?: unknown })?.code ?? cause?.code
   return typeof code === 'string' && /^(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH)$/.test(code)
 }
+
+/** Whether a failed request lost its connection without any HTTP response —
+ *  refused, reset, closed mid-flight (the claude-proxy being restarted) —
+ *  as opposed to an error status or the client's own timeout. Unlike
+ *  isConnectionDroppedError this includes resets that may have happened after
+ *  the proxy accepted the request, so it never justifies re-sending the
+ *  request; it only tells reprocess the provider may be coming back (see
+ *  provider-recovery.ts) rather than being down. Accepts the provider's
+ *  wrapped error as well as the raw fetch error. */
+export function isConnectionLostError(err: unknown): boolean {
+  const inner = isLlmProviderError(err) && err.cause != null ? err.cause : err
+  if ((inner as { response?: unknown })?.response != null) return false
+  const cause = (inner as { cause?: { name?: string; message?: string; code?: string } })?.cause
+  const text = `${(inner as Error)?.name ?? ''} ${(inner as Error)?.message ?? ''} ${cause?.name ?? ''} ${cause?.message ?? ''} ${cause?.code ?? ''}`
+  if (/abort|timeout|timed out/i.test(text)) return false
+  return /fetch failed|ECONNREFUSED|ECONNRESET|EPIPE|UND_ERR_SOCKET|other side closed|terminated/i.test(text)
+}

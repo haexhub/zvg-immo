@@ -18,7 +18,8 @@ import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
 import { recordLlmUsage } from '../utils/llm-usage'
 import { recordTaskRunProgress, recordTaskRunStart } from '../utils/task-runs'
-import { isRateLimitError } from '../utils/extract/llm-errors'
+import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '../utils/extract/llm-errors'
+import { waitForProviderRecovery } from '../utils/extract/provider-recovery'
 
 vi.mock('../utils/storage-download', () => ({
   listDistinctCaptures: vi.fn(),
@@ -63,7 +64,9 @@ vi.mock('../utils/extract/llm-batch', () => ({
 vi.mock('../utils/extract/llm', () => ({
   extractByLlm: vi.fn(),
 }))
+vi.mock('../utils/extract/provider-recovery', () => ({ waitForProviderRecovery: vi.fn(async () => false) }))
 vi.mock('../utils/extract/llm-errors', () => ({
+  isConnectionLostError: vi.fn(() => false),
   isDailyQuotaError: vi.fn(() => false),
   isLlmProviderError: vi.fn(() => false),
   isLlmProviderUnavailable: vi.fn(() => false),
@@ -1151,5 +1154,52 @@ describe('runReprocess parallel lanes', () => {
     expect(calls).toBeLessThanOrEqual(2)
     expect(result.warning).toBeDefined()
     expect(result.processed).toBe(0)
+  })
+
+  describe('a lost provider connection (proxy restart)', () => {
+    function loseConnectionOnce(): void {
+      const lost = new Error('claude-proxy: <no response> fetch failed')
+      vi.mocked(isLlmProviderError).mockImplementation((err) => err === lost)
+      vi.mocked(isConnectionLostError).mockImplementation((err) => err === lost)
+      let first = true
+      vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        if (first) { first = false; throw lost }
+        return null
+      })
+    }
+
+    afterEach(() => {
+      vi.mocked(isLlmProviderError).mockReset().mockReturnValue(false)
+      vi.mocked(isConnectionLostError).mockReset().mockReturnValue(false)
+      vi.mocked(waitForProviderRecovery).mockReset().mockResolvedValue(false)
+    })
+
+    it('keeps the run going once the provider answers again, leaving only the interrupted candidate open', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      loseConnectionOnce()
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).toHaveBeenCalledTimes(1)
+      expect(result.warning).toBeUndefined()
+      expect(result).toMatchObject({ candidates: 12, skipped: 1, processed: 11 })
+    })
+
+    it('still stops the run when the provider does not come back', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(false)
+      loseConnectionOnce()
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(result.warning).toContain('LLM-Providerfehler')
+      expect(result.processed).toBe(0)
+    })
   })
 })
