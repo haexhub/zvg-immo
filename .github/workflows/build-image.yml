@@ -45,6 +45,15 @@ on:
       - ".github/workflows/build-image.yml"
   workflow_dispatch:
 
+# Two merges in quick succession start two builds that both push :latest, and
+# whichever finishes last wins — so an older commit can overwrite a newer one
+# (2026-10-17: the build for #518 finished 4 s after #519's and replaced it, and
+# production kept running without #519 until a manual rebuild). Keep only the
+# newest build per ref; the newest commit contains every earlier one.
+concurrency:
+  group: build-image-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Lint, typecheck, tests and build for this exact commit. The SSR smoke test
   # below only proves "/" renders; without this gate a commit with red CI
