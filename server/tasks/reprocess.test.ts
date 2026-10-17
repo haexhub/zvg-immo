@@ -1156,6 +1156,43 @@ describe('runReprocess parallel lanes', () => {
     expect(result.processed).toBe(0)
   })
 
+  it('hands budget the smaller platforms left unused to a platform that hit its fair share', async () => {
+    // Fair share = ceil(6 / 2 platforms) = 3. kip has only 2 candidates, so one
+    // slot would go unused — the big platform must get it in a second pass.
+    const rows = [
+      ...Array.from({ length: 10 }, (_, i) => ({ platform: 'zvg-portal', external_id: String(200 + i), country: 'de' })),
+      ...Array.from({ length: 2 }, (_, i) => ({ platform: 'kip', external_id: `K${i}`, country: 'de' })),
+    ]
+    seedCandidates()
+    vi.mocked(getPool).mockReturnValue({ query: vi.fn(async () => ({ rows })) } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map(rows.map((r) => [`${r.platform}:${r.external_id}`, {
+      auction: { ...auction(), platform: r.platform, externalId: r.external_id },
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: null,
+    }])))
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '6' } }))
+    vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+    const stats = trackInFlight()
+
+    const result = await runReprocess({ country: 'de' })
+
+    const expectedIds = rows.map((row) => `${row.platform}:${row.external_id}`)
+    const processedIds = vi.mocked(writeAuctionDetails).mock.calls.map(([updated]) =>
+      `${updated.platform}:${updated.externalId}`,
+    )
+    expect(processedIds).toHaveLength(expectedIds.length)
+    expect(new Set(processedIds)).toEqual(new Set(expectedIds))
+
+    const usageByPlatform = (platform: string) =>
+      vi.mocked(recordLlmUsage).mock.calls.filter(([entry]) => entry.platform === platform).length
+    expect(stats.calls).toBe(6) // the whole budget is used, not 5
+    expect(usageByPlatform('kip')).toBe(2)
+    expect(usageByPlatform('zvg-portal')).toBe(4)
+    // every candidate is handled exactly once, deferred or not
+    expect(result).toMatchObject({ candidates: 12, processed: 12, skipped: 0, llmCalls: 6 })
+  })
+
   describe('a lost provider connection (proxy restart)', () => {
     /** Makes the first provider request fail as a proxy restart would. */
     function loseConnectionOnce(): void {
