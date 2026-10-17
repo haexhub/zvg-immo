@@ -3,7 +3,8 @@ import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { type RulesHint } from '~/server/utils/extract/llm-clamp'
-import { isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import { waitForProviderRecovery } from '~/server/utils/extract/provider-recovery'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { createCandidateRecordLoader } from '~/server/utils/auction-record'
 import { readArtifactProcessingState } from '~/server/utils/artifact-version-state'
@@ -190,7 +191,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     // cooldown timestamp needs recording even though this candidate never
     // reaches persistEntry.
     let syncLlmAttempted = false
-    let priorLlmFailures = 0
+    let priorLlmFailures = 0, lastLlmConfig: LlmConfig | null = null
     // Hoisted like syncLlmAttempted: whether writeAuctionLlmClaim ran, since
     // syncConfigs itself is scoped inside the try block below.
     let llmClaimed = false
@@ -364,6 +365,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
           lastLlmError = `${platform}:${externalId}: ${message}`
         },
         onLlmCall: async ({ config, durationMs, usage, status, errorMessage }) => {
+          lastLlmConfig = config
           await recordLlmUsage({
             task: 'extraction',
             executionMode: 'sync',
@@ -443,6 +445,14 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         return
       }
       if (isLlmProviderError(err)) {
+        // A restarted proxy drops every in-flight request at once. This
+        // candidate is not re-sent (the proxy may already have accepted it, so
+        // that could pay twice) — it stays open for the next run — but the run
+        // itself carries on once the provider answers again.
+        if (isConnectionLostError(err) && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
+          console.warn('[reprocess] LLM provider connection was lost but it is back — continuing this run')
+          return
+        }
         warning = `LLM-Providerfehler: ${err.message}`
         console.warn('[reprocess] LLM provider unavailable — stopping this run early')
         stopRun = true
