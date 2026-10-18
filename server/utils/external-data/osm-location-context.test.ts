@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Pool } from 'pg'
 import { createLocalOsmLocationContextAdapter } from './osm-location-context'
 import { buildLocationContext } from './osm-location-context-builder'
@@ -333,5 +333,59 @@ describe('createLocalOsmLocationContextAdapter', () => {
 
     expect(adapter.supports(auction({ lat: null, lng: null }))).toBe(false)
     expect(adapter.supports(auction())).toBe(true)
+  })
+  describe('query timing log', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    it('names the failing and the still-running categories when a query times out', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const query = async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('SELECT EXISTS')) return { rows: [{ exists: true }] }
+        if (params[4] === 'building' && params[5] === undefined) throw new Error('Query read timeout')
+        return new Promise(() => {}) // every other category is still running
+      }
+      const adapter = createLocalOsmLocationContextAdapter({ db: { query } as unknown as Pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+      await expect(adapter.context(auction({ lat: 49.01, lng: 8.4 }))).rejects.toThrow('Query read timeout')
+
+      expect(warn).toHaveBeenCalledTimes(1)
+      const line = String(warn.mock.calls[0]?.[0])
+      expect(line).toContain('[osm-context]')
+      expect(line).toContain('at 49.01,8.4 failed (Query read timeout)')
+      expect(line).toContain('unfinished/failed:')
+      expect(line).toMatch(/building@\d+m \d+ms/)
+    })
+
+    it('stays silent for a fast context', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const { pool } = fakeOsmPool()
+      const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+      await adapter.context(auction())
+
+      expect(warn).not.toHaveBeenCalled()
+    })
+
+    it('reports a slow but successful context with its slowest categories', async () => {
+      vi.useFakeTimers()
+      try {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const query = async (sql: string, params: unknown[] = []) => {
+          if (sql.includes('SELECT EXISTS')) return { rows: [{ exists: true }] }
+          if (params[4] === 'amenity') await new Promise((resolve) => setTimeout(resolve, 6_000))
+          return { rows: [] }
+        }
+        const adapter = createLocalOsmLocationContextAdapter({ db: { query } as unknown as Pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+        const pending = adapter.context(auction())
+        await vi.advanceTimersByTimeAsync(7_000)
+        await pending
+
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(String(warn.mock.calls[0]?.[0])).toMatch(/slow after 6\d{3}ms .*amenity/)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })
