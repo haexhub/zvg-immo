@@ -414,17 +414,7 @@ function onPointerMove(evt: any): void {
          interfering with genuine drags. -->
     <ol-map ref="mapRef" class="h-full w-full" :move-tolerance="8" @click="onMapClick" @pointermove="onPointerMove" @moveend="onMoveEnd">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
-      <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
-           imperatively at the bottom of the layer stack once a key is
-           configured; this raster fallback only renders without one.
-           Every raster layer stays mounted for the map's whole lifetime and
-           only toggles visibility (hidden layers load no tiles). Neither
-           mounting/unmounting the layer components nor swapping a layer's
-           source component works: vue3-openlayers appends a layer to the map
-           on mount (a new base layer would cover the tourism and marker
-           layers), and a replaced source component's onUnmounted hook runs
-           after the new one mounted and resets the layer's source to null
-           (blank satellite map). -->
+      <!-- Keep both raster layers mounted and toggle visibility: replacing sources can break vue3-openlayers cleanup and blank the map. -->
       <template v-if="!mapTilerApiKey">
         <ol-tile-layer :visible="baseLayer === 'streets'">
           <ol-source-osm :attributions="OSM_ATTRIBUTION" />
