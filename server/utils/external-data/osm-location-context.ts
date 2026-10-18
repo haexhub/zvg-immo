@@ -143,7 +143,7 @@ function categoryLabel(category: OsmCategory): string {
 interface CategoryTiming {
   label: string
   ms: number
-  /** null while still running or when the query failed. */
+  status: 'pending' | 'completed' | 'failed'
   rows: number | null
 }
 
@@ -154,14 +154,17 @@ function logContextTimings(
   startedAt: number,
   error?: unknown,
 ): void {
-  const done = timings.filter((timing) => timing.rows != null).sort((a, b) => b.ms - a.ms).slice(0, 5)
-  const failed = timings.filter((timing) => timing.rows == null)
+  const completed = timings.filter((timing) => timing.status === 'completed')
+  const slowest = [...completed].sort((a, b) => b.ms - a.ms).slice(0, 5)
+  const failed = timings.filter((timing) => timing.status === 'failed')
+  const unfinished = timings.filter((timing) => timing.status === 'pending')
   const format = (timing: CategoryTiming) => `${timing.label} ${timing.ms}ms${timing.rows == null ? '' : `/${timing.rows} rows`}`
   const state = error ? `failed (${error instanceof Error ? error.message : String(error)})` : 'slow'
   console.warn(
     `[osm-context] ${auction.platform}/${auction.externalId} at ${point.lat},${point.lng} ${state} after ${Date.now() - startedAt}ms · ` +
-      `${done.length}/${timings.length} categories done, slowest: ${done.map(format).join(', ') || '-'}` +
-      (failed.length ? ` · unfinished/failed: ${failed.map(format).join(', ')}` : ''),
+      `${completed.length}/${timings.length} categories done, slowest: ${slowest.map(format).join(', ') || '-'}` +
+      (failed.length ? ` · failed: ${failed.map(format).join(', ')}` : '') +
+      (unfinished.length ? ` · unfinished: ${unfinished.map(format).join(', ')}` : ''),
   )
 }
 
@@ -206,28 +209,35 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
     supports: (auction) => isFinitePoint(auction),
     async context(auction) {
       const country = auction.country.toLowerCase()
+      const point = { lat: auction.lat!, lng: auction.lng! }
+      const startedAt = Date.now()
+      const timings: CategoryTiming[] = []
       // A country with zero imported rows means "not loaded yet", not
       // "genuinely nothing nearby" — returning null here (instead of a
       // context built from an empty element set) keeps that distinction
       // instead of caching a misleadingly featureless LocationContext.
-      if (!(await isCovered(country))) return null
-      const point = { lat: auction.lat!, lng: auction.lng! }
-      const startedAt = Date.now()
-      const timings: CategoryTiming[] = []
       const timed = async (category: OsmCategory) => {
-        const timing: CategoryTiming = { label: categoryLabel(category), ms: -1, rows: null }
+        const timing: CategoryTiming = { label: categoryLabel(category), ms: -1, status: 'pending', rows: null }
         timings.push(timing)
         const queryStartedAt = Date.now()
         try {
           const elements = await queryCategory(options.db, country, point, category)
           timing.rows = elements.length
+          timing.status = 'completed'
           return elements
+        } catch (err) {
+          timing.status = 'failed'
+          throw err
         } finally {
           timing.ms = Date.now() - queryStartedAt
         }
       }
       let results: OsmElement[][]
       try {
+        if (!(await isCovered(country))) {
+          if (Date.now() - startedAt >= SLOW_CONTEXT_MS) logContextTimings(auction, point, timings, startedAt)
+          return null
+        }
         results = await Promise.all(CATEGORIES.map(timed))
       } catch (err) {
         // Still-running queries have ms = -1; report how long they had been out.
