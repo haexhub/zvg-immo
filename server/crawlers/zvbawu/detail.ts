@@ -13,7 +13,9 @@ interface DetailImage {
 
 interface DetailFact {
   key: string
-  value: string
+  /** The site sends plain numbers for some facts (e.g. a whole-number
+   *  Zimmer), strings for the rest. */
+  value: string | number
 }
 
 interface DetailSection {
@@ -129,7 +131,8 @@ function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {
 }
 
 function factValue(facts: DetailFact[], keyRe: RegExp): string | null {
-  return facts.find((f) => keyRe.test(f.key.trim()))?.value ?? null
+  const value = facts.find((f) => keyRe.test(f.key.trim()))?.value
+  return value == null ? null : String(value)
 }
 
 /** Pure mapping from the Inertia auction payload — exported for tests. */

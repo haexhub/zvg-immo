@@ -75,6 +75,15 @@ describe('buildDetailInfo', () => {
     expect(buildDetailInfo(a).sourceRooms).toBe(4.5)
   })
 
+  it('accepts a Zimmer fact the site sends as a plain number instead of a string', () => {
+    // Live: `roomsRaw.replace is not a function` on every whole-number listing.
+    const a = auctionPayload()
+    a.features.facts.push({ key: 'Zimmer', value: 4 as unknown as string })
+    const info = buildDetailInfo(a)
+    expect(info.sourceRooms).toBe(4)
+    expect(info.description).toContain('Zimmer: 4')
+  })
+
   it('composes teaser, summary/description, facts and sections into the description', () => {
     const info = buildDetailInfo(auctionPayload())
     const b = info.description ?? ''
