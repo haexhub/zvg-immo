@@ -417,13 +417,20 @@ function onPointerMove(evt: any): void {
       <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
            imperatively at the bottom of the layer stack once a key is
            configured; this raster fallback only renders without one.
-           Both raster layers stay mounted and only swap source/visibility;
-           toggling the layer component with v-if/v-else put the new base
-           layer above the tourism and marker layers. -->
+           Every raster layer stays mounted for the map's whole lifetime and
+           only toggles visibility (hidden layers load no tiles). Neither
+           mounting/unmounting the layer components nor swapping a layer's
+           source component works: vue3-openlayers appends a layer to the map
+           on mount (a new base layer would cover the tourism and marker
+           layers), and a replaced source component's onUnmounted hook runs
+           after the new one mounted and resets the layer's source to null
+           (blank satellite map). -->
       <template v-if="!mapTilerApiKey">
-        <ol-tile-layer>
-          <ol-source-osm v-if="baseLayer === 'streets'" :attributions="OSM_ATTRIBUTION" />
-          <ol-source-xyz v-else :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
+        <ol-tile-layer :visible="baseLayer === 'streets'">
+          <ol-source-osm :attributions="OSM_ATTRIBUTION" />
+        </ol-tile-layer>
+        <ol-tile-layer :visible="baseLayer === 'satellite'">
+          <ol-source-xyz :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
         </ol-tile-layer>
         <ol-tile-layer :visible="baseLayer === 'satellite'">
           <ol-source-xyz :url="ESRI_LABELS_URL" :attributions="ESRI_LABELS_ATTRIBUTION" />
