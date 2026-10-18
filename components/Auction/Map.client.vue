@@ -416,19 +416,18 @@ function onPointerMove(evt: any): void {
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
       <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
            imperatively at the bottom of the layer stack once a key is
-           configured; this raster fallback only renders without one. -->
+           configured; this raster fallback only renders without one.
+           Both raster layers stay mounted and only swap source/visibility;
+           toggling the layer component with v-if/v-else put the new base
+           layer above the tourism and marker layers. -->
       <template v-if="!mapTilerApiKey">
-        <ol-tile-layer v-if="baseLayer === 'streets'">
-          <ol-source-osm :attributions="OSM_ATTRIBUTION" />
+        <ol-tile-layer>
+          <ol-source-osm v-if="baseLayer === 'streets'" :attributions="OSM_ATTRIBUTION" />
+          <ol-source-xyz v-else :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
         </ol-tile-layer>
-        <template v-else>
-          <ol-tile-layer>
-            <ol-source-xyz :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
-          </ol-tile-layer>
-          <ol-tile-layer>
-            <ol-source-xyz :url="ESRI_LABELS_URL" :attributions="ESRI_LABELS_ATTRIBUTION" />
-          </ol-tile-layer>
-        </template>
+        <ol-tile-layer :visible="baseLayer === 'satellite'">
+          <ol-source-xyz :url="ESRI_LABELS_URL" :attributions="ESRI_LABELS_ATTRIBUTION" />
+        </ol-tile-layer>
       </template>
       <!-- Tourism-intensity choropleth, below the marker layer so pins/
            clusters stay clickable and legible on top of it. -->
