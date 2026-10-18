@@ -54,6 +54,7 @@ function noteRateLimited(): void {
   pauseUntil = Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (consecutive429 - 1), MAX_PAUSE_MS)
   if (consecutive429 >= BREAKER_THRESHOLD) {
     breakerUntil = Date.now() + BREAKER_OPEN_MS
+    okSinceBlock = 0
     // Half-open afterwards: one more 429 re-opens it after a short pause.
     consecutive429 = BREAKER_THRESHOLD - 2
   }
