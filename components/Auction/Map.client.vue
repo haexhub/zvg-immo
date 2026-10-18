@@ -414,16 +414,13 @@ function onPointerMove(evt: any): void {
          interfering with genuine drags. -->
     <ol-map ref="mapRef" class="h-full w-full" :move-tolerance="8" @click="onMapClick" @pointermove="onPointerMove" @moveend="onMoveEnd">
       <ol-view :center="initialCenter" :zoom="initialZoom" projection="EPSG:3857" />
-      <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
-           imperatively at the bottom of the layer stack once a key is
-           configured; this raster fallback only renders without one.
-           Both raster layers stay mounted and only swap source/visibility;
-           toggling the layer component with v-if/v-else put the new base
-           layer above the tourism and marker layers. -->
+      <!-- Keep both raster layers mounted and toggle visibility: replacing sources can break vue3-openlayers cleanup and blank the map. -->
       <template v-if="!mapTilerApiKey">
-        <ol-tile-layer>
-          <ol-source-osm v-if="baseLayer === 'streets'" :attributions="OSM_ATTRIBUTION" />
-          <ol-source-xyz v-else :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
+        <ol-tile-layer :visible="baseLayer === 'streets'">
+          <ol-source-osm :attributions="OSM_ATTRIBUTION" />
+        </ol-tile-layer>
+        <ol-tile-layer :visible="baseLayer === 'satellite'">
+          <ol-source-xyz :url="ESRI_IMAGERY_URL" :attributions="ESRI_ATTRIBUTION" />
         </ol-tile-layer>
         <ol-tile-layer :visible="baseLayer === 'satellite'">
           <ol-source-xyz :url="ESRI_LABELS_URL" :attributions="ESRI_LABELS_ATTRIBUTION" />
