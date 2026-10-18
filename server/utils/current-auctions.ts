@@ -9,6 +9,7 @@ import { runExternalEnrichment } from '~/server/tasks/external-enrichment'
 import { runExclusiveTask } from '~/server/utils/exclusive-task'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { getPool } from './db'
+import { usableCoordinates } from './coordinates'
 import { coordinatesMovedSignificantly } from './external-data/geo'
 import type { GeocodeStatus } from './geocode'
 
@@ -62,8 +63,9 @@ export function auctionToCurrentRow(a: Auction, updatedAt: string): CurrentAucti
     auction_date_iso: a.auctionDateIso,
     auction_date_text: a.auctionDateText,
     cancelled: a.cancelled,
-    lat: a.lat ?? null,
-    lng: a.lng ?? null,
+    // Last line of defence for every crawler: 0/0 means "no location".
+    lat: usableCoordinates(a.lat, a.lng)?.lat ?? null,
+    lng: usableCoordinates(a.lat, a.lng)?.lng ?? null,
     updated_at: updatedAt,
   }
 }

@@ -1,5 +1,6 @@
 import type { Auction, CrawlResult } from '~/types/auction'
 import type { CrawlOptions, PlatformCrawler } from '../types'
+import { usableCoordinates } from '~/server/utils/coordinates'
 import { ZVBAWU_BASE, COUNTRY, DE_REGIONS, BW_COURTS_FALLBACK } from './constants'
 import { crawlCourt } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
@@ -21,9 +22,11 @@ function applyDetail(auction: Auction, info: DetailInfo): void {
   if (info.sourceLandAreaSqm != null) auction.sourceLandAreaSqm = info.sourceLandAreaSqm
   if (info.sourceRooms != null) auction.sourceRooms = info.sourceRooms
   const [lat, lng] = info.latlng ?? []
-  if (typeof lat === 'number' && typeof lng === 'number') {
-    auction.lat = lat
-    auction.lng = lng
+  // The detail payload carries [0, 0] for "no location"; keep what was there.
+  const point = usableCoordinates(lat, lng)
+  if (point) {
+    auction.lat = point.lat
+    auction.lng = point.lng
   }
   // Detail page exposes the file number as a dedicated field; the list view
   // derives it from facts[0]. Prefer the structured value when set.

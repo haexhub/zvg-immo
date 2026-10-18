@@ -60,4 +60,28 @@ describe('zvbawu crawl', () => {
     expect(result.auctions.length).toBeGreaterThan(0)
     expect(result.platformsSucceeded).toEqual([])
   })
+
+  it('ignores a [0, 0] position from the detail payload and keeps what was there', async () => {
+    const { enrichInBatches } = await import('./detail')
+    const { zvbawuCrawler } = await import('./index')
+    const detail = (latlng: [number, number] | null) => ({
+      description: null, attachments: [], photoCount: 0, thumbnailUrl: null, pdfUrl: null,
+      pdfUrlOriginal: null, pdfUrlUpstream: null, cancelled: false, caseNumber: null, latlng,
+    })
+    const run = async (latlng: [number, number] | null, item: Auction) => {
+      vi.mocked(enrichInBatches).mockImplementationOnce((async (auctions: Auction[], apply: (a: Auction, d: unknown) => void) => {
+        apply(auctions[0]!, detail(latlng))
+        return { errors: 0 }
+      }) as never)
+      await zvbawuCrawler.enrichOne!(item)
+    }
+
+    const unlocated = auction('1')
+    await run([0, 0], unlocated)
+    expect(unlocated.lat ?? null).toBeNull()
+
+    const located = auction('2')
+    await run([48.0079, 7.8107], located)
+    expect(located).toMatchObject({ lat: 48.0079, lng: 7.8107 })
+  })
 })

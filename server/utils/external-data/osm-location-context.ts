@@ -1,6 +1,7 @@
 import type { Pool } from 'pg'
 import type { Auction } from '~/types/auction'
 import type { LocationContextAdapter } from '~/server/tasks/external-enrichment'
+import { hasUsableCoordinates } from '~/server/utils/coordinates'
 import { type Point } from './geo'
 import { buildLocationContext } from './osm-location-context-builder'
 import {
@@ -264,5 +265,5 @@ function dedupe(elements: OsmElement[]): OsmElement[] {
 }
 
 function isFinitePoint(auction: Auction): boolean {
-  return Number.isFinite(auction.lat) && Number.isFinite(auction.lng)
+  return hasUsableCoordinates(auction.lat, auction.lng)
 }

@@ -62,4 +62,16 @@ describe('fillAuctionGeocodes', () => {
     expect(item).toMatchObject({ lat: 59.33, lng: 18.06 })
     expect(result).toEqual({ processed: 0, geocoded: 0, failed: 0 })
   })
+
+  it('treats 0/0 as missing and geocodes the address instead', async () => {
+    const { geocodeAddress } = await import('./geocode')
+    vi.mocked(geocodeAddress).mockResolvedValue({ lat: 57.64, lng: 18.30, displayName: 'Gotland' })
+    const item = auction({ lat: 0, lng: 0 })
+
+    const result = await fillAuctionGeocodes([item])
+
+    expect(geocodeAddress).toHaveBeenCalledTimes(1)
+    expect(item).toMatchObject({ lat: 57.64, lng: 18.30 })
+    expect(result).toEqual({ processed: 1, geocoded: 1, failed: 0 })
+  })
 })
