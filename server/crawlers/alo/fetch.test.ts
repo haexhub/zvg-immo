@@ -147,4 +147,84 @@ describe('fetchAloPage', () => {
     expect(await third).toBeInstanceOf(SourceRateLimitedError)
     expect(fetchMock).toHaveBeenCalledTimes(6) // breaker open: nothing was sent
   })
+
+  it('resets the success count when the headerless breaker opens', async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      n++
+      if (n <= 3) return new Response('ok')
+      if (n <= 9) return tooMany()
+      return new Response('', { status: 429, headers: { 'retry-after': '3600' } })
+    }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+
+    for (const id of ['a', 'b', 'c']) {
+      const succeeded = fetchAloPage(`https://www.alo.bg/${id}`)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await succeeded
+    }
+
+    // Two calls consume six headerless 429s and open the regular breaker.
+    for (const id of ['d', 'e']) {
+      const failed = fetchAloPage(`https://www.alo.bg/${id}`).catch(() => undefined)
+      await vi.advanceTimersByTimeAsync(20 * 60_000)
+      await failed
+    }
+
+    // The first probe after that breaker is a Retry-After 429. Its warning
+    // must count only requests since the newly opened breaker, not the three
+    // successful requests from before it.
+    await vi.advanceTimersByTimeAsync(31 * 60_000)
+    const probe = fetchAloPage('https://www.alo.bg/f').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await probe
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 0 successful request(s)'))
+    warn.mockRestore()
+  })
+
+  it('opens the breaker at once for the Retry-After alo names — retrying a captcha block only extends it', async () => {
+    const blocked = () => new Response('', { status: 429, headers: { 'retry-after': '3600' } })
+    const fetchMock = vi.fn().mockImplementation(async () => blocked())
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+    const { SourceRateLimitedError } = await import('~/server/utils/source-rate-limit')
+
+    const first = fetchAloPage('https://www.alo.bg/a').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await first).toBeInstanceOf(SourceRateLimitedError)
+    expect(fetchMock).toHaveBeenCalledTimes(1) // no retry after the block was announced
+
+    // Still blocked 59 minutes later: nothing is sent.
+    await vi.advanceTimersByTimeAsync(59 * 60_000)
+    const second = fetchAloPage('https://www.alo.bg/b').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await second).toBeInstanceOf(SourceRateLimitedError)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // After the hour one probe goes out again.
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    const third = fetchAloPage('https://www.alo.bg/c').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await third
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 0 successful request(s)'))
+    warn.mockRestore()
+  })
+
+  it("reports how many requests got through before the block, to learn alo's quota", async () => {
+    let n = 0
+    vi.stubGlobal('fetch', vi.fn(async () => (++n <= 3 ? new Response('ok') : new Response('', { status: 429, headers: { 'retry-after': '3600' } }))))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+
+    for (const id of ['a', 'b', 'c', 'd']) {
+      const p = fetchAloPage(`https://www.alo.bg/${id}`).catch(() => undefined)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await p
+    }
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 3 successful request(s)'))
+    warn.mockRestore()
+  })
 })
