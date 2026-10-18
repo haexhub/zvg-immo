@@ -417,12 +417,9 @@ function onPointerMove(evt: any): void {
       <!-- MapTiler vector base layer (useMapTilerVectorBaseLayer) is inserted
            imperatively at the bottom of the layer stack once a key is
            configured; this raster fallback only renders without one.
-           Both raster layers stay mounted for the map's whole lifetime and
-           only swap their source/visibility: vue3-openlayers appends a layer
-           to the map when its component mounts, so toggling the layer
-           component itself with v-if/v-else put the new base layer *above*
-           the tourism and marker layers — it then covered them, and they
-           never came back after switching again. -->
+           Both raster layers stay mounted and only swap source/visibility;
+           toggling the layer component with v-if/v-else put the new base
+           layer above the tourism and marker layers. -->
       <template v-if="!mapTilerApiKey">
         <ol-tile-layer>
           <ol-source-osm v-if="baseLayer === 'streets'" :attributions="OSM_ATTRIBUTION" />
