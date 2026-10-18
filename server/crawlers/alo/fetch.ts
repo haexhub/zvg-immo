@@ -4,12 +4,17 @@ import { CRAWL_DELAY_MS, UA } from './constants'
 const FETCH_TIMEOUT_MS = 20_000
 const FETCH_RETRIES = 2
 
-// alo.bg answers HTTP 429 well below our fixed 1 req/s (no Retry-After, no rate
-// headers — verified live). Rather than guess its limit, the pacing adapts
-// (AIMD): every 429 doubles the gap between requests and pauses everyone for a
-// growing time; a long run of successes halves the gap again, down to the
-// 1 s floor. If it keeps refusing, the breaker below stops asking altogether
-// for a while instead of burning a retry budget on every single auction.
+// alo.bg answers HTTP 429 well below our fixed 1 req/s. Rather than guess its
+// limit, the pacing adapts (AIMD): every 429 doubles the gap between requests
+// and pauses everyone for a growing time; a long run of successes halves the
+// gap again, down to the 1 s floor. If it keeps refusing, the breaker below
+// stops asking altogether for a while instead of burning a retry budget on
+// every single auction.
+//
+// Detail pages are the exception (verified live, 2026-10-18): after a few dozen
+// requests the IP gets `xalo: ad_captcha_show` with `Retry-After: 3600`, and
+// list pages keep working. Retrying through that only extends the block, so a
+// 429 that names a Retry-After opens the breaker for exactly that long at once.
 const MAX_GAP_MS = 30_000
 const FIRST_PAUSE_MS = 10_000
 const MAX_PAUSE_MS = 5 * 60_000
@@ -19,12 +24,28 @@ const BREAKER_THRESHOLD = 6
 /** … and for how long it fails fast before one more probe is allowed. */
 const BREAKER_OPEN_MS = 30 * 60_000
 const RATE_LIMIT_ATTEMPTS = 3
+const MAX_RETRY_AFTER_MS = 6 * 60 * 60_000
 
 let gapMs = CRAWL_DELAY_MS
 let pauseUntil = 0
 let breakerUntil = 0
 let consecutive429 = 0
 let successStreak = 0
+let okSinceBlock = 0
+
+/** `Retry-After` as milliseconds (delta-seconds or HTTP-date), or null when absent/unusable. */
+function retryAfterMs(res: Response): number | null {
+  const raw = res.headers.get('retry-after')?.trim()
+  if (!raw) return null
+  const ms = /^\d+$/.test(raw) ? Number(raw) * 1000 : Date.parse(raw) - Date.now()
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_RETRY_AFTER_MS) : null
+}
+
+function openBreakerFor(ms: number): void {
+  breakerUntil = Date.now() + ms
+  console.warn(`[alo] blocked with HTTP 429 after ${okSinceBlock} successful request(s); not asking again for ${Math.round(ms / 60_000)} min`)
+  okSinceBlock = 0
+}
 
 function noteRateLimited(): void {
   consecutive429++
@@ -40,6 +61,7 @@ function noteRateLimited(): void {
 
 function noteSuccess(): void {
   consecutive429 = 0
+  okSinceBlock++
   if (gapMs > CRAWL_DELAY_MS && ++successStreak >= SUCCESSES_PER_SPEEDUP) {
     successStreak = 0
     gapMs = Math.max(CRAWL_DELAY_MS, Math.floor(gapMs / 2))
@@ -92,8 +114,15 @@ export async function fetchAloPage(url: string): Promise<Response> {
     }
     if (res) {
       if (res.status === 429) {
-        noteRateLimited()
+        // Before the first await: callers already queued behind this request
+        // must see the new pause/breaker when they start.
+        const blockedFor = retryAfterMs(res)
+        if (blockedFor != null) openBreakerFor(blockedFor)
+        else noteRateLimited()
         await res.arrayBuffer().catch(() => {})
+        if (blockedFor != null) {
+          throw new SourceRateLimitedError(`alo.bg rate limit: HTTP 429, retry after ${Math.round(blockedFor / 60_000)} min`)
+        }
         if (++rateLimited >= RATE_LIMIT_ATTEMPTS || Date.now() < breakerUntil) {
           throw new SourceRateLimitedError(`alo.bg rate limit: HTTP 429 after ${rateLimited} attempt(s)`)
         }
