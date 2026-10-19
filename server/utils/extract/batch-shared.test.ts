@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import {
+  apiBase,
+  customIdForKey,
+  extractBatchFailureReason,
+  extractBatchItemErrorMessage,
+  extractOfetchErrorMessage,
+  isTransientBatchError,
+  pendingOnTransientPollError,
+} from './batch-shared'
 
 describe('extractOfetchErrorMessage', () => {
   it('reads the plain {error:{message}} shape (OpenAI/Anthropic/OpenRouter)', () => {
@@ -72,5 +80,37 @@ describe('apiBase', () => {
   it('strips a single trailing slash', () => {
     expect(apiBase({ baseUrl: 'https://api.openai.com/v1/', model: 'x' })).toBe('https://api.openai.com/v1')
     expect(apiBase({ baseUrl: 'https://api.openai.com/v1', model: 'x' })).toBe('https://api.openai.com/v1')
+  })
+})
+
+describe('pendingOnTransientPollError', () => {
+  const httpError = (status: number) => Object.assign(new Error(`http ${status}`), { response: { status } })
+
+  it('keeps the job pending for network errors, timeouts, 408/429 and 5xx', () => {
+    for (const err of [new Error('fetch failed'), httpError(408), httpError(429), httpError(500), httpError(503)]) {
+      expect(pendingOnTransientPollError(err, 'test-batch', 'job')).toEqual({ state: 'pending' })
+    }
+  })
+
+  it('rethrows a durable 4xx with the provider message so the poller can give the job up', () => {
+    const err = Object.assign(httpError(401), { data: { error: { message: 'invalid api key' } } })
+    expect(() => pendingOnTransientPollError(err, 'test-batch', 'job')).toThrow('invalid api key')
+    expect(() => pendingOnTransientPollError(httpError(402), 'test-batch', 'job')).toThrow('http 402')
+    expect(() => pendingOnTransientPollError(httpError(404), 'test-batch', 'job')).toThrow('http 404')
+  })
+})
+
+describe('extractBatchFailureReason', () => {
+  it('reads error as a string or {message}, then the first usable errors entry', () => {
+    expect(extractBatchFailureReason({ error: 'quota' })).toBe('quota')
+    expect(extractBatchFailureReason({ error: { message: 'boom' } })).toBe('boom')
+    expect(extractBatchFailureReason({ errors: ['', { message: 'second' }] })).toBe('second')
+    expect(extractBatchFailureReason({ errors: { data: [{ message: 'openai style' }] } })).toBe('openai style')
+  })
+
+  it('returns undefined when the provider reports no reason', () => {
+    expect(extractBatchFailureReason({ status: 'failed' })).toBeUndefined()
+    expect(extractBatchFailureReason({ error: null, errors: null })).toBeUndefined()
+    expect(extractBatchFailureReason(null)).toBeUndefined()
   })
 })

@@ -35,7 +35,15 @@ import {
 import { clampExtraction } from './llm-clamp'
 import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA, UNIVERSAL_AUCTION_SCHEMA_NAME } from './llm-schema'
 import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent, toOpenRouterSchema } from './providers/openai-compatible'
-import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import {
+  apiBase,
+  customIdForKey,
+  extractBatchFailureReason,
+  extractBatchItemErrorMessage,
+  extractOfetchErrorMessage,
+  isTransientBatchError,
+  pendingOnTransientPollError,
+} from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch-client'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
@@ -162,7 +170,7 @@ export async function submitOpenRouterBatch(
 export async function pollOpenRouterBatch(jobName: string, config: LlmConfig): Promise<PollResult> {
   const id = jobName.slice(JOB_NAME_PREFIX.length)
   try {
-    const resp = await $fetch<{ status?: string; error?: { message?: string } | null }>(
+    const resp = await $fetch<{ status?: string; error?: unknown; errors?: unknown }>(
       `${betaApiBase(config)}/batches/${id}`,
       {
         headers: authHeaders(config),
@@ -170,12 +178,12 @@ export async function pollOpenRouterBatch(jobName: string, config: LlmConfig): P
       },
     )
     if (resp.status === 'completed') return { state: 'succeeded' }
-    if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed', errorMessage: resp.error?.message }
-    if (resp.status === 'expired') return { state: 'expired', errorMessage: resp.error?.message }
+    const errorMessage = extractBatchFailureReason(resp)
+    if (resp.status === 'failed' || resp.status === 'cancelled') return { state: 'failed', errorMessage }
+    if (resp.status === 'expired') return { state: 'expired', errorMessage }
     return { state: 'pending' }
   } catch (err) {
-    console.warn(`[openrouter-batch] poll failed for ${jobName}: ${(err as Error).message}`)
-    return { state: 'pending' }
+    return pendingOnTransientPollError(err, 'openrouter-batch', jobName)
   }
 }
 

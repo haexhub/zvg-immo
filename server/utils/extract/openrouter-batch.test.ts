@@ -154,10 +154,42 @@ describe('pollOpenRouterBatch', () => {
     await expect(pollOpenRouterBatch('openrouter_batch_running', config)).resolves.toEqual({ state: 'pending' })
   })
 
-  it('treats a poll failure as pending rather than throwing', async () => {
-    stubOfetch([{ match: '/api/beta/batches/batch_x', error: new Error('network down') }])
+  it('treats a transient poll failure as pending rather than throwing', async () => {
+    stubOfetch([
+      { match: '/api/beta/batches/batch_x', error: new Error('network down') },
+      { match: '/api/beta/batches/batch_y', error: Object.assign(new Error('502 Bad Gateway'), { response: { status: 502 } }) },
+    ])
     const { pollOpenRouterBatch } = await import('./openrouter-batch')
     await expect(pollOpenRouterBatch('openrouter_batch_x', config)).resolves.toEqual({ state: 'pending' })
+    await expect(pollOpenRouterBatch('openrouter_batch_y', config)).resolves.toEqual({ state: 'pending' })
+  })
+
+  it('rethrows a durable HTTP rejection so the poller can give the job up', async () => {
+    // Swallowing a 402/401/404 as "pending" kept such jobs polled forever:
+    // llm-batch-poll.ts only expires a job whose poll throws.
+    stubOfetch([{
+      match: '/api/beta/batches/batch_x',
+      error: Object.assign(new Error('402 Payment Required'), {
+        response: { status: 402 },
+        data: { error: { message: 'Insufficient credits' } },
+      }),
+    }])
+    const { pollOpenRouterBatch } = await import('./openrouter-batch')
+    await expect(pollOpenRouterBatch('openrouter_batch_x', config)).rejects.toThrow('Insufficient credits')
+  })
+
+  it('reads the failure reason whether error is a string, an object or an errors list', async () => {
+    stubOfetch([
+      { match: '/api/beta/batches/batch_a', data: { status: 'failed', error: 'credits exhausted' } },
+      { match: '/api/beta/batches/batch_b', data: { status: 'failed', errors: [{ message: 'upstream rejected' }] } },
+      { match: '/api/beta/batches/batch_c', data: { status: 'expired', errors: { data: [{ message: 'timed out' }] } } },
+      { match: '/api/beta/batches/batch_d', data: { status: 'failed', error: null, errors: [] } },
+    ])
+    const { pollOpenRouterBatch } = await import('./openrouter-batch')
+    await expect(pollOpenRouterBatch('openrouter_batch_a', config)).resolves.toEqual({ state: 'failed', errorMessage: 'credits exhausted' })
+    await expect(pollOpenRouterBatch('openrouter_batch_b', config)).resolves.toEqual({ state: 'failed', errorMessage: 'upstream rejected' })
+    await expect(pollOpenRouterBatch('openrouter_batch_c', config)).resolves.toEqual({ state: 'expired', errorMessage: 'timed out' })
+    await expect(pollOpenRouterBatch('openrouter_batch_d', config)).resolves.toEqual({ state: 'failed', errorMessage: undefined })
   })
 })
 

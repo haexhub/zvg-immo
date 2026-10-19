@@ -1,7 +1,7 @@
 import type { LlmConfig } from './llm'
 import { clampExtraction } from './llm-clamp'
 import { parseGeminiExtractionResponse, parseGeminiUsage } from './providers/gemini-native'
-import { apiBase } from './batch-shared'
+import { apiBase, pendingOnTransientPollError } from './batch-shared'
 import type { LlmBatchResultItem } from './llm-batch'
 
 export interface PollResult {
@@ -53,7 +53,7 @@ export async function pollGeminiBatch(jobName: string, config: LlmConfig): Promi
     if (FAILED_STATES.has(state)) return { state: 'failed', errorMessage: extractErrorMessage(response) }
     if (EXPIRED_STATES.has(state)) return { state: 'expired', errorMessage: extractErrorMessage(response) }
     return { state: 'pending' }
-  } catch (err) { console.warn(`[gemini-batch] poll failed for ${jobName}: ${(err as Error).message}`); return { state: 'pending' } }
+  } catch (err) { return pendingOnTransientPollError(err, 'gemini-batch', jobName) }
 }
 // Throws on a failed download (no catch) so the poll task retries instead
 // of resolving the job with zero results.

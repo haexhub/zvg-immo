@@ -11,7 +11,7 @@ import {
 import { clampExtraction } from './llm-clamp'
 import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA } from './llm-schema'
 import { parseClaudeUsage, parseExtractionResponse } from './providers/claude-proxy'
-import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import { apiBase, customIdForKey, extractOfetchErrorMessage, isTransientBatchError, pendingOnTransientPollError } from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch-client'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
@@ -206,8 +206,7 @@ export async function pollAnthropicBatch(jobName: string, config: LlmConfig): Pr
     console.warn(`[anthropic-batch] unrecognized status for ${jobName}: ${resp.processing_status ?? '<missing>'}`)
     return { state: 'pending' }
   } catch (err) {
-    console.warn(`[anthropic-batch] poll failed for ${jobName}: ${(err as Error).message}`)
-    return { state: 'pending' }
+    return pendingOnTransientPollError(err, 'anthropic-batch', jobName)
   }
 }
 
