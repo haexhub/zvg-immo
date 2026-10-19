@@ -476,6 +476,32 @@ describe('fetchAllListings', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('0/2 listings map to a län'))
   })
 
+  it('starts the cache TTL when a slow full fetch finishes, so the next region reuses it', async () => {
+    vi.useFakeTimers()
+    let searchCalls = 0
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href.includes('query=*')) {
+        searchCalls++
+        return new Response(href.startsWith(`${BASE}/22660.html`) ? searchHtml([], 0) : searchHtml(['101001'], 1), { status: 200 })
+      }
+      // The full fetch takes longer than the 5-minute cache TTL.
+      await new Promise((resolve) => setTimeout(resolve, 6 * 60_000))
+      const id = href.match(/\/(\d+)\.html$/)?.[1]
+      return new Response(detailHtml(id ?? ''), { status: 200 })
+    }))
+
+    const first = fetchAllListings('se-kronofogden', 'vasterbotten')
+    await vi.advanceTimersByTimeAsync(6 * 60_000)
+    await first
+    expect(searchCalls).toBe(2)
+
+    const second = await fetchAllListings('se-kronofogden', 'stockholm')
+    expect(second.complete).toBe(true)
+    expect(searchCalls).toBe(2) // served from the cache, no second full fetch
+    vi.useRealTimers()
+  })
+
   it('stores Kronofogden gallery URLs for the native photo pipeline', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url)

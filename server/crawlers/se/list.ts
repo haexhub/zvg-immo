@@ -353,14 +353,15 @@ async function fetchAllListingsUnfiltered(
   }
 
   const promise = fetchAllListingsFresh(platformId)
-  allListingsCache = {
-    platformId,
-    fetchRef: fetch,
-    expiresAt: now + ALL_LISTINGS_CACHE_MS,
-    promise,
-  }
+  // Never expires while in flight; the TTL starts once the data is there. A
+  // full fetch can itself outlast the TTL, and counting from its start made
+  // every later region crawl start yet another full Kronofogden fetch.
+  const entry = { platformId, fetchRef: fetch, expiresAt: Number.POSITIVE_INFINITY, promise }
+  allListingsCache = entry
   try {
-    return await promise
+    const result = await promise
+    entry.expiresAt = Date.now() + ALL_LISTINGS_CACHE_MS
+    return result
   } catch (error) {
     if (allListingsCache?.promise === promise) allListingsCache = null
     throw error
