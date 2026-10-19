@@ -225,8 +225,11 @@ describe('GeminiNativeProvider.extract — 429 pacing/retry', () => {
     const provider = await freshProvider()
     const onRequestError = vi.fn()
     const promise = provider.extract(req, { onRequestError })
+    promise.catch(() => {})
     await vi.runAllTimersAsync()
-    await promise
+    // Rejects rather than resolving to null so a provider outage never counts
+    // toward an auction's llm_failures lockout.
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
     expect(onRequestError).toHaveBeenCalledTimes(1)
 
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(429)))

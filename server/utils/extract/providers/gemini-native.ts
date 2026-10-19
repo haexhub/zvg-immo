@@ -219,13 +219,11 @@ export class GeminiNativeProvider implements ExtractionProvider {
           )
           continue
         }
-        // A caller that passes onRequestError (extractByLlm) wants to keep
-        // batching past a single failed candidate; one that doesn't (e.g.
-        // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-        if (!opts?.onRequestError) throw new LlmProviderError('gemini-native', (err as Error).message, { cause: err })
-        console.warn(`[extract/llm] request failed: ${(err as Error).message}`)
-        opts.onRequestError(err)
-        return null
+        // See OpenAiCompatibleProvider: a request failure always rejects —
+        // `onRequestError` only reports it — so a provider outage never
+        // counts toward an auction's llm_failures/MAX_LLM_FAILURES lockout.
+        opts?.onRequestError?.(err)
+        throw new LlmProviderError('gemini-native', (err as Error).message, { cause: err })
       }
     }
     opts?.onUsage?.(parseGeminiUsage(resp))

@@ -172,13 +172,15 @@ export class OpenAiCompatibleProvider implements ExtractionProvider {
           await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAYS_MS[attempt]))
           continue
         }
-        // A caller that passes onRequestError (extractByLlm) wants to keep
-        // batching past a single failed candidate; one that doesn't (e.g.
-        // callSummaryLlm/callTranslationLlm) wants the failure to reject.
-        if (!opts?.onRequestError) throw new LlmProviderError(this.providerLabel, describeRequestError(err), { cause: err })
-        console.warn(`[extract/llm] request failed: ${describeRequestError(err)}`)
-        opts.onRequestError(err)
-        return null
+        // Same contract as ClaudeProxyProvider: `onRequestError` is
+        // observability, not permission to turn a provider outage (transport
+        // error, 5xx, 401/402/403, timeout) into a per-auction extraction
+        // failure. Resolving to null here used to add +1 llm failure to every
+        // candidate of a run while an exhausted OpenRouter balance kept
+        // answering 402 — locking healthy auctions after MAX_LLM_FAILURES
+        // runs. Rejecting lets reprocess try a fallback model or stop the run.
+        opts?.onRequestError?.(err)
+        throw new LlmProviderError(this.providerLabel, describeRequestError(err), { cause: err })
       }
     }
     opts?.onUsage?.(parseOpenAiUsage(resp))

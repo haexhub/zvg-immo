@@ -156,8 +156,9 @@ describe('OpenAiCompatibleProvider.extract', () => {
     const provider = new OpenAiCompatibleProvider(config)
     const onRequestError = vi.fn()
     const promise = provider.extract(req, { onRequestError })
+    promise.catch(() => {})
     await vi.runAllTimersAsync()
-    await promise
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError' })
     expect(onRequestError).toHaveBeenCalledTimes(1)
 
     vi.stubGlobal('$fetch', vi.fn().mockRejectedValue(error(429)))
@@ -167,6 +168,21 @@ describe('OpenAiCompatibleProvider.extract', () => {
     await vi.runAllTimersAsync()
     await expect(rateLimitedPromise).rejects.toThrow('http 429')
     expect(rateLimitedOnRequestError).not.toHaveBeenCalled()
+  })
+
+  it('rejects a request failure for extraction callers too instead of resolving to null', async () => {
+    // An exhausted OpenRouter balance (402) must stop the run, not count as a
+    // per-auction llm failure that locks every candidate after a few runs.
+    const fetchMock = vi.fn().mockRejectedValue(error(402))
+    vi.stubGlobal('$fetch', fetchMock)
+    const provider = new OpenAiCompatibleProvider({ ...config, provider: 'openrouter' })
+    const onRequestError = vi.fn()
+    const promise = provider.extract(req, { onRequestError })
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toMatchObject({ name: 'LlmProviderError', provider: 'openrouter' })
+    expect(onRequestError).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('strips the OpenRouter batch-pricing ":batch" suffix from the synchronous request model', async () => {

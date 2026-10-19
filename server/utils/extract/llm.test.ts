@@ -83,18 +83,17 @@ describe('extractByLlm', () => {
     vi.unstubAllGlobals()
   })
 
-  it('forwards a genuine provider request failure to onProviderError and resolves to null', async () => {
+  it('forwards a genuine provider request failure to onProviderError and rejects', async () => {
     vi.stubGlobal(
       '$fetch',
       vi.fn().mockRejectedValue(Object.assign(new Error('http 403'), { response: { status: 403 } })),
     )
     const onProviderError = vi.fn()
-    const result = await extractByLlm(
+    await expect(extractByLlm(
       { title: 'Titel', description: 'Beschreibung' },
       { baseUrl: 'https://openai.example', model: 'gpt' },
       { onProviderError },
-    )
-    expect(result).toBeNull()
+    )).rejects.toMatchObject({ name: 'LlmProviderError' })
     expect(onProviderError).toHaveBeenCalledTimes(1)
   })
 
