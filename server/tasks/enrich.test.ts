@@ -363,7 +363,49 @@ describe('runEnrich source rate limiting', () => {
       expect(outcome.warning?.match(/pausiert \(Rate-Limit\)/g)).toHaveLength(1)
       expect(outcome.warning).not.toContain('Detailabruf test-platform:')
       // Nothing was stamped as fetched, so they all stay open for the next run.
-      expect(outcome.result).toMatchObject({ archived: 30 })
+      expect(outcome.result).toMatchObject({ archived: 0, deferred: 30 })
+    } finally {
+      testPlatforms.splice(0, testPlatforms.length)
+    }
+  })
+
+  it('skips the per-item work of listings that only waited for the throttled detail fetch', async () => {
+    const enrichOne = vi.fn().mockRejectedValue(new SourceRateLimitedError('alo.bg rate limit: HTTP 429'))
+    testPlatforms.push({ id: 'test-platform', enrichOne } as never)
+    try {
+      const listings = Array.from({ length: 30 }, (_, i) => ({ ...auction(), externalId: String(100 + i) }))
+      vi.mocked(crawlAll).mockResolvedValue(crawlResult(listings))
+
+      await runEnrich({ country: 'de' })
+
+      // Only the lanes already in flight claimed an item; none of them, nor
+      // any later one, reached the record read and detail/photo writes.
+      expect(vi.mocked(writeAuctionEnrichClaim).mock.calls.filter(([, , at]) => at != null).length).toBeLessThanOrEqual(8)
+      expect(readAuctionRecord).not.toHaveBeenCalled()
+      expect(writeAuctionPhotoPipelineState).not.toHaveBeenCalled()
+      expect(upsertCurrentAuctions).not.toHaveBeenCalledWith([expect.anything()], expect.any(String))
+    } finally {
+      testPlatforms.splice(0, testPlatforms.length)
+    }
+  })
+
+  it('still runs the photo work of an already detail-fetched listing of the throttled platform', async () => {
+    const enrichOne = vi.fn().mockRejectedValue(new SourceRateLimitedError('alo.bg rate limit: HTTP 429'))
+    testPlatforms.push({ id: 'test-platform', enrichOne } as never)
+    try {
+      const fresh = auction()
+      const fetched = { ...auction(), externalId: '43' }
+      vi.mocked(crawlAll).mockResolvedValue(crawlResult([fresh, fetched]))
+      vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+        ['test-platform:43', fetchState({ externalId: '43' })],
+      ]))
+
+      const outcome = await runEnrich({ country: 'de' })
+
+      expect(readAuctionRecord).toHaveBeenCalledTimes(1)
+      expect(readAuctionRecord).toHaveBeenCalledWith('test-platform', '43')
+      expect(downloadNativeImages).toHaveBeenCalledWith(['https://example.test/front.jpg'], expect.anything())
+      expect(outcome.result).toMatchObject({ archived: 1, deferred: 1 })
     } finally {
       testPlatforms.splice(0, testPlatforms.length)
     }
