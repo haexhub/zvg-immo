@@ -133,6 +133,7 @@ describe('durable mail worker', () => {
             payload: { alertSubscriptionId: 'sub-1', platform: 'portal', externalId: '42', to: 'buyer@example.test', subject: 'Treffer', text: 'Hello' },
           }] }
         }
+        if (sql.includes('FROM alert_subscriptions')) return { rows: [{ '?column?': 1 }] }
         return { rows: [] }
       }),
       connect: vi.fn(async () => ({
@@ -152,6 +153,33 @@ describe('durable mail worker', () => {
     expect(clientQueries.at(-1)).toEqual(['COMMIT'])
     expect(clientQueries.some((q) => String(q[0]).includes("SET status = 'sent'"))).toBe(true)
     expect(clientQueries).toContainEqual([expect.stringContaining('INSERT INTO notified_matches'), 'sub-1', 'portal', '42'])
+    // Guarded, so a subscription deleted mid-send cannot roll back the 'sent' mark.
+    expect(clientQueries.find((q) => String(q[0]).includes('INSERT INTO notified_matches'))?.[0]).toContain('WHERE EXISTS')
+  })
+
+  it('does not send an alert whose subscription was deleted or disabled after it was queued', async () => {
+    const poolQueries: unknown[][] = []
+    let claimed = false
+    const pool = {
+      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+        if (sql.includes('WITH candidate') && !claimed) {
+          claimed = true
+          return { rows: [{
+            id: 'delivery-1', kind: 'alert', attempts: 1,
+            payload: { alertSubscriptionId: 'sub-gone', platform: 'portal', externalId: '42', to: 'buyer@example.test', subject: 'Treffer', text: 'Hello' },
+          }] }
+        }
+        poolQueries.push([sql, ...params])
+        return { rows: [] }
+      }),
+      connect: vi.fn(),
+    }
+    getPool.mockReturnValue(pool)
+
+    await expect(drainOutboundDeliveries(1)).resolves.toEqual({ sent: 0, failed: 1 })
+
+    expect(sendMail).not.toHaveBeenCalled()
+    expect(poolQueries.some((q) => String(q[0]).includes("'subscription_inactive'") && q[1] === 'delivery-1')).toBe(true)
   })
 
   it('enqueues one alert per subscription and auction via the dedupe key', async () => {
