@@ -6,6 +6,7 @@
 // user doesn't get logged out mid-flow. The original issue time is carried
 // forward, so the refresh never extends a session past SESSION_MAX_AGE_MS.
 
+import { guardedRequestPath } from '../utils/request-path'
 import { currentSessionSigningKey, signSession, verifySession } from '../utils/settings-auth'
 
 const SESSION_COOKIE = 'settings_session'
@@ -16,18 +17,7 @@ const PUBLIC_PATHS = new Set([
 ])
 
 export default defineEventHandler(async (event) => {
-  const url = event.node.req.url ?? ''
-  // Strip query string so a `?foo=bar` doesn't bypass the whitelist. Decode
-  // and lowercase so encoded or differently-cased variants can't slip past
-  // the prefix check — the guard must not depend on how the router happens
-  // to normalize paths. Malformed encoding keeps the raw path (fail closed).
-  let path = url.split('?')[0]!
-  try {
-    path = decodeURIComponent(path)
-  } catch {
-    // keep raw path
-  }
-  path = path.toLowerCase()
+  const path = guardedRequestPath(event.node.req.url)
   if (!path.startsWith('/api/settings/')) return
   if (PUBLIC_PATHS.has(path)) return
 

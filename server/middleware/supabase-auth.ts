@@ -8,6 +8,7 @@
 // is intentionally public (catalog browsing needs no login, only sending an
 // inquiry does).
 
+import { guardedRequestPath } from '../utils/request-path'
 import { getUserFromEvent } from '../utils/supabase'
 
 const GUARDED_PREFIXES = [
@@ -19,13 +20,7 @@ const GUARDED_PREFIXES = [
 ]
 
 export default defineEventHandler(async (event) => {
-  let path = (event.node.req.url ?? '').split('?')[0]!
-  try {
-    path = decodeURIComponent(path)
-  } catch {
-    // keep raw path
-  }
-  path = path.toLowerCase()
+  const path = guardedRequestPath(event.node.req.url)
   // Guard both the collection routes (e.g. `/api/saved-searches`, no
   // trailing slash) and their sub-paths (`/api/saved-searches/<id>`).
   if (!GUARDED_PREFIXES.some((p) => path === p.slice(0, -1) || path.startsWith(p))) return

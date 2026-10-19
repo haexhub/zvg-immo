@@ -12,6 +12,7 @@ import {
   createInMemoryRateLimitState,
   recordInMemoryRateLimitHit,
 } from '../utils/in-memory-rate-limit'
+import { guardedRequestPath } from '../utils/request-path'
 import { getServiceClient } from '../utils/supabase'
 
 declare module 'h3' {
@@ -30,8 +31,7 @@ const BURST_LIMIT = { max: 60, windowMs: 60 * 1000, maxKeys: 10_000 }
 const burstState = createInMemoryRateLimitState()
 
 export default defineEventHandler(async (event) => {
-  const path = (event.node.req.url ?? '').split('?')[0]!
-  if (!path.startsWith('/api/data/')) return
+  if (!guardedRequestPath(event.node.req.url).startsWith('/api/data/')) return
 
   const record = await getApiKeyRecord(event)
   if (!record) {
