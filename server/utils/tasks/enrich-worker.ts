@@ -172,6 +172,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       byPlatform,
       rates,
       vwCache: initialVwCache, scopedForce,
+      needsEnrich,
       needsDocumentSetCheck,
       nativePhotoUrls,
       targetPhotoPipelineVersion,
@@ -189,18 +190,43 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     todoTotalByCountry = new Map()
     for (const a of todo) todoTotalByCountry.set(a.country, (todoTotalByCountry.get(a.country) ?? 0) + 1)
 
+    let processed = 0
     let archived = 0
+    // Left for a later run because their platform is rate-limiting this one.
+    let deferred = 0
     let enrichedCount = 0
     let photoExtractions = 0
     let photosTotal = 0
     const at = new Date().toISOString()
     const persistedDetails = new Map<string, { marketValueEur: number | null; marketValueText: string | null }>()
+    // Progress counts every item that left the loop, deferred ones included,
+    // so the per-country bars still reach their todo totals.
+    function reportItemDone(a: (typeof todo)[number]) {
+      processed++
+      archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)
+      void recordTaskRunProgress(
+        'enrich',
+        { regionsDone, regionsTotal, archivedDone: processed, archivedTotal: todo.length },
+        { progressByCountry: snapshotProgressByCountry() },
+      )
+    }
     let cursor = 0
     async function worker() {
       while (cursor < todo.length) {
         throwIfTaskAborted(signal)
         const a = todo[cursor++]
         if (!a) continue
+        // An item that is only due for its detail fetch has nothing else to
+        // do while its source rate-limits us: skip it before the claim and
+        // every per-item read/write below (alo.bg alone leaves ~34k such
+        // listings per run). Items whose detail data already exists still run
+        // their document/photo steps from the stored payload — those go
+        // through the generic downloaders, not the throttled detail-page host.
+        if (rateLimitedPlatforms.has(a.platform) && needsEnrich(a)) {
+          deferred++
+          reportItemDone(a)
+          continue
+        }
         // Every per-item failure (including the claim/state writes) is caught
         // here: a rejected worker would fail Promise.all below and release the
         // task lock while its sibling workers kept crawling, letting a new run
@@ -242,6 +268,14 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
                 pushRunError('detail_fetch', `Detailabruf ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
               }
             }
+          }
+          // Same as the pre-claim skip above, for the lanes that were already
+          // in flight when the rate limit surfaced. The finally below still
+          // releases the claim.
+          if (!fetchDone && rateLimitedPlatforms.has(a.platform) && needsEnrich(a)) {
+            deferred++
+            reportItemDone(a)
+            continue
           }
           // Runs regardless of whether this platform has its own enrichOne step
           // — a crawler without one (e.g. se-kronofogden) already returns the
@@ -391,12 +425,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           }
         }
         archived++
-        archivedByCountry.set(a.country, (archivedByCountry.get(a.country) ?? 0) + 1)
-        void recordTaskRunProgress(
-          'enrich',
-          { regionsDone, regionsTotal, archivedDone: archived, archivedTotal: todo.length },
-          { progressByCountry: snapshotProgressByCountry() },
-        )
+        reportItemDone(a)
       }
     }
     // allSettled, not all: an aborted worker must not release the task lock
@@ -410,7 +439,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
     // reports above are routinely swallowed by it.
     await recordTaskRunProgress(
       'enrich',
-      { regionsDone, regionsTotal, archivedDone: archived, archivedTotal: todo.length },
+      { regionsDone, regionsTotal, archivedDone: processed, archivedTotal: todo.length },
       { progressByCountry: snapshotProgressByCountry(), flush: true },
     )
 
@@ -431,7 +460,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
 
     const durationMs = Date.now() - startedAt
     console.log(
-      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} todo=${todo.length} archived=${archived} enriched=${enrichedCount} photos=${photosTotal}/${photoExtractions}`,
+      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} todo=${todo.length} archived=${archived} deferred=${deferred} enriched=${enrichedCount} photos=${photosTotal}/${photoExtractions}`,
     )
 
     return {
@@ -439,6 +468,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         crawled: result.auctions.length,
         todo: todo.length,
         archived,
+        deferred,
         enriched: enrichedCount,
         photoExtractions,
         photosTotal,

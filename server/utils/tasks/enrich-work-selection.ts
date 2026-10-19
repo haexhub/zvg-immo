@@ -212,6 +212,7 @@ export async function prepareEnrichWork({
     rates,
     vwCache,
     scopedForce,
+    needsEnrich,
     needsDocumentSetCheck,
     nativePhotoUrls,
     targetPhotoPipelineVersion,
