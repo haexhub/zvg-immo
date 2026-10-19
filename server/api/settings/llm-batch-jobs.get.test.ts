@@ -227,6 +227,44 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(result.backlogByCountry.de).toEqual({ readyRequests: 1, failedLimit: 0 })
   })
 
+  it('counts a completed extraction as done even with an empty optional field or a stale failure counter', async () => {
+    // Prod: se showed readyRequests=189 while the LLM status card reported
+    // the same 189 as done and every reprocess run skipped them.
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
+      await import('~/server/utils/llm-batch-jobs')
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { readAuctionFetchStates } = await import('~/server/utils/auction-fetch-state')
+    const { isGeminiBatchTierPaid } = await import('~/server/utils/extract/gemini-batch')
+    const { getTaskRunStatus } = await import('~/server/utils/task-runs')
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(listRecentLlmBatchJobs).mockResolvedValue([])
+    vi.mocked(getAllLlmBatchCapabilities).mockResolvedValue({})
+    vi.mocked(isGeminiBatchTierPaid).mockReturnValue(true)
+    vi.mocked(getTaskRunStatus).mockResolvedValue(IDLE_REPROCESS_STATUS)
+    const analyzed = { source: 'llm', confidence: 'high', at: '2026-08-01T00:00:00.000Z', llmAnalyzedAt: '2026-08-01T00:00:00.000Z' }
+    vi.mocked(readAuctionRecords).mockResolvedValue([
+      record('alo:1', analyzed, 'se'), // missing optional fields, but already analyzed
+      record('alo:2', analyzed, 'se'), // analyzed, with a stale failure counter
+      record('alo:3', { at: '2026-08-01T00:00:00.000Z' }, 'se'), // genuinely open
+    ])
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['alo:2', { llmBatchJob: null, llmFailures: 5 } as never],
+    ]))
+
+    const handler = (await import('./llm-batch-jobs.get')).default as () => Promise<unknown>
+    const result = (await handler()) as {
+      backlog: { readyRequests: number; missingLlmFields: number; failedLimit: number; sampleRequestKeys: string[] }
+      backlogByCountry: Record<string, { readyRequests: number; failedLimit: number }>
+    }
+
+    expect(result.backlog.readyRequests).toBe(1)
+    expect(result.backlog.missingLlmFields).toBe(1)
+    expect(result.backlog.failedLimit).toBe(0)
+    expect(result.backlog.sampleRequestKeys).toEqual(['alo:3'])
+    expect(result.backlogByCountry.se).toEqual({ readyRequests: 1, failedLimit: 0 })
+  })
+
   it('maps an "openrouter_"-wrapped jobName to the openrouter provider, not openai', async () => {
     vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
     const { listPendingLlmBatchJobs, listRecentLlmBatchJobs, getAllLlmBatchCapabilities } =
