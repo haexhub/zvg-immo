@@ -9,11 +9,9 @@ import type { AuctionSummary } from '~/server/api/auctions.get'
 
 const props = withDefaults(defineProps<{
   auction: AuctionSummary
-  loggedIn?: boolean
   inWatchlist?: boolean
   active?: boolean
 }>(), {
-  loggedIn: false,
   inWatchlist: false,
   active: false,
 })
@@ -155,7 +153,6 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         <Badge v-if="props.auction.cancelled" variant="destructive" class="absolute z-10 left-2 top-2">{{ $t('search.cancelledBadge') }}</Badge>
         <Badge v-else-if="props.auction.extraction?.condition" variant="secondary" class="absolute z-10 left-2 top-2">{{ conditionLabel(props.auction.extraction.condition) }}</Badge>
         <button
-          v-if="props.loggedIn"
           type="button"
           data-watchlist-toggle
           class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm transition-colors hover:bg-background"

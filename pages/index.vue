@@ -74,7 +74,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />
@@ -91,7 +90,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />
@@ -109,7 +107,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />

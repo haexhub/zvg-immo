@@ -7,7 +7,6 @@ const props = defineProps<{
   totalCount: number
   canLoadMore: boolean
   pending: boolean
-  loggedIn: boolean
   watchlistIds: Map<string, string>
   activeAuctionKey?: string | null
   scrollTargetKey?: string | null
@@ -64,7 +63,6 @@ watch(() => props.scrollTargetKey, async (key) => {
       >
         <AuctionCard
           :auction="a"
-          :logged-in="props.loggedIn"
           :in-watchlist="props.watchlistIds.has(auctionKey(a))"
           :active="auctionKey(a) === props.activeAuctionKey"
           class="h-full"
