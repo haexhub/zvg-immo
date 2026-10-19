@@ -943,6 +943,23 @@ describe('runReprocess llm_failures cooldown', () => {
     await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
   })
 
+  it('doubles the cooldown with every failure past MAX_LLM_FAILURES', async () => {
+    const state = lockedOutFetchState(new Date(Date.now() - 47 * 60 * 60 * 1000).toISOString()) // 47h ago
+    state.get('zvg-portal:7265')!.llmFailures = 4 // 48h backoff
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(state)
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+
+    state.get('zvg-portal:7265')!.llmLastAttemptedAt = new Date(Date.now() - 49 * 60 * 60 * 1000).toISOString()
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
+  it('caps the backoff at 14 days', async () => {
+    const state = lockedOutFetchState(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString())
+    state.get('zvg-portal:7265')!.llmFailures = 41
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(state)
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+  })
+
   it('openOnly keeps a cooled-down locked-out candidate excluded — "Retry open" must never silently retry a past failure', async () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(
       lockedOutFetchState(new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()), // 25h ago — past cooldown

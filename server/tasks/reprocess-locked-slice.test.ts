@@ -85,12 +85,11 @@ describe('isPlainScheduledRun', () => {
 })
 
 describe('runLockedRetrySlice', () => {
-  it('retries only locked auctions, bounded, bypassing the cooldown and the per-run budget', async () => {
+  it('retries only locked auctions past their failure backoff, bounded, bypassing the per-run budget', async () => {
     stubConfig('7')
     await expect(runLockedRetrySlice()).resolves.toMatchObject({ processed: 10 })
     expect(runReprocess).toHaveBeenCalledWith({
       failedOnly: true,
-      ignoreCooldown: true,
       ignoreBatchPending: true,
       ignoreLlmBudget: true,
       batch: false,

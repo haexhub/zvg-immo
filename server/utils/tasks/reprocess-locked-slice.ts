@@ -30,8 +30,8 @@ export function isPlainScheduledRun(options: ReprocessOptions): boolean {
 
 /**
  * Retries a bounded slice of locked-out auctions (llm_failures >=
- * MAX_LLM_FAILURES, no successful extraction), longest-unattempted first, with
- * the configured chain. Returns null when it did not run (disabled, no LLM
+ * MAX_LLM_FAILURES, no successful extraction) whose failure backoff has
+ * elapsed, longest-unattempted first, with the configured chain. Returns null when it did not run (disabled, no LLM
  * configured). A rate limit or provider outage ends the slice early inside
  * runReprocess and is reported through the result's `warning`; it never counts
  * as a failure for the auctions concerned.
@@ -44,7 +44,8 @@ export async function runLockedRetrySlice(signal?: AbortSignal): Promise<Reproce
   if ((await readExtractionLlmConfigChain()).length === 0) return null
   const result = await runReprocess({
     failedOnly: true,
-    ignoreCooldown: true,
+    // No ignoreCooldown: the slice retries only auctions past their
+    // failure backoff (see llmFailureRetryCooldownHours).
     ignoreBatchPending: true,
     ignoreLlmBudget: true,
     batch: false,
