@@ -253,9 +253,14 @@ async function markDeliverySent(db: Pool, delivery: ClaimedDelivery): Promise<vo
     )
     if (delivery.kind === 'alert') {
       const payload = delivery.payload as AlertPayload
+      // The subscription may have been deleted (saved search or account
+      // removed) while the mail was in flight. A plain INSERT then failed on
+      // the FK, rolled back the 'sent' mark and re-queued the row, so the
+      // same mail went out up to MAX_DELIVERY_ATTEMPTS times.
       await client.query(
         `INSERT INTO notified_matches (alert_subscription_id, platform, external_id)
-         VALUES ($1, $2, $3)
+         SELECT $1, $2, $3
+         WHERE EXISTS (SELECT 1 FROM alert_subscriptions WHERE id = $1)
          ON CONFLICT (alert_subscription_id, platform, external_id) DO NOTHING`,
         [payload.alertSubscriptionId, payload.platform, payload.externalId],
       )
@@ -305,6 +310,14 @@ async function markDeliveryFailure(db: Pool, delivery: ClaimedDelivery, err: unk
   }
 }
 
+async function alertSubscriptionActive(db: Pool, payload: AlertPayload): Promise<boolean> {
+  const { rows } = await db.query(
+    'SELECT 1 FROM alert_subscriptions WHERE id = $1 AND enabled',
+    [payload.alertSubscriptionId],
+  )
+  return rows.length > 0
+}
+
 /** Drains a small, lock-safe batch. A crash after SMTP acknowledgement may
  * retry one message; this is intentionally at-least-once rather than falsely
  * claiming exactly-once delivery. */
@@ -322,6 +335,17 @@ export async function drainOutboundDeliveries(limit = 20): Promise<{ sent: numbe
       // and stopping here would let it stall every later due delivery.
       await db.query(
         `UPDATE outbound_deliveries SET status = 'failed', locked_at = NULL, last_error_class = 'invalid_payload'
+         WHERE id = $1`,
+        [delivery.id],
+      )
+      failed++
+      continue
+    }
+    if (delivery.kind === 'alert' && !(await alertSubscriptionActive(db, delivery.payload as AlertPayload))) {
+      // Deleted or disabled since the match was queued: the user no longer
+      // wants this mail, and retrying cannot change that.
+      await db.query(
+        `UPDATE outbound_deliveries SET status = 'failed', locked_at = NULL, last_error_class = 'subscription_inactive'
          WHERE id = $1`,
         [delivery.id],
       )
