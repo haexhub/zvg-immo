@@ -98,30 +98,33 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     console.log('[reprocess] llm disabled — rules-only')
   }
 
-  // maxLlmPerRun is shared across all platforms; a per-platform cap keeps one
-  // huge platform's backlog from burning through the whole budget before
-  // smaller platforms' listings are ever reached (same rationale enrich.ts
-  // used to apply — see interleave-by-platform.ts).
+  // Share maxLlmPerRun fairly across platforms before a second pass.
   const llmPlatformCount = new Set(candidates.map((c) => c.platform)).size || 1
   let llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
-  // Candidates held back because their platform used up its fair share while
-  // budget was still left; they get a second pass with the cap lifted.
+  // Deferred candidates get a second pass with the cap lifted.
   const candidateOrder = new Map(candidates.map((candidate, index) => [cacheKey(candidate.platform, candidate.externalId), index]))
   const deferred: { candidate: Candidate; order: number }[] = []
   const llmCallsByPlatform = new Map<string, number>()
 
-  // Candidates run in parallel lanes (see runPool below): counters are bumped
-  // where they happen — aggregate and per-country snapshot (for /settings)
-  // together — instead of being diffed per iteration.
+  // Parallel lanes update aggregate and per-country counters together.
   const { totals, bump, progressByCountry } = createReprocessProgress(candidates)
   let rulesFalsified = 0
   let stopRun = false
-  // A claude-proxy 502/503 or one timed-out prompt usually clears within
-  // seconds, yet stopping at the first one cost the rest of the hour's budget.
-  // Bounded, so a provider that keeps failing still ends the run.
-  let transientProviderErrors = 0
-  // LLM calls promised to candidates still in flight, so lanes started
-  // together can't all pass the budget check against the same stale count.
+  // Bounded run-level recovery for transient claude-proxy errors.
+  let transientRecoveryEpisodes = 0
+  const activeTransientRecovery = new Map<string, Promise<boolean>>()
+  async function waitForTransientRecovery(config: LlmConfig | null): Promise<boolean> {
+    const key = config?.provider === 'claude-proxy' && config.baseUrl ? config.baseUrl : null
+    const existing = key ? activeTransientRecovery.get(key) : undefined
+    if (existing) return existing
+    if (transientRecoveryEpisodes >= MAX_TRANSIENT_PROVIDER_ERRORS) return false
+
+    transientRecoveryEpisodes++
+    const probe = waitForProviderRecovery(config)
+    if (key) activeTransientRecovery.set(key, probe)
+    return probe.finally(() => { if (key && activeTransientRecovery.get(key) === probe) activeTransientRecovery.delete(key) })
+  }
+  // Reservations keep parallel lanes from overspending the shared LLM budget.
   let llmReserved = 0
   const llmReservedByPlatform = new Map<string, number>()
   let lastLlmError: string | undefined
@@ -130,9 +133,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const batchArtifactVersions = new Map<string, number | null>()
   const batchRulesHints = new Map<string, RulesHint | null>()
 
-  // Distinguishes a persistEntry (DB write) failure from an LLM-call failure
-  // in the catch block below — both land there, but they need different
-  // task_run_errors categories (a storage outage isn't an LLM problem).
+  // Distinguishes persistEntry failures from LLM-call failures in the catch.
   const persistCtx = { runTrigger: opts.trigger ?? 'cron', at }
   const persistFailureMark = Symbol('persistFailure')
   function markPersistFailure(err: unknown): unknown {
@@ -434,9 +435,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         }
         // Same for a transient error status (5xx, 408) or no response at all;
         // 401/402/403 and other client errors still stop the run at once.
-        const transient = isTransientRequestError(err.cause ?? err) && ++transientProviderErrors <= MAX_TRANSIENT_PROVIDER_ERRORS
-        if (transient && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
-          console.warn(`[reprocess] LLM provider error ${transientProviderErrors}/${MAX_TRANSIENT_PROVIDER_ERRORS} this run, provider answers again — continuing: ${err.message}`)
+        const providerError = err.cause ?? err
+        const status = (providerError as { response?: { status?: unknown } })?.response?.status
+        // 404 is transient for provider-local retries, but here may mean a
+        // missing model/route and must follow the ordinary 4xx stop path.
+        const transient = status !== 404 && isTransientRequestError(providerError)
+        if (transient && await waitForTransientRecovery(lastLlmConfig ?? llmConfig)) {
+          console.warn(`[reprocess] LLM provider error, recovery episode ${transientRecoveryEpisodes}/${MAX_TRANSIENT_PROVIDER_ERRORS} this run, provider answers again — continuing: ${err.message}`)
           return
         }
         warning = `LLM-Providerfehler: ${err.message}`

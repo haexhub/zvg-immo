@@ -1595,6 +1595,41 @@ describe('runReprocess parallel lanes', () => {
       expect(result).toMatchObject({ skipped: 4, processed: 0 })
     })
 
+    it('counts concurrent failures sharing one recovery probe as one episode', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(4)
+      vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+        baseUrl: 'http://proxy:8080/', apiKey: '', model: 'claude', provider: 'claude-proxy',
+      }])
+      let resolveRecovery!: (recovered: boolean) => void
+      const recovery = new Promise<boolean>((resolve) => { resolveRecovery = resolve })
+      vi.mocked(waitForProviderRecovery).mockReturnValue(recovery)
+      await failWithStatus(503, 4)
+
+      const resultPromise = runReprocess({ country: 'de' })
+      await vi.waitFor(() => expect(waitForProviderRecovery).toHaveBeenCalledTimes(1))
+      resolveRecovery(true)
+      const result = await resultPromise
+
+      expect(result.warning).toBeUndefined()
+      expect(result).toMatchObject({ skipped: 4, processed: 8 })
+    })
+
+    it('stops immediately for a 404 instead of waiting for provider recovery', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      await failWithStatus(404, 12)
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).not.toHaveBeenCalled()
+      expect(result.warning).toContain('LLM-Providerfehler')
+      expect(result.processed).toBe(0)
+    })
+
     it('still stops at once for a client error such as an exhausted balance (402)', async () => {
       seedCandidates()
       vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
