@@ -200,15 +200,16 @@ export async function findCandidates(opts: ReprocessOptions, countries: readonly
   const db = getPool()
   if (!db) return []
   if (opts.failedOnly) return findLockedCandidates(opts, countries)
-  const conditions = ["rc.kind = 'auction'"]
+  const conditions = [`EXISTS (SELECT 1 FROM artifact_captures rc
+    WHERE rc.kind = 'auction' AND rc.platform = a.platform AND rc.external_id = a.external_id)`]
   const params: unknown[] = []
   if (countries.length === 1) {
     conditions.push(`a.country = $${params.push(countries[0])}`)
   } else {
     conditions.push(`a.country = ANY($${params.push(countries)})`)
   }
-  if (opts.platform) conditions.push(`rc.platform = $${params.push(opts.platform)}`)
-  if (opts.externalId) conditions.push(`rc.external_id = $${params.push(opts.externalId)}`)
+  if (opts.platform) conditions.push(`a.platform = $${params.push(opts.platform)}`)
+  if (opts.externalId) conditions.push(`a.external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
   // Cancelled/sold listings are hidden from search by default
   // (auction-search-filters.ts: `a.cancelled = false`), so extracting them
@@ -221,11 +222,17 @@ export async function findCandidates(opts: ReprocessOptions, countries: readonly
   // either (same exemption for an explicitly addressed auction).
   if (!targetsSingleAuction(opts)) conditions.push('a.cancelled = false', ...CURRENT_AUCTION_CONDITIONS)
   const limitClause = opts.limit ? ` LIMIT $${params.push(opts.limit)}` : ''
+  // A fixed priority instead of heap order, so the budget reaches the backlog
+  // first: never-attempted auctions, then the soonest auction date, then the
+  // longest-unattempted. runReprocess interleaves the result by platform,
+  // which keeps this order within each platform.
   const { rows } = await db.query<{ platform: string; external_id: string; country: string }>(
-    `SELECT DISTINCT rc.platform, rc.external_id, a.country
-     FROM artifact_captures rc
-     JOIN auctions a ON a.platform = rc.platform AND a.external_id = rc.external_id
-     WHERE ${conditions.join(' AND ')}${limitClause}`,
+    `SELECT a.platform, a.external_id, a.country
+     FROM auctions a
+     LEFT JOIN auction_fetch_state s ON s.platform = a.platform AND s.external_id = a.external_id
+     WHERE ${conditions.join(' AND ')}
+     ORDER BY s.llm_last_attempted_at IS NOT NULL, a.auction_date_iso ASC NULLS LAST,
+              s.llm_last_attempted_at ASC NULLS FIRST, a.platform, a.external_id${limitClause}`,
     params,
   )
   return rows.map((r) => ({ platform: r.platform, externalId: r.external_id, country: r.country }))
