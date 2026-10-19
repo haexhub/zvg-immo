@@ -283,6 +283,33 @@ describe('runLlmBatchPoll', () => {
     expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
   })
 
+  it('keeps prior LLM values and leaves a changed document set unparsed when the item fails', async () => {
+    const prior = entry({
+      source: 'llm',
+      condition: 'gepflegt',
+      yearBuilt: 1998,
+      llmAnalyzedAt: '2026-08-01T10:00:00.000Z',
+    })
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: auction(prior),
+      detailsId: 7,
+      detailsVersion: 2,
+      artifactVersionId: 11,
+    }]]))
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: null, usage: null, error: 'unparseable response' },
+    ])
+
+    await runLlmBatchPoll()
+
+    const [, writtenEntry, options] = vi.mocked(writeAuctionDetails).mock.calls[0]!
+    expect(writtenEntry).toMatchObject({ condition: 'gepflegt', yearBuilt: 1998, llmAnalyzedAt: '2026-08-01T10:00:00.000Z' })
+    // The submitted set (22) was not parsed, so the stored version stays the old one.
+    expect(options).toMatchObject({ artifactVersionId: 11 })
+  })
+
   it('writes a successful result to details and clears its fetch-state marker', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
