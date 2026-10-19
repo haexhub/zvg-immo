@@ -281,6 +281,25 @@ describe('reprocessAuction structured provenance', () => {
     expect(result?.llmDurationMs).toEqual(expect.any(Number))
   })
 
+  it('reserves budget before each fallback attempt and stops the chain when none is left', async () => {
+    const primary = { baseUrl: 'https://api.example.test', apiKey: 'k1', model: 'primary-model', provider: 'openai-compatible' as const }
+    const fallback = { baseUrl: 'https://api.example.test', apiKey: 'k2', model: 'fallback-model', provider: 'openai-compatible' as const }
+    vi.mocked(isLlmProviderUnavailable).mockReturnValueOnce(true)
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      throw new Error('primary unavailable')
+    })
+    const reserveLlmCalls = vi.fn(() => 0)
+
+    await expect(reprocessAuction(
+      'zvg-portal', '7265', undefined, primary, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, fallbackConfigs: [fallback], reserveLlmCalls },
+    )).rejects.toThrow('primary unavailable')
+
+    expect(reserveLlmCalls).toHaveBeenCalledWith(1)
+    expect(extractByLlm).toHaveBeenCalledTimes(1)
+  })
+
   it('leaves provenance empty when extraction bailed out before any provider request', async () => {
     // extractByLlm returns null *without* calling onProviderAttempt when the
     // archived snapshot yields no parts at all — attributing that rules-only

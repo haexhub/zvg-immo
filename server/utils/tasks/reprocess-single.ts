@@ -171,8 +171,14 @@ export async function reprocessAuction(
     // duration/usage individually via recordLlmUsage (llm_usage_events).
     llmDurationMs = Date.now() - attemptStartedAt
   } else {
+    let previousError: unknown
     for (const [index, config] of configs.entries()) {
       if (index > 0) {
+        // Each fallback attempt is one more counted call. The caller reserved
+        // only the first, so reserve again or a failing chain overshoots the
+        // run budget; without room the chain ends as if this were its last
+        // model.
+        if (opts.reserveLlmCalls && opts.reserveLlmCalls(1) < 1) throw previousError
         // Rebuild rather than reuse base.input: nativeDocuments (gemini-native's
         // raw-PDF path vs. every other provider's rasterized images) depends on
         // which provider is actually being asked, and the fallback's provider
@@ -228,6 +234,7 @@ export async function reprocessAuction(
         if (isDailyQuotaError(err)) opts.onDailyQuotaExhausted?.(config)
         const isLast = index === configs.length - 1
         if (isLast || !isLlmProviderUnavailable(err)) throw err
+        previousError = err
         console.warn(
           `[reprocess] ${config.provider ?? 'openai-compatible'}/${config.model} unavailable for ${platform}:${externalId}, trying next configured model: ${(err as Error).message}`,
         )
