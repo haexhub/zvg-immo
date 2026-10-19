@@ -50,7 +50,7 @@ export interface ReprocessOptions {
    *  endpoint does. */
   trigger?: 'cron' | 'manual'
   /** Bypasses only the MAX_LLM_FAILURES cooldown gate (see cooldownElapsed
-   *  in reprocess-run.ts), unlike `force` which also bypasses the "does this
+   *  in reprocess-eligibility.ts), unlike `force` which also bypasses the "does this
    *  candidate actually need an attempt" check. Lets /settings retry a
    *  country's currently locked-out auctions immediately without re-running
    *  the LLM on ones that already succeeded. */
@@ -75,7 +75,7 @@ export interface ReprocessOptions {
    *  specifically must not also silently re-spend LLM budget on auctions
    *  that already failed MAX_LLM_FAILURES times, however long ago. */
   openOnly?: boolean
-  /** Bypasses only the isLlmBatchPending gate (see reprocess-run.ts), unlike
+  /** Bypasses only the isLlmBatchPending gate (see reprocess-eligibility.ts), unlike
    *  `force` which also bypasses the "does this candidate actually need an
    *  attempt" check. A candidate still carrying an unresolved llmBatchJob
    *  marker from an earlier submitted-but-failed/stuck batch would otherwise
