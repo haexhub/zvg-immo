@@ -166,10 +166,88 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
       source: 'config',
     }
   }
+  const { keysByJob, backlog, backlogByCountry } = await backlogScan(
+    new Set(jobs.map((job) => job.jobName)),
+    new Set(recentJobs.map((job) => job.jobName)),
+  )
+
+  const mapJob = (job: (typeof recentJobs)[number]): LlmBatchJobOverviewItem => {
+    const allRequestKeys = [...new Set([
+      ...(keysByJob.get(job.jobName) ?? []),
+      ...Object.values(job.customIdMap),
+    ])].sort()
+    return {
+      jobName: job.jobName,
+      source: job.source,
+      status: job.status,
+      provider: providerForJob(job.jobName),
+      itemCount: job.itemCount,
+      pendingCount: job.status === 'pending' ? allRequestKeys.length || job.itemCount : 0,
+      requestKeys: allRequestKeys.slice(0, MAX_KEYS_PER_GROUP),
+      submittedAt: job.submittedAt,
+      checkedAt: job.checkedAt,
+      updatedAt: job.updatedAt,
+      errorMessage: job.errorMessage,
+    }
+  }
+
+  // jobs is already status:'pending' (see listPendingLlmBatchJobs), so every
+  // item counts toward totalRequests — using itemCount directly instead of
+  // mapJob's deduped requestKeys avoids building that array for jobs beyond
+  // the display cap just to total them.
+  const overviewJobs = jobs.slice(0, MAX_PENDING_JOBS_DISPLAYED).map(mapJob)
+
+  const result: LlmBatchJobsOverview = {
+    totalJobs: jobs.length,
+    totalRequests: jobs.reduce((sum, job) => sum + job.itemCount, 0),
+    backlog,
+    backlogByCountry,
+    jobs: overviewJobs,
+    recentJobs: recentJobs.map(mapJob),
+    capabilities: effectiveCapabilities,
+    reprocessStatus,
+    enrichStatus,
+    externalEnrichmentStatus,
+    offloadImagesStatus,
+    copernicusEffisImportStatus,
+    euFloodRiskImportStatus,
+    eurostatTourismNutsImportStatus,
+  }
+  cachedOverview = { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS }
+  return result
+}
+
+interface BacklogScan {
+  keysByJob: Map<string, string[]>
+  backlog: LlmBatchJobsOverview['backlog']
+  backlogByCountry: LlmBatchJobsOverview['backlogByCountry']
+}
+
+// The backlog needs a full pass over auction_fetch_state and every auction
+// record. It used to share the 4 s overview cache, so a /settings tab polling
+// every 3 s while a task ran (most of the day: hourly reprocess, multi-hour
+// enrich) re-ran that scan every few seconds next to the tasks themselves.
+// Task status and job list stay fresh; the backlog counts may lag a minute.
+const BACKLOG_CACHE_TTL_MS = 60_000
+let cachedBacklog: { data: BacklogScan; expiresAt: number } | null = null
+let inflightBacklog: Promise<BacklogScan> | null = null
+
+function backlogScan(pendingJobNames: ReadonlySet<string>, knownRecentJobNames: ReadonlySet<string>): Promise<BacklogScan> {
+  if (cachedBacklog && cachedBacklog.expiresAt > Date.now()) return Promise.resolve(cachedBacklog.data)
+  inflightBacklog ??= scanBacklog(pendingJobNames, knownRecentJobNames)
+    .then((data) => {
+      cachedBacklog = { data, expiresAt: Date.now() + BACKLOG_CACHE_TTL_MS }
+      return data
+    })
+    .finally(() => {
+      inflightBacklog = null
+    })
+  return inflightBacklog
+}
+
+async function scanBacklog(pendingJobNames: ReadonlySet<string>, knownRecentJobNames: ReadonlySet<string>): Promise<BacklogScan> {
   const fetchStates = await readAuctionFetchStates()
   const keysByJob = new Map<string, string[]>()
-  const pendingJobNames = new Set(jobs.map((job) => job.jobName))
-  const knownRecentJobNames = new Set(recentJobs.map((job) => job.jobName))
   let readyRequests = 0
   let neverExtracted = 0
   let lowConfidenceRules = 0
@@ -239,35 +317,9 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
     }
   }
 
-  const mapJob = (job: (typeof recentJobs)[number]): LlmBatchJobOverviewItem => {
-    const allRequestKeys = [...new Set([
-      ...(keysByJob.get(job.jobName) ?? []),
-      ...Object.values(job.customIdMap),
-    ])].sort()
-    return {
-      jobName: job.jobName,
-      source: job.source,
-      status: job.status,
-      provider: providerForJob(job.jobName),
-      itemCount: job.itemCount,
-      pendingCount: job.status === 'pending' ? allRequestKeys.length || job.itemCount : 0,
-      requestKeys: allRequestKeys.slice(0, MAX_KEYS_PER_GROUP),
-      submittedAt: job.submittedAt,
-      checkedAt: job.checkedAt,
-      updatedAt: job.updatedAt,
-      errorMessage: job.errorMessage,
-    }
-  }
 
-  // jobs is already status:'pending' (see listPendingLlmBatchJobs), so every
-  // item counts toward totalRequests — using itemCount directly instead of
-  // mapJob's deduped requestKeys avoids building that array for jobs beyond
-  // the display cap just to total them.
-  const overviewJobs = jobs.slice(0, MAX_PENDING_JOBS_DISPLAYED).map(mapJob)
-
-  const result: LlmBatchJobsOverview = {
-    totalJobs: jobs.length,
-    totalRequests: jobs.reduce((sum, job) => sum + job.itemCount, 0),
+  return {
+    keysByJob,
     backlog: {
       readyRequests,
       neverExtracted,
@@ -279,17 +331,5 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
       orphanedRequestKeys: orphanedRequestKeys.sort(),
     },
     backlogByCountry: Object.fromEntries(backlogByCountry),
-    jobs: overviewJobs,
-    recentJobs: recentJobs.map(mapJob),
-    capabilities: effectiveCapabilities,
-    reprocessStatus,
-    enrichStatus,
-    externalEnrichmentStatus,
-    offloadImagesStatus,
-    copernicusEffisImportStatus,
-    euFloodRiskImportStatus,
-    eurostatTourismNutsImportStatus,
   }
-  cachedOverview = { data: result, expiresAt: Date.now() + OVERVIEW_CACHE_TTL_MS }
-  return result
 }
