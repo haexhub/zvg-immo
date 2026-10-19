@@ -158,6 +158,17 @@ describe('parseListPage', () => {
     expect(item?.cityLine).toBe('99999 Irgendwo')
   })
 
+  it('keeps the title of an object without a street instead of reading it as the street', () => {
+    // Live markup (17 of 221 objects): the street line stays as an empty <br>.
+    const [item] = parseListPage(
+      LIST_HTML.replace('Musterstraße 1<br/>', '<br />').replace('01067&nbsp;Dresden', '25980&nbsp;Sylt'),
+    )
+    expect(item?.titleHint).toBe('Sonniges Reihenhaus')
+    expect(item?.street).toBeNull()
+    expect(item?.cityLine).toBe('25980 Sylt')
+    expect(mapItem(item!)).toMatchObject({ title: 'Sonniges Reihenhaus', address: '25980 Sylt' })
+  })
+
   it('decodes character references in title, street and city instead of keeping them raw', () => {
     // Live: 7 of 268 objects carry an "&" in the title or street, one of them
     // in the address that later goes into geocoding.
