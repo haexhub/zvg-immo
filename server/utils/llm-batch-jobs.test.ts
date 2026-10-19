@@ -394,6 +394,27 @@ describe('llm-batch-jobs', () => {
     })
   })
 
+  it('clears the remaining item markers of exactly the resolved job', async () => {
+    const { getDb } = await import('./db')
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 4 })
+    vi.mocked(getDb).mockReturnValue(drizzle({ query } as never) as never)
+    const { clearLlmBatchJobMarkers } = await import('./llm-batch-jobs')
+
+    await expect(clearLlmBatchJobMarkers('openrouter_batch_1')).resolves.toBe(4)
+    const [queryArg, params] = query.mock.calls[0]!
+    const text = queryText(queryArg).replace(/\s+/g, ' ')
+    expect(text).toMatch(/^update "auction_fetch_state" set "llm_batch_job" = \$1, "llm_artifact_version_id" = \$2, "llm_rules_hint" = \$3, "updated_at" = now\(\) where "auction_fetch_state"."llm_batch_job" = \$4$/)
+    expect(params).toEqual([null, null, null, 'openrouter_batch_1'])
+  })
+
+  it('rethrows a failed marker clear so the poller keeps the job pending', async () => {
+    const { getDb } = await import('./db')
+    vi.mocked(getDb).mockReturnValue(drizzle({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never) as never)
+    const { clearLlmBatchJobMarkers } = await import('./llm-batch-jobs')
+
+    await expect(clearLlmBatchJobMarkers('batches/1')).rejects.toThrow()
+  })
+
   it('never throws when a query fails', async () => {
     const { getDb } = await import('./db')
     vi.mocked(getDb).mockReturnValue(drizzle({ query: vi.fn().mockRejectedValue(new Error('connection reset')) } as never) as never)

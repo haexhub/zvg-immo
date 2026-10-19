@@ -7,7 +7,7 @@
 // getDb() returns null without NUXT_DATABASE_URL.
 
 import { asc, desc, eq, sql } from 'drizzle-orm'
-import { appSettings, llmBatchJobs } from '../db/schema'
+import { appSettings, auctionFetchState, llmBatchJobs } from '../db/schema'
 import { getDb } from './db'
 
 export type LlmBatchJobStatus = 'pending' | 'succeeded' | 'failed' | 'expired'
@@ -416,6 +416,26 @@ export async function markLlmBatchJobResolved(
   } catch (err) {
     console.warn(`[llm-batch-jobs] status update failed for ${jobName}: ${(err as Error).message}`)
   }
+}
+
+/** Clears the per-item `llm_batch_job` marker (plus the submit-time
+ *  artifact/rules snapshot that belongs to it) of every auction still
+ *  claimed by `jobName`. Called once a job reached a terminal state: items a
+ *  failed/expired job never answered, or that a completed job left out of
+ *  its result set, would otherwise keep the marker, and isLlmBatchPending
+ *  measures its age from auction_fetch_state.updated_at — which every crawl,
+ *  claim and photo write bumps, so an actively crawled auction never aged out
+ *  of "batch pending" and was never extracted again. Scoped by job name, so
+ *  an item meanwhile re-submitted into a newer job keeps that job's marker.
+ *  Unlike the bookkeeping helpers above this rethrows: the poller must keep
+ *  the job pending (and retry) rather than resolve it with markers left. */
+export async function clearLlmBatchJobMarkers(jobName: string): Promise<number> {
+  const db = getDb()
+  if (!db) return 0
+  const cleared = await db.update(auctionFetchState)
+    .set({ llmBatchJob: null, llmArtifactVersionId: null, llmRulesHint: null, updatedAt: sql`now()` })
+    .where(eq(auctionFetchState.llmBatchJob, jobName))
+  return cleared.rowCount ?? 0
 }
 
 function toIso(value: Date | string): string {

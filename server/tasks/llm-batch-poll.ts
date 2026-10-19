@@ -15,10 +15,12 @@ import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { readAuctionFetchStates, writeAuctionLlmPipelineState } from '../utils/auction-fetch-state'
 import {
+  clearLlmBatchJobMarkers,
   listPendingLlmBatchJobs,
   markLlmBatchJobChecked,
   markLlmBatchJobResolved,
   type LlmBatchJob,
+  type LlmBatchJobStatus,
 } from '../utils/llm-batch-jobs'
 import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
 import { recordLlmUsage } from '../utils/llm-usage'
@@ -80,6 +82,21 @@ async function resolveJobLlmConfig(job: LlmBatchJob, fallback: LlmConfig): Promi
   return resolved ? { ...resolved, model: job.model ?? resolved.model } : fallback
 }
 
+// A job in a terminal state no longer owns any item: release every marker it
+// still holds before recording the resolution (see clearLlmBatchJobMarkers).
+// Ordered this way so a failed marker write leaves the job pending — retried
+// on the next tick — instead of resolved with its items still blocked.
+async function resolveJob(
+  jobName: string,
+  status: Exclude<LlmBatchJobStatus, 'pending'>,
+  at: string,
+  errorMessage: string | null = null,
+): Promise<void> {
+  const released = await clearLlmBatchJobMarkers(jobName)
+  if (released > 0) console.info(`[llm-batch-poll] job ${jobName} ${status} — released ${released} unanswered item marker(s)`)
+  await markLlmBatchJobResolved(jobName, status, at, errorMessage)
+}
+
 export default defineTask({
   meta: {
     name: 'llm-batch-poll',
@@ -136,7 +153,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         // results are actually sitting there waiting.
         const submittedAtMs = Date.parse(job.submittedAt)
         if (Number.isFinite(submittedAtMs) && now - submittedAtMs >= LLM_BATCH_JOB_EXPIRY_MS) {
-          await markLlmBatchJobResolved(job.jobName, 'expired', at, (pollErr as Error).message)
+          await resolveJob(job.jobName, 'expired', at, (pollErr as Error).message)
         }
         console.warn(`[llm-batch-poll] failed for job ${job.jobName}: ${(pollErr as Error).message}`)
         continue
@@ -146,10 +163,10 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
       if (poll.state === 'pending') continue
 
       if (poll.state === 'failed' || poll.state === 'expired') {
-        // Affected items keep their (now-orphaned) llmBatchJob marker — no
-        // extra code needed, isLlmBatchPending's 48h age check makes them
-        // eligible again on its own once this job marker expires.
-        await markLlmBatchJobResolved(job.jobName, poll.state, at, poll.errorMessage ?? null)
+        // The affected items become eligible again right away; their
+        // llm_failures stay untouched, since a job-level failure says nothing
+        // about any single auction.
+        await resolveJob(job.jobName, poll.state, at, poll.errorMessage ?? null)
         // A failed/expired batch does not yield per-item result lines, but
         // every submitted item still needs a visible outcome on its auction.
         // The partial unique index in llm_usage_events makes this safe when a
@@ -275,7 +292,9 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         merged++
       }
 
-      await markLlmBatchJobResolved(job.jobName, 'succeeded', at)
+      // Items missing from the result set (or skipped above) are released
+      // here, instead of staying "batch pending" while crawls bump their row.
+      await resolveJob(job.jobName, 'succeeded', at)
       console.log(`[llm-batch-poll] job ${job.jobName} succeeded — merged ${results.length} items, rulesFalsified=${rulesFalsified}`)
     } catch (err) {
       await markLlmBatchJobChecked(job.jobName, at)
