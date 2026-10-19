@@ -81,17 +81,20 @@ export function parseListPage(html: string): ListItem[] {
     // of them in the address itself, which then goes into geocoding).
     // Replacing the <br> elements on a clone keeps the line split intact
     // while letting Cheerio decode the references.
+    //
+    // The lines are positional — title, street, city — and an object without
+    // a street keeps an empty line for it (live: 17 of 221, e.g.
+    // "Salzwiese am Wattenmeer<br/> <br /> 25980 Sylt"). Split on the <br>s
+    // themselves, not on newlines (the markup's own indentation has those),
+    // and keep empty lines so the title is not misread as the street.
     const addrAnchor = $el.find('.d-col.objekt .addr-list a').first().clone()
-    addrAnchor.find('br').replaceWith('\n')
-    const lines = addrAnchor
-      .text()
-      .split('\n')
-      .map((line) => clean(line))
-      .filter(Boolean)
-    const cityLine = lines.find((line) => /^\d{5}\b/.test(line)) ?? lines.at(-1) ?? null
-    const cityIdx = cityLine ? lines.indexOf(cityLine) : -1
-    const street = cityIdx > 0 ? lines[cityIdx - 1] ?? null : null
-    const titleHint = cityIdx > 0 ? lines.slice(0, cityIdx - 1).join(', ') || null : null
+    addrAnchor.find('br').replaceWith('\u2029')
+    const lines = addrAnchor.text().split('\u2029').map((line) => clean(line))
+    const plzIdx = lines.findIndex((line) => /^\d{5}\b/.test(line))
+    const cityIdx = plzIdx >= 0 ? plzIdx : lines.findLastIndex(Boolean)
+    const cityLine = cityIdx >= 0 ? lines[cityIdx] ?? null : null
+    const street = cityIdx > 0 ? lines[cityIdx - 1] || null : null
+    const titleHint = cityIdx > 1 ? lines.slice(0, cityIdx - 1).filter(Boolean).join(', ') || null : null
 
     // The Bundesland marker is a hidden <span> whose class is the German
     // state name itself and carries no text — scan every hidden span in the
