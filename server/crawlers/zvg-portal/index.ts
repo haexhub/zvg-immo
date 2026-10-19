@@ -3,6 +3,8 @@ import type { CrawlOptions, PlatformCrawler } from '../types'
 import { ZVG_BASE, UA, DE_REGIONS, DE_REGION_NAMES, COUNTRY } from './constants'
 import { parseAuctionsHtml, buildSearchBody } from './list'
 import { enrichInBatches, type DetailInfo } from './detail'
+import { isZvgErrorBody } from './text'
+import { describeFetchError, retryTransient, TransientUpstreamError } from '../transient-retry'
 
 const PLATFORM_ID = 'zvg-portal'
 
@@ -31,30 +33,35 @@ async function enrichOne(auction: Auction): Promise<void> {
 
 const FETCH_TIMEOUT_MS = 20_000
 
+/** The search is a read-only POST, so a dropped connection, a 5xx or the
+ *  portal's bare `error` body under load is retried (retryTransient). */
 async function fetchListHtml(landAbk: string, immobilienOnly: boolean): Promise<string> {
   const body = buildSearchBody(landAbk, immobilienOnly)
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
-    // Single-shot: all=1 returns the full list in one response.
-    const res = await fetch(`${ZVG_BASE}/index.php?button=Suchen&all=1`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'de-DE,de;q=0.9',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Referer: `${ZVG_BASE}/index.php?button=Termine+suchen`,
-      },
-      body,
+    return await retryTransient(async () => {
+      // Single-shot: all=1 returns the full list in one response.
+      const res = await fetch(`${ZVG_BASE}/index.php?button=Suchen&all=1`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'de-DE,de;q=0.9',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Referer: `${ZVG_BASE}/index.php?button=Termine+suchen`,
+        },
+        body,
+      })
+      if (res.status >= 500) throw new TransientUpstreamError(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      // The page declares ISO-8859-1 in <meta>, but the HTTP Content-Type header
+      // and actual bytes are UTF-8. Trust the header.
+      const html = await res.text()
+      if (isZvgErrorBody(html)) throw new TransientUpstreamError('returned error page')
+      return html
     })
-    if (!res.ok) throw new Error(`ZVG ${res.status} for ${landAbk}`)
-    // The page declares ISO-8859-1 in <meta>, but the HTTP Content-Type header
-    // and actual bytes are UTF-8. Trust the header.
-    return await res.text()
-  } finally {
-    clearTimeout(timer)
+  } catch (err) {
+    throw new Error(`ZVG list ${landAbk}: ${describeFetchError(err)}`, { cause: err })
   }
 }
 
@@ -64,7 +71,19 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
   const enrichDetails = opts.enrichDetails ?? true
 
   const html = await fetchListHtml(landAbk, immobilienOnly)
-  const { totalReported, auctions } = parseAuctionsHtml(html, landAbk, PLATFORM_ID)
+  const { totalReported, rowCount, auctions } = parseAuctionsHtml(html, landAbk, PLATFORM_ID)
+  // A real result page always says "Insgesamt N", "Insgesamt 0" included
+  // (verified live). Without it and without rows this is some other page, and
+  // reporting it as an empty Land would expire every listing of that Land.
+  if (totalReported == null && auctions.length === 0) {
+    throw new Error(`ZVG list ${landAbk}: no "Insgesamt" marker and no rows — not a result page`)
+  }
+  // Fewer rows than announced means a truncated response: keep what came in,
+  // but withhold success so crawl-state.ts does not expire the missing ones.
+  const complete = totalReported == null || rowCount >= totalReported
+  if (!complete) {
+    console.warn(`[zvg-portal] ${landAbk}: ${rowCount} of ${totalReported} announced rows received, reporting incomplete`)
+  }
 
   if (enrichDetails) {
     const result = await enrichInBatches(auctions, landAbk, (auction, info) =>
@@ -79,7 +98,7 @@ async function crawl(opts: CrawlOptions): Promise<CrawlResult> {
 
   return {
     platform: PLATFORM_ID,
-    platformsSucceeded: [PLATFORM_ID],
+    platformsSucceeded: complete ? [PLATFORM_ID] : [],
     source: ZVG_BASE,
     countries: [COUNTRY],
     regions: [DE_REGION_NAMES[landAbk] || landAbk],
