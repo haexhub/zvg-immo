@@ -68,7 +68,7 @@ function onLeave(row: LegendRow): void {
 </script>
 
 <template>
-  <div class="absolute bottom-2 left-2 z-10 flex flex-col items-start gap-1">
+  <div class="flex flex-col items-start gap-1">
     <button
       type="button"
       :class="toggleClass"
