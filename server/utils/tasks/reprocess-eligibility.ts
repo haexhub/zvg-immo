@@ -1,8 +1,9 @@
-import type { AuctionExtraction } from '~/types/auction'
+import type { Auction, AuctionExtraction } from '~/types/auction'
 import { isLlmBatchPending } from '~/server/utils/extract/llm-batch'
 import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES } from '~/server/utils/extract/llm-task-config'
 import type { ArtifactProcessingState } from '~/server/utils/artifact-version-state'
 import type { AuctionFetchState } from '~/server/utils/auction-fetch-state'
+import { buildReprocessFields } from '~/server/utils/extract/reprocess-fields'
 import { hasNewArchivedDocuments, type ReprocessOptions } from './reprocess-input'
 
 /** Whether a locked-out auction (llm_failures >= MAX_LLM_FAILURES) is past
@@ -48,4 +49,21 @@ export function isReprocessEligible(
           ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
           : undefined))))
   )
+}
+
+const RULES_OWNED_FIELDS = ['propertyType', 'landAreaSqm', 'livingAreaSqm', 'rooms', 'units', 'securityDeposit'] as const
+
+/**
+ * Whether a rules-only pass could change the stored entry at all. Without an
+ * LLM result reprocessAuction keeps an LLM extraction's values, so there is
+ * nothing to gain for one; a rules entry only changes when the rules now
+ * derive different values. Those are checked against the stored record's
+ * own title/description/source values rather than the archived snapshot,
+ * whose blob downloads are exactly the cost being avoided — the two come
+ * from the same crawl, and where they disagree the candidate is rebuilt.
+ */
+export function rulesOnlyRebuildChangesEntry(auction: Auction, stored: AuctionExtraction): boolean {
+  if (stored.llmAnalyzedAt != null || stored.source === 'llm') return false
+  const fields = buildReprocessFields(auction, undefined, true)
+  return RULES_OWNED_FIELDS.some((field) => (fields[field] ?? null) !== (stored[field] ?? null))
 }

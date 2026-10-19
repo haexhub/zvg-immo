@@ -20,7 +20,7 @@ import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
 import { persistReprocessEntry } from './reprocess-persist'
 import { createReprocessProgress } from './reprocess-progress'
 import { reprocessAuction } from './reprocess-single'
-import { isReprocessEligible } from './reprocess-eligibility'
+import { isReprocessEligible, rulesOnlyRebuildChangesEntry } from './reprocess-eligibility'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
@@ -206,6 +206,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       // check above, so two lanes can't both claim the last slot.
       if (llmReady) reserveLlmCalls(1)
       if (opts.force && llmConfig && !llmReady) {
+        bump(country, 'skipped')
+        return
+      }
+      // No LLM call this run (budget spent or no model): only a rules-only
+      // rebuild is left. Skip the stored entries it cannot change instead of
+      // re-reading their archive and rewriting them on every run.
+      if (!llmReady && !opts.force && priorEntry && !rulesOnlyRebuildChangesEntry(record.auction, priorEntry)) {
         bump(country, 'skipped')
         return
       }
