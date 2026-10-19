@@ -15,6 +15,12 @@ const FETCH_RETRIES = 2
 // requests the IP gets `xalo: ad_captcha_show` with `Retry-After: 3600`, and
 // list pages keep working. Retrying through that only extends the block, so a
 // 429 that names a Retry-After opens the breaker for exactly that long at once.
+// A probe that is refused again without a single success in between means the
+// block outlasts the announced hour (or our probes keep renewing it), so each
+// such repeat doubles the pause, up to a day.
+//
+// List and detail pages are blocked independently: a detail block must not
+// stop the page walk that finds new listings.
 const MAX_GAP_MS = 30_000
 const FIRST_PAUSE_MS = 10_000
 const MAX_PAUSE_MS = 5 * 60_000
@@ -25,13 +31,30 @@ const BREAKER_THRESHOLD = 6
 const BREAKER_OPEN_MS = 30 * 60_000
 const RATE_LIMIT_ATTEMPTS = 3
 const MAX_RETRY_AFTER_MS = 6 * 60 * 60_000
+const MAX_ESCALATED_BLOCK_MS = 24 * 60 * 60_000
+
+type PageKind = 'list' | 'detail'
+interface Block {
+  until: number
+  /** Blocks in a row that were refused again before any request succeeded. */
+  streak: number
+  /** Successful requests since the last block opened. */
+  ok: number
+}
+const blocks: Record<PageKind, Block> = {
+  list: { until: 0, streak: 0, ok: 0 },
+  detail: { until: 0, streak: 0, ok: 0 },
+}
+
+/** Listing pages live under /obiavi/; everything else is a single ad. */
+function pageKind(url: string): PageKind {
+  return new URL(url).pathname.startsWith('/obiavi/') ? 'list' : 'detail'
+}
 
 let gapMs = CRAWL_DELAY_MS
 let pauseUntil = 0
-let breakerUntil = 0
 let consecutive429 = 0
 let successStreak = 0
-let okSinceBlock = 0
 
 /** `Retry-After` as milliseconds (delta-seconds or HTTP-date), or null when absent/unusable. */
 function retryAfterMs(res: Response): number | null {
@@ -41,28 +64,35 @@ function retryAfterMs(res: Response): number | null {
   return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_RETRY_AFTER_MS) : null
 }
 
-function openBreakerFor(ms: number): void {
-  breakerUntil = Date.now() + ms
-  console.warn(`[alo] blocked with HTTP 429 after ${okSinceBlock} successful request(s); not asking again for ${Math.round(ms / 60_000)} min`)
-  okSinceBlock = 0
+function openBreakerFor(kind: PageKind, announcedMs: number): number {
+  const block = blocks[kind]
+  block.streak = block.ok === 0 && block.streak > 0 ? block.streak + 1 : 1
+  const ms = Math.min(announcedMs * 2 ** (block.streak - 1), Math.max(announcedMs, MAX_ESCALATED_BLOCK_MS))
+  block.until = Date.now() + ms
+  console.warn(
+    `[alo] ${kind} pages blocked with HTTP 429 after ${block.ok} successful request(s)` +
+      `${block.streak > 1 ? ` (refused again, block #${block.streak})` : ''}; not asking again for ${Math.round(ms / 60_000)} min`,
+  )
+  block.ok = 0
+  return ms
 }
 
-function noteRateLimited(): void {
+function noteRateLimited(kind: PageKind): void {
   consecutive429++
   successStreak = 0
   gapMs = Math.min(gapMs * 2, MAX_GAP_MS)
   pauseUntil = Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (consecutive429 - 1), MAX_PAUSE_MS)
   if (consecutive429 >= BREAKER_THRESHOLD) {
-    breakerUntil = Date.now() + BREAKER_OPEN_MS
-    okSinceBlock = 0
+    blocks[kind].until = Date.now() + BREAKER_OPEN_MS
+    blocks[kind].ok = 0
     // Half-open afterwards: one more 429 re-opens it after a short pause.
     consecutive429 = BREAKER_THRESHOLD - 2
   }
 }
 
-function noteSuccess(): void {
+function noteSuccess(kind: PageKind): void {
   consecutive429 = 0
-  okSinceBlock++
+  blocks[kind].ok++
   if (gapMs > CRAWL_DELAY_MS && ++successStreak >= SUCCESSES_PER_SPEEDUP) {
     successStreak = 0
     gapMs = Math.max(CRAWL_DELAY_MS, Math.floor(gapMs / 2))
@@ -78,9 +108,9 @@ function noteSuccess(): void {
 let queue: Promise<unknown> = Promise.resolve()
 let lastFetchAt = 0
 
-function throttledFetch(url: string): Promise<Response> {
+function throttledFetch(url: string, kind: PageKind): Promise<Response> {
   const run = queue.then(async () => {
-    if (Date.now() < breakerUntil) {
+    if (Date.now() < blocks[kind].until) {
       throw new SourceRateLimitedError('alo.bg rate limit: backing off, not sending requests for now')
     }
     const wait = Math.max(lastFetchAt + gapMs, pauseUntil) - Date.now()
@@ -105,11 +135,12 @@ function throttledFetch(url: string): Promise<Response> {
  * on the status — list.ts has to read a 404 as end-of-pagination.
  */
 export async function fetchAloPage(url: string): Promise<Response> {
+  const kind = pageKind(url)
   let rateLimited = 0
   for (let attempt = 0; ; attempt++) {
     let res: Response | undefined
     try {
-      res = await throttledFetch(url)
+      res = await throttledFetch(url, kind)
     } catch (err) {
       if (err instanceof SourceRateLimitedError || attempt >= FETCH_RETRIES) throw err
     }
@@ -117,20 +148,20 @@ export async function fetchAloPage(url: string): Promise<Response> {
       if (res.status === 429) {
         // Before the first await: callers already queued behind this request
         // must see the new pause/breaker when they start.
-        const blockedFor = retryAfterMs(res)
-        if (blockedFor != null) openBreakerFor(blockedFor)
-        else noteRateLimited()
+        const announced = retryAfterMs(res)
+        const blockedFor = announced != null ? openBreakerFor(kind, announced) : null
+        if (blockedFor == null) noteRateLimited(kind)
         await res.arrayBuffer().catch(() => {})
         if (blockedFor != null) {
           throw new SourceRateLimitedError(`alo.bg rate limit: HTTP 429, retry after ${Math.round(blockedFor / 60_000)} min`)
         }
-        if (++rateLimited >= RATE_LIMIT_ATTEMPTS || Date.now() < breakerUntil) {
+        if (++rateLimited >= RATE_LIMIT_ATTEMPTS || Date.now() < blocks[kind].until) {
           throw new SourceRateLimitedError(`alo.bg rate limit: HTTP 429 after ${rateLimited} attempt(s)`)
         }
         continue
       }
       if (res.ok || res.status < 500) {
-        if (res.ok) noteSuccess()
+        if (res.ok) noteSuccess(kind)
         return res
       }
       if (attempt >= FETCH_RETRIES) return res
