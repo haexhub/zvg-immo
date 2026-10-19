@@ -10,6 +10,7 @@ import {
   PLATFORM_ID,
   type AloOblast,
 } from './constants'
+import { SourceRateLimitedError } from '~/server/utils/source-rate-limit'
 import { fetchAloPage } from './fetch'
 import { absoluteUrl, buildAddress, clean, formatPrice, parseAreaSqm, parsePrice, parseRoomCount } from './text'
 
@@ -197,12 +198,24 @@ export async function fetchCategoryListings(
 export async function fetchAllListings(): Promise<{ auctions: Auction[]; complete: boolean }> {
   const auctions: Auction[] = []
   let complete = true
-  for (const oblast of ALO_OBLASTI) {
+  let firstError: unknown = null
+  walk: for (const oblast of ALO_OBLASTI) {
     for (const categorySlug of ALO_CATEGORIES) {
-      const scope = await fetchCategoryListings(categorySlug, oblast)
-      auctions.push(...scope.auctions)
-      complete &&= scope.complete
+      try {
+        const scope = await fetchCategoryListings(categorySlug, oblast)
+        auctions.push(...scope.auctions)
+        complete &&= scope.complete
+      } catch (err) {
+        // One failed scope must not discard the others already walked; the
+        // run is only reported incomplete (see fetchCategoryListings). Once
+        // alo rate-limits, every further scope would fail the same way.
+        complete = false
+        firstError ??= err
+        console.warn(`[alo] ${oblast.name}/${categorySlug}: failed — ${(err as Error).message}`)
+        if (err instanceof SourceRateLimitedError) break walk
+      }
     }
   }
+  if (auctions.length === 0 && firstError != null) throw firstError
   return { auctions, complete }
 }
