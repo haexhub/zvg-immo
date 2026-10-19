@@ -105,7 +105,10 @@ export async function enrichOne(auction: Auction): Promise<void> {
 
   const title = clean($('meta[property="og:title"]').attr('content') ?? '')
   if (title) auction.title = title
-  auction.description = extractDescription($)
+  // Only overwrite when found (same convention as alo/kip/bcpea): a renamed
+  // label must not wipe the description already stored for this auction.
+  const description = extractDescription($)
+  if (description) auction.description = description
 
   const photoUrls = extractPhotoUrls($)
   if (photoUrls.length > 0) {
