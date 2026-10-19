@@ -10,18 +10,18 @@ import { Feature } from 'ol'
 import Point from 'ol/geom/Point'
 import { circular } from 'ol/geom/Polygon'
 import { fromLonLat } from 'ol/proj'
-import { createXYZ } from 'ol/tilegrid'
 import { Fill, Icon, Stroke, Style } from 'ol/style'
 import Overlay from 'ol/Overlay'
 import { defaults as defaultInteractions } from 'ol/interaction/defaults'
 import type BaseLayer from 'ol/layer/Base'
-import type { TileCoord } from 'ol/tilecoord'
 import { OSM_ATTRIBUTION, mapTilerSatelliteStyleUrl, mapTilerStreetsStyleUrl } from '~/lib/map-tiles'
 import { mapPinDataUri, MAP_PIN_ANCHOR } from '~/lib/mapPinIcon'
 import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/lib/mapFeatureIcon'
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
+import { arcGisMapLayer } from '~/lib/arcgis-export-layer'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
+import { useDetailMapTourismLayers } from '~/composables/useDetailMapTourismLayers'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
@@ -61,6 +61,17 @@ const vectorStyleUrl = computed(() => {
 })
 const olMapRef = shallowRef<OlMap | null>(null)
 useMapTilerVectorBaseLayer({ map: olMapRef, styleUrl: vectorStyleUrl, lang: locale })
+const {
+  layers: tourismLayers,
+  category: tourismCategory,
+  categories: tourismCategories,
+  visitorActive: tourismVisitorActive,
+  visitorBreaks: tourismVisitorBreaks,
+  visitorAvailable: tourismVisitorAvailable,
+} = useDetailMapTourismLayers({ map: olMapRef })
+// The feature legend shares the bottom-left corner with the tourism legends,
+// so it joins their one-panel-at-a-time rule (open by default, as before).
+const { tourismGridPanelOpen, tourismVisitorPanelOpen, legendPanelOpen: legendOpen } = useTourismLegendPanels('legend')
 
 function hazardMapLayerLabel(hazard: HazardAssessment): string {
   return `${t(`objektDetail.mapLayerHazardPrefix`)} ${t(`objektDetail.hazard.${hazard.hazard}`)}`
@@ -121,56 +132,6 @@ function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLaye
   }
   layer.setVisible(visible)
   entries.push({ key, layer, visible: ref(visible), id })
-}
-
-// Esri's "export"/"exportImage" REST endpoints render a fresh image per
-// request instead of serving a pre-rendered tile pyramid, so the tile's bbox
-// has to be computed and passed as a query param on every request.
-const arcGisTileGrid = createXYZ()
-
-function arcGisMapLayer(serviceUrl: string, layers: string, opacity: number, attribution: string): TileLayer<XYZ> {
-  return arcGisGridLayer(serviceUrl, 'export', { layers }, opacity, attribution)
-}
-
-function arcGisGridLayer(
-  serviceUrl: string,
-  operation: 'export' | 'exportImage',
-  params: Record<string, string>,
-  opacity: number,
-  attribution: string,
-): TileLayer<XYZ> {
-  return new TileLayer({
-    opacity,
-    minZoom: 6,
-    maxZoom: 18,
-    source: new XYZ({
-      tileGrid: arcGisTileGrid,
-      attributions: attribution,
-      crossOrigin: 'anonymous',
-      tileUrlFunction: (tileCoord) => arcGisExportUrl(serviceUrl, tileCoord, operation, params),
-    }),
-  })
-}
-
-function arcGisExportUrl(
-  serviceUrl: string,
-  tileCoord: TileCoord,
-  operation: 'export' | 'exportImage',
-  extraParams: Record<string, string> = {},
-): string {
-  const [minX, minY, maxX, maxY] = arcGisTileGrid.getTileCoordExtent(tileCoord)
-  const url = new URL(`${serviceUrl.replace(/\/+$/, '')}/${operation}`)
-  url.searchParams.set('bbox', `${minX},${minY},${maxX},${maxY}`)
-  url.searchParams.set('bboxSR', '3857')
-  url.searchParams.set('imageSR', '3857')
-  url.searchParams.set('size', '256,256')
-  url.searchParams.set('format', 'png32')
-  url.searchParams.set('transparent', 'true')
-  url.searchParams.set('f', 'image')
-  for (const [key, value] of Object.entries(extraParams)) {
-    url.searchParams.set(key, value)
-  }
-  return url.toString()
 }
 
 function addFloodRiskLayer(entries: OverlayEntry[]): void {
@@ -321,8 +282,6 @@ interface LegendEntry {
   icon: string
 }
 
-const legendOpen = ref(true)
-
 const featureLegendEntries = computed<LegendEntry[]>(() => {
   const byKind = new Map<string, LegendEntry>()
   for (const feature of props.locationContext?.mapFeatures ?? []) {
@@ -416,7 +375,7 @@ onMounted(async () => {
     // below then never runs and an open popup can't be dismissed.
     moveTolerance: 8,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [...rasterFallbackLayers, ...entries.map((e) => e.layer), markerLayer],
+    layers: [...rasterFallbackLayers, ...tourismLayers, ...entries.map((e) => e.layer), markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
@@ -477,21 +436,30 @@ onBeforeUnmount(() => {
         </div>
       </div>
     </div>
-    <AuctionDetailMapLegend
-      v-model:open="legendOpen"
-      :feature-entries="featureLegendEntries"
-      :hazard-entries="hazardLegendEntries"
-      :show-odor="showOdorLegend"
-      :subject-icon="mapPinDataUri(SUBJECT_PIN_COLOR)"
-      :subject-label="t('map.legendSubject')"
-      :hazards-title="t('objektDetail.hazardsTitle')"
-      :odor-icon="odorLegendIconDataUri()"
-      :odor-label="t('objektDetail.mapLayerOdorSignals')"
-      :toggle-class="controlToggleClass"
-      :panel-class="controlPanelClass"
-      :toggle-label="t('map.legend')"
-      @hover-feature="hoveredFeatureKind = $event"
-      @hover-hazard="hoveredHazardKind = $event"
-    />
+    <div class="absolute bottom-2 left-2 z-10 flex items-start gap-1">
+      <AuctionDetailMapLegend
+        v-model:open="legendOpen"
+        :feature-entries="featureLegendEntries"
+        :hazard-entries="hazardLegendEntries"
+        :show-odor="showOdorLegend"
+        :subject-icon="mapPinDataUri(SUBJECT_PIN_COLOR)"
+        :subject-label="t('map.legendSubject')"
+        :hazards-title="t('objektDetail.hazardsTitle')"
+        :odor-icon="odorLegendIconDataUri()"
+        :odor-label="t('objektDetail.mapLayerOdorSignals')"
+        :toggle-class="controlToggleClass"
+        :panel-class="controlPanelClass"
+        :toggle-label="t('map.legend')"
+        @hover-feature="hoveredFeatureKind = $event"
+        @hover-hazard="hoveredHazardKind = $event"
+      />
+      <AuctionTourismLegend v-model:category="tourismCategory" v-model:open="tourismGridPanelOpen" :categories="tourismCategories" />
+      <AuctionTourismVisitorLegend
+        v-if="tourismVisitorAvailable !== false"
+        v-model:active="tourismVisitorActive"
+        v-model:open="tourismVisitorPanelOpen"
+        :breaks="tourismVisitorBreaks"
+      />
+    </div>
   </div>
 </template>
