@@ -8,7 +8,7 @@ import { fetchLlmBatchResults, LLM_BATCH_JOB_EXPIRY_MS, pollLlmBatch } from '../
 import { readExtractionLlmConfig, resolveLlmConfigForProfile } from '../utils/extract/llm-task-config'
 import type { LlmConfig } from '../utils/extract/llm'
 import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint } from '../utils/extract/merge-llm-result'
-import { buildReprocessFields } from '../utils/extract/reprocess-fields'
+import { buildReprocessFields, priorLlmFields } from '../utils/extract/reprocess-fields'
 import { applyAuctionExtraction } from '../utils/auction-extraction'
 import { readAuctionRecordsByKeys } from '../utils/auction-record'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
@@ -244,11 +244,17 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           console.warn(`[llm-batch-poll] ${identity.platform}:${identity.externalId} no longer belongs to ${job.jobName} — skipping its result`)
           continue
         }
-        const artifactVersionId = priorState?.llmArtifactVersionId ?? record.artifactVersionId
+        // Only a usable extraction parses the submitted document set. A failed
+        // item keeps the previously parsed version, so the new set stays
+        // unparsed and the auction eligible for a later run.
+        const artifactVersionId = extraction
+          ? priorState?.llmArtifactVersionId ?? record.artifactVersionId
+          : record.artifactVersionId
+        const submittedArtifactVersionId = priorState?.llmArtifactVersionId ?? record.artifactVersionId
         const fields = buildReprocessFields(
           record.auction,
           storedPriorEntry,
-          artifactVersionId !== record.artifactVersionId,
+          submittedArtifactVersionId !== record.artifactVersionId,
         )
         // The verdicts were formed against the rules values as they stood at
         // submit time; `fields` above is re-derived now, up to 48h later.
@@ -262,9 +268,12 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           // every console.warn as one.
           console.info(`[llm-batch-poll] llm overruled rules value(s) for ${identity.platform}:${identity.externalId}: ${falsified.join(',')}`)
         }
+        // Same as the sync path (reprocess-single.ts): without a result the
+        // prior LLM values stay until a later run parses the changed set,
+        // instead of a rules-only merge dropping them.
         const mergedEntry = mergeLlmResult(
           storedPriorEntry,
-          fields,
+          extraction ? fields : { ...fields, ...priorLlmFields(storedPriorEntry) },
           verified,
           at,
           storedPriorEntry.photos,
