@@ -393,6 +393,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   },
 })
 
+/** Clears the current search error before starting the watchlist action. */
 function handleToggleWatchlist(a: AuctionSummary): void {
   listActionError.value = null
   toggleWatchlist(a)

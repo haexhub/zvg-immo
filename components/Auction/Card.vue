@@ -157,6 +157,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
           data-watchlist-toggle
           class="absolute z-10 right-2 top-2 flex h-8 w-8 items-center justify-center rounded-full bg-background/90 backdrop-blur-sm transition-colors hover:bg-background"
           :class="{ 'text-red-500': props.inWatchlist }"
+          :aria-label="props.inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
           :title="props.inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
           @click="emit('toggle-watchlist')"
         >

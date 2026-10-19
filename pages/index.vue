@@ -19,6 +19,7 @@ watch(user, () => {
   watchlistError.value = null
 })
 
+/** Clears a stale landing-page error before starting the watchlist action. */
 function handleToggleWatchlist(a: WatchlistableAuction) {
   watchlistError.value = null
   toggleWatchlist(a)

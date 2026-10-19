@@ -26,6 +26,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
   },
 })
 
+/** Clears the detail-page error before starting the watchlist action. */
 function handleToggleWatchlist(auction: AuctionDetail): void {
   watchlistError.value = null
   toggleWatchlist(auction)
@@ -201,6 +202,7 @@ useHead(() => ({
             type="button"
             class="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
             :class="{ 'text-red-500': inWatchlist }"
+            :aria-label="inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
             :title="inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
             @click="handleToggleWatchlist(a)"
           >
