@@ -261,6 +261,33 @@ describe('fetchAloPage', () => {
     warn.mockRestore()
   })
 
+  it('does not shorten an escalated pause when the next Retry-After is smaller', async () => {
+    let calls = 0
+    const fetchMock = vi.fn(async () => calls++ === 0
+      ? new Response('', { status: 429, headers: { 'retry-after': '21600' } })
+      : new Response('', { status: 429, headers: { 'retry-after': '3600' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+
+    const first = fetchAloPage('https://www.alo.bg/a').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await first
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000)
+
+    const second = fetchAloPage('https://www.alo.bg/b').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await second
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('720 min'))
+
+    await vi.advanceTimersByTimeAsync(11 * 60 * 60_000 + 59 * 60_000)
+    const third = fetchAloPage('https://www.alo.bg/c').catch(() => undefined)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await third
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    warn.mockRestore()
+  })
+
   it('keeps list pages walking while detail pages are blocked', async () => {
     const fetchMock = vi.fn(async (url: unknown) =>
       String(url).includes('/obiavi/')
@@ -284,5 +311,27 @@ describe('fetchAloPage', () => {
     await vi.advanceTimersByTimeAsync(5_000)
     expect(await again).toBeInstanceOf(SourceRateLimitedError)
     expect(fetchMock).toHaveBeenCalledTimes(2) // the second detail request was never sent
+  })
+
+  it('keeps headerless breaker counts separate for list and detail pages', async () => {
+    const fetchMock = vi.fn(async () => tooMany())
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+    const { SourceRateLimitedError } = await import('~/server/utils/source-rate-limit')
+
+    for (const [kind, id] of [['list', 'page-1'], ['detail', 'ad-1']] as const) {
+      const url = kind === 'list'
+        ? `https://www.alo.bg/obiavi/imoti-prodajbi/apartamenti-stai/?page=${id}`
+        : `https://www.alo.bg/${id}`
+      const failed = fetchAloPage(url).catch((e: unknown) => e)
+      await vi.advanceTimersByTimeAsync(20 * 60_000)
+      expect(await failed).toBeInstanceOf(SourceRateLimitedError)
+    }
+
+    const listAgain = fetchAloPage('https://www.alo.bg/obiavi/imoti-prodajbi/apartamenti-stai/?page=2').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(20 * 60_000)
+    expect(await listAgain).toBeInstanceOf(SourceRateLimitedError)
+    expect(fetchMock).toHaveBeenCalledTimes(9)
   })
 })
