@@ -117,9 +117,14 @@ export async function prepareEnrichWork({
     const key = cacheKey(a.platform, a.externalId)
     const latestArtifact = artifactVersions.get(key)
     const prev = fetchStates.get(key)
+    // Platforms whose list crawl carries no attachments (zvg-portal, zvbawu,
+    // alo, …) only know them from the stored detail fetch — without that
+    // fallback a detail-fetched auction whose document set never got archived
+    // (download failed, set incomplete) would never re-enter the todo list.
+    const attachmentCount = a.attachments.length > 0 ? a.attachments.length : prev?.attachments.length ?? 0
     return (
       scopedForce ||
-      (!latestArtifact && (a.attachments.length > 0 || prev?.detailFetchedAt == null)) ||
+      (!latestArtifact && (attachmentCount > 0 || prev?.detailFetchedAt == null)) ||
       (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
     )
   }

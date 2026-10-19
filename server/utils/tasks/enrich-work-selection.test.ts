@@ -220,3 +220,45 @@ describe('stored auction summaries', () => {
     expect(summaries.get('dga-ag:7')?.photoCount).toBe(1)
   })
 })
+
+describe('prepareEnrichWork needsDocumentSetCheck', () => {
+  const attachment = {
+    kind: 'appraisal' as const,
+    label: 'Gutachten',
+    filename: 'gutachten.pdf',
+    sizeBytes: null,
+    fileId: 'gutachten',
+    proxyUrl: 'https://example.test/gutachten.pdf',
+  }
+
+  it('retries a detail-fetched auction whose stored attachments never got an archived document set', async () => {
+    // zvg-portal's list crawl carries no attachments; only the stored detail
+    // fetch knows the appraisal that is still missing from the archive.
+    const a = auction({ platform: 'zvg-portal', externalId: '42' })
+    const key = 'zvg-portal:42'
+    const { needsDocumentSetCheck, todo } = await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({ platform: 'zvg-portal', externalId: '42', attachments: [attachment], photoPipelineVersion: 6 })]]),
+      artifactVersions: new Map(),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, ['0.jpg']))]]),
+    })
+
+    expect(needsDocumentSetCheck(a)).toBe(true)
+    expect(todo).toContain(a)
+  })
+
+  it('leaves a detail-fetched auction without any known attachments alone', async () => {
+    const a = auction({ platform: 'zvg-portal', externalId: '42' })
+    const key = 'zvg-portal:42'
+    const { needsDocumentSetCheck } = await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({ platform: 'zvg-portal', externalId: '42', attachments: [] })]]),
+      artifactVersions: new Map(),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, ['0.jpg']))]]),
+    })
+
+    expect(needsDocumentSetCheck(a)).toBe(false)
+  })
+})
