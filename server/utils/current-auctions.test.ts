@@ -97,6 +97,12 @@ describe('auction identity persistence', () => {
     expect(row.lng).toBeNull()
   })
 
+  it('stores 0/0 as no location, so a stale null-island position is overwritten on the next crawl', () => {
+    const row = auctionToCurrentRow(makeAuction({ lat: 0, lng: 0 }), '2026-08-02T11:00:00.000Z')
+    expect(row.lat).toBeNull()
+    expect(row.lng).toBeNull()
+  })
+
   it('upserts deduplicated identities with last-wins values', async () => {
     const pool = mockPool([])
     vi.mocked(getPool).mockReturnValue(pool as never)

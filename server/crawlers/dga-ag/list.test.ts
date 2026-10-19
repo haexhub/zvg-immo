@@ -118,6 +118,27 @@ describe('parseListPage', () => {
     expect(item?.cityLine).toBe('01067 Dresden')
   })
 
+  it('reads an empty or zero map anchor as no location, not as 0/0', () => {
+    for (const anchor of ['data-lat="" data-lon=""', 'data-lat="0" data-lon="0"']) {
+      const [item] = parseListPage(LIST_HTML.replace('data-lat="51.05" data-lon="13.74"', anchor))
+      expect(item?.lat).toBeNull()
+      expect(item?.lng).toBeNull()
+    }
+  })
+
+  it('does not turn one empty map coordinate into a real zero coordinate', () => {
+    for (const anchor of ['data-lat="" data-lon="13.74"', 'data-lat="51.05" data-lon=""']) {
+      const [item] = parseListPage(LIST_HTML.replace('data-lat="51.05" data-lon="13.74"', anchor))
+      expect(item?.lat).toBeNull()
+      expect(item?.lng).toBeNull()
+    }
+  })
+
+  it('preserves a valid zero coordinate when the other coordinate is nonzero', () => {
+    const [item] = parseListPage(LIST_HTML.replace('data-lat="51.05" data-lon="13.74"', 'data-lat="0" data-lon="13.74"'))
+    expect(item).toMatchObject({ lat: 0, lng: 13.74 })
+  })
+
   it('recognizes the Bundesland marker among other class tokens', () => {
     const [item] = parseListPage(LIST_HTML.replace('class="Sachsen"', 'class="Sachsen d-none"'))
     expect(item?.regionCode).toBe('sn')

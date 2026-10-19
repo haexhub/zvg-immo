@@ -1,5 +1,6 @@
 import type { Auction } from '~/types/auction'
 import { geocodeAddress } from './geocode'
+import { hasUsableCoordinates } from './coordinates'
 
 export interface FillAuctionGeocodesOptions {
   fetchMissing?: boolean
@@ -24,7 +25,7 @@ export async function fillAuctionGeocodes(
   let failed = 0
 
   for (const auction of auctions) {
-    if (!auction.address || (auction.lat != null && auction.lng != null)) continue
+    if (!auction.address || hasUsableCoordinates(auction.lat, auction.lng)) continue
     processed++
     try {
       const point = await geocodeAddress(auction.address, auction.country, {
