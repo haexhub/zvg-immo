@@ -11,7 +11,7 @@ Rules:
 ## Settings-Seite (Admin-UI)
 
 `pages/settings.vue` rendert nach dem Login (`/api/settings/{login,logout,session}`) zuerst `SettingsCountryStatusOverview` und danach die Cards aus `components/settings/*.vue` in vier Sektionen (Betrieb & Fehler / Crawling & Anreicherung / KI-LLM / Verwaltung). "detached" = POST antwortet sofort mit `{started:true}`, der eigentliche Task läuft im Hintergrund weiter (Reverse-Proxy-Timeout umgehen); Fortschritt kommt über GET-Status bzw. `useSettingsTaskOverview`/`usePollWhileActive`.
-Der geplante Reprocess-Lauf (Cron/Boot, ohne Scope-Optionen) versucht vor seinem Vollpass zusätzlich bis zu `extractLlm.lockedRetryPerRun` gesperrte Auktionen erneut (Default 10, `NUXT_EXTRACT_LLM_LOCKED_RETRY_PER_RUN`, 0 = aus; `reprocess-locked-slice.ts`) — ohne das erreicht das gleichmäßig auf Plattformen verteilte `maxPerRun`-Budget gesperrte Auktionen nur zufällig.
+Der geplante Reprocess-Lauf (Cron/Boot, ohne Scope-Optionen) versucht vor seinem Vollpass zusätzlich bis zu `extractLlm.lockedRetryPerRun` gesperrte Auktionen erneut (Default 10, `NUXT_EXTRACT_LLM_LOCKED_RETRY_PER_RUN`, 0 = aus; `reprocess-locked-slice.ts`) — ohne das erreicht das gleichmäßig auf Plattformen verteilte `maxPerRun`-Budget gesperrte Auktionen nur zufällig. Dabei gilt ein exponentieller Backoff (24 h × 2^(Fehler − 3), max. 14 Tage, `llmFailureRetryCooldownHours` in `lib/llm-limits.ts`); nur manuelle Retries ignorieren ihn. Als Fehlschlag zählt nur eine auktionsbezogene LLM-Antwort: Provider-Ausfälle (5xx, Timeout, 401/402/403) stoppen den Lauf ohne Zählerstand, eine leere LLM-Eingabe ist kein Aufruf.
 Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`/`runEnrichTask`/`runExternalEnrichmentTask` direkt auf, nie Nitros `runTask` (das verwirft bei laufendem Task die Payload). Unter manuellen Reprocess-/External-Läufen gilt latest-run-wins; manuelle Enrich-Läufe reihen sich hinter den aktiven ein (ein Abbruch kostete Crawl und Finalize-Persistenz). Ein Cron-/Boot-Lauf überspringt, solange ein Lauf aktiv ist.
 
 | Card | Routen | Modus |
@@ -27,7 +27,7 @@ Manuelle Reprocess-/Enrich-/External-Enrichment-Trigger rufen `runReprocessTask`
 | SettingsLlmConfigCard | GET/PUT `/api/settings/llm-config` | sync |
 | SettingsLlmProfilesCard | GET/PUT `/api/settings/llm-profiles`, DELETE `.../llm-profiles/[id]`, POST `/api/settings/llm-provider/models` | sync |
 | SettingsLlmAssignmentsCard | GET `/api/settings/llm-profiles`, PUT `/api/settings/llm-assignments` | sync |
-| SettingsLlmBatchCard | GET `/api/settings/llm-batch-jobs` (geteiltes Status-Overview für Reprocess/Enrich/External-Enrichment/Offload) | sync |
+| SettingsLlmBatchCard | GET `/api/settings/llm-batch-jobs` (geteiltes Status-Overview für Reprocess/Enrich/External-Enrichment/Offload; Task-Status 4 s gecacht, der Backlog-Vollscan 60 s) | sync |
 | SettingsLlmCostCard | GET `/api/settings/llm-costs` (aggregiert `llm_usage_events`) | sync |
 | SettingsLawyersCard | GET/POST/PUT/DELETE `/api/settings/lawyers[/id]` | sync |
 | SettingsOutboundDeliveriesCard | GET `/api/settings/outbound-deliveries` | sync |
@@ -46,6 +46,8 @@ läuft alle fünf Minuten und beim Boot, claimed Zeilen mit `FOR UPDATE SKIP LOC
 und liefert mindestens einmal (kein Exactly-once-Versprechen). Erfolgreiche Alerts
 werden erst danach in `notified_matches` bestätigt; fehlgeschlagene Zustellungen
 werden exponentiell verzögert und nach sechs Versuchen terminal `failed`.
+Alerts, deren Subscription inzwischen gelöscht oder deaktiviert ist, werden ohne
+Versand terminal `failed` (`subscription_inactive`).
 Fehlt `NUXT_SMTP_URL`, ist der Versand nur im Dev ein No-op; in Produktion
 scheitert jede Zustellung mit `smtp_not_configured`.
 `/api/settings/outbound-deliveries` zeigt nur sekretfreie Zähler/Fehlerklassen.
@@ -114,7 +116,15 @@ Detail-Endpunkt bleibt ein historischer Permalink. `auction-record.ts` bleibt
 der separate, breite interne Detail-Leser.
 
 `/api/auctions-geo` ist auch bei dem Legacy-Parameter `fetch=1` cache-only;
-fehlende Geocodes erzeugt ausschließlich der exklusive geplante/Admin-Task.
+fehlende Geocodes erzeugt ausschließlich der exklusive geplante/Admin-Task. Der
+crawlt nicht, sondern geocodiert gespeicherte aktuelle Auktionen ohne Koordinaten
+(`server/utils/tasks/geocode-run.ts`); neue Auktionen also erst nach ihrem
+ersten Enrich-Lauf.
+
+„Aktuell" definiert allein `CURRENT_AUCTION_CONDITIONS`
+(`server/utils/current-auction-sql.ts`): Datum nicht vorbei und vom letzten
+erfolgreichen Crawl des eigenen Scopes noch gesehen. Zeilen ohne `crawl_region`
+laufen ab, sobald jeder Scope ihrer Plattform im Land danach erfolgreich lief.
 `pages/search.vue` pollt nur den Cache-Fortschritt und bricht einen laufenden
 Poll beim Stoppen ab. Detail-Reads für `location_enrichment` sind per
 `platform` und `external_id` abgefragt und haben einen eigenen invalidierbaren
