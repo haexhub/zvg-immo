@@ -16,7 +16,7 @@ import {
   type LlmUsage,
 } from '~/server/utils/extract/llm'
 import { DOCUMENT_SUMMARY_SCHEMA, DOCUMENT_SUMMARY_SCHEMA_NAME, DOCUMENT_SUMMARY_SYSTEM_PROMPT } from '~/server/utils/extract/llm-schema'
-import { isDailyQuotaError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import { isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
 import type { ClampedExtraction } from '~/server/utils/extract/llm-clamp'
 import type { PreparedAttachmentDocument } from '~/server/utils/extract/llm-documents'
 import type { DocumentSummaryInput } from '~/server/utils/extract/pdf-documents'
@@ -47,10 +47,12 @@ interface MapAttemptResult {
  * shape reprocessAuction's own fallback loop uses for a single request.
  * Tolerates a genuine extraction failure (malformed/failed response) by
  * returning null — the caller decides what that means (excluded map
- * document vs. failed candidate). A capacity outage (rate limit/daily
- * quota) is NOT tolerated: it propagates uncaught, exactly like a plain
+ * document vs. failed candidate). A capacity or provider outage (rate
+ * limit/daily quota, or an LlmProviderError such as a 502, timeout or lost
+ * connection) is NOT tolerated: it propagates uncaught, exactly like a plain
  * extractByLlm call, so it still reaches reprocess-run.ts's per-candidate
- * catch and correctly skips counting it toward llmFailures.
+ * catch, which skips counting it toward llmFailures and stops (or waits
+ * out) the run instead of sending the dead provider the next candidate.
  */
 async function attemptExtraction(
   input: LlmInput,
@@ -95,7 +97,9 @@ async function attemptExtraction(
         errorMessage: err instanceof Error ? err.message : String(err),
       })
     }
-    if (isRateLimitError(err) || isDailyQuotaError(err)) throw err
+    // Same two classes reprocess-run.ts's catch stops or waits the run on
+    // (a daily quota is a rate limit too).
+    if (isRateLimitError(err) || isLlmProviderError(err)) throw err
     return null
   }
 }
@@ -140,8 +144,13 @@ export async function runMapReduceExtraction(
   config: LlmConfig,
   callbacks: MapReduceCallbacks,
 ): Promise<ClampedExtraction | null> {
-  const mapResults: MapAttemptResult[] = await Promise.all(
-    documentGroups.map(async (group) => ({
+  // One map call at a time: reprocess already runs `llmConcurrency` candidates
+  // in parallel, and firing every group at once put up to five more requests
+  // per candidate on the same provider. Sequential also means an outage
+  // thrown by the first map stops the rest from being sent at all.
+  const mapResults: MapAttemptResult[] = []
+  for (const group of documentGroups) {
+    mapResults.push({
       label: group.label,
       extraction: await attemptExtraction(
         { title: base.title, description: null, ...group.parts },
@@ -149,8 +158,8 @@ export async function runMapReduceExtraction(
         { schema: DOCUMENT_SUMMARY_SCHEMA, systemPrompt: DOCUMENT_SUMMARY_SYSTEM_PROMPT, name: DOCUMENT_SUMMARY_SCHEMA_NAME },
         callbacks,
       ),
-    })),
-  )
+    })
+  }
 
   if (mapResults.every((r) => r.extraction == null)) return null
 

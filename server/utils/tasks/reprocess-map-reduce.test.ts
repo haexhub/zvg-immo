@@ -147,9 +147,37 @@ describe('runMapReduceExtraction', () => {
     })
 
     await expect(runMapReduceExtraction(groups, base, config, {})).rejects.toThrow('rate limited')
-    // The other map call may or may not have settled yet (Promise.all), but
-    // reduce must never have been reached — only the 2 map calls happened.
-    expect(extractByLlmMock).toHaveBeenCalledTimes(2)
+    // Maps run one at a time, so the outage on the first one keeps the
+    // second from being sent at all — and reduce is never reached.
+    expect(extractByLlmMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('propagates a provider outage (502/timeout) from a map call instead of counting it as a document failure', async () => {
+    const { LlmProviderError } = await import('~/server/utils/extract/llm-errors')
+    extractByLlmMock.mockImplementation(async (_input: LlmInput, _cfg: LlmConfig, opts: { onProviderAttempt?: () => void }) => {
+      opts.onProviderAttempt?.()
+      throw new LlmProviderError('claude-proxy', '502 Bad Gateway')
+    })
+
+    await expect(runMapReduceExtraction(groups, base, config, {})).rejects.toThrow('502 Bad Gateway')
+    expect(extractByLlmMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('never has more than one map request in flight', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    extractByLlmMock.mockImplementation(async (_input: LlmInput, _cfg: LlmConfig, opts: { onProviderAttempt?: () => void }) => {
+      opts.onProviderAttempt?.()
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      inFlight--
+      return extraction()
+    })
+
+    await runMapReduceExtraction(groups, base, config, {})
+
+    expect(maxInFlight).toBe(1)
   })
 
   it('propagates a rate-limit error from the reduce call uncaught', async () => {
