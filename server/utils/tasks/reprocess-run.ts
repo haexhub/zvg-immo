@@ -363,7 +363,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
 
       // Persist each result immediately so a long run survives a deployment.
       await persistReprocessEntry(
-        persistCtx, record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled,
+        persistCtx, record, result.entry, result.artifactVersionId, result.llmFailures, result.auction, result.llmCalled || result.llmInputEmpty,
         result.llmConfigUsed, result.llmDurationMs, result.llmUsage,
       ).catch((persistErr) => { throw markPersistFailure(persistErr) })
     } catch (err) {

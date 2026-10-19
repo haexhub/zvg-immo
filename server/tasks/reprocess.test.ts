@@ -299,6 +299,37 @@ describe('reprocessAuction structured provenance', () => {
     expect(result?.llmConfigUsed).toBeNull()
     expect(result?.llmDurationMs).toBeNull()
   })
+
+  it('does not count an input with nothing to send as an LLM call or failure', async () => {
+    const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'never-asked', provider: 'openai-compatible' as const }
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: emptyArtifactState, priorLlmFailures: 2 },
+    )
+
+    expect(result).toMatchObject({ llmCalled: false, llmInputEmpty: true, llmFailures: 2 })
+  })
+})
+
+describe('runReprocess empty LLM input', () => {
+  it('books no LLM call and keeps the failure count, but records the attempt time', async () => {
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(extractByLlm).mockResolvedValue(null)
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, llmCalls: 0 })
+
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmRulesHint: null,
+      llmFailures: 0,
+      llmAttempted: true,
+    })
+  })
 })
 
 describe('reprocessAuction map-reduce', () => {
@@ -542,7 +573,10 @@ describe('runReprocess structured persistence', () => {
       documentSetComplete: true,
       artifactVersionId: null,
     })
-    vi.mocked(extractByLlm).mockResolvedValue(null)
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
 
     const result = await runReprocess({ country: 'de', batch: true })
 
