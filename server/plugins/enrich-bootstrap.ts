@@ -1,7 +1,7 @@
 // Fires the enrich task once shortly after server startup so a fresh deploy
 // fills the extraction cache without waiting for the next cron tick. Deferred
-// longer than the geocode bootstrap (which fires at 5s) so the two full crawls
-// don't hammer the upstream portals simultaneously on boot.
+// longer than the geocode bootstrap (which fires at 5s) so geocode's
+// AT-Edikte/Biddit detail fetches and this crawl don't start together on boot.
 //
 // Guarded on the last enrich run first: the scope-freshness gate alone almost
 // never closes, because the hourly refresh keeps 6h-cadence portals at 6-7h
