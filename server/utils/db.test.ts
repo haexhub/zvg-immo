@@ -208,5 +208,27 @@ describe('withStatementTimeout', () => {
       'ROLLBACK',
     ])
     expect(client.release).toHaveBeenCalledOnce()
+    expect(client.release).toHaveBeenCalledWith(undefined)
+  })
+
+  it('destroys the client instead of pooling it when the rollback itself fails', async () => {
+    const rollbackError = new Error('Connection terminated unexpectedly')
+    const client = {
+      query: vi.fn(async (query: unknown) => {
+        if (queryText([query]) === 'ROLLBACK') throw rollbackError
+        return { rows: [] }
+      }),
+      release: vi.fn(),
+    }
+    const db = { connect: vi.fn().mockResolvedValue(client) }
+    const { withStatementTimeout } = await import('./db')
+    const fnError = new Error('boom')
+
+    await expect(withStatementTimeout(db as never, 10_000, async () => {
+      throw fnError
+    })).rejects.toBe(fnError)
+
+    expect(client.release).toHaveBeenCalledOnce()
+    expect(vi.mocked(client.release).mock.calls[0]?.[0]).toBeInstanceOf(Error)
   })
 })

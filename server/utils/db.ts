@@ -125,6 +125,11 @@ export async function withStatementTimeout<T>(
 ): Promise<T> {
   const client = await db.connect()
   const tx = drizzle(client)
+  // A connection whose ROLLBACK failed may still sit inside the aborted
+  // transaction; handing it back to the pool would make the next unrelated
+  // query on it fail with "current transaction is aborted". Releasing with
+  // the error makes pg-pool destroy it instead.
+  let broken: Error | undefined
   try {
     await tx.execute(sql`BEGIN`)
     // Bind parameters aren't valid for SET LOCAL, so the value goes in via
@@ -135,10 +140,12 @@ export async function withStatementTimeout<T>(
     await tx.execute(sql`COMMIT`)
     return result
   } catch (err) {
-    await tx.execute(sql`ROLLBACK`).catch(() => {})
+    await tx.execute(sql`ROLLBACK`).catch((rollbackError: unknown) => {
+      broken = rollbackError instanceof Error ? rollbackError : new Error(String(rollbackError))
+    })
     throw err
   } finally {
-    client.release()
+    client.release(broken)
   }
 }
 
