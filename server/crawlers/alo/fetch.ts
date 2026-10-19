@@ -40,10 +40,14 @@ interface Block {
   streak: number
   /** Successful requests since the last block opened. */
   ok: number
+  /** Headerless 429s for this page kind used by the short breaker. */
+  consecutive429: number
+  /** Duration of the last announced block, used as the escalation base. */
+  pauseMs: number
 }
 const blocks: Record<PageKind, Block> = {
-  list: { until: 0, streak: 0, ok: 0 },
-  detail: { until: 0, streak: 0, ok: 0 },
+  list: { until: 0, streak: 0, ok: 0, consecutive429: 0, pauseMs: 0 },
+  detail: { until: 0, streak: 0, ok: 0, consecutive429: 0, pauseMs: 0 },
 }
 
 /** Listing pages live under /obiavi/; everything else is a single ad. */
@@ -67,7 +71,9 @@ function retryAfterMs(res: Response): number | null {
 function openBreakerFor(kind: PageKind, announcedMs: number): number {
   const block = blocks[kind]
   block.streak = block.ok === 0 && block.streak > 0 ? block.streak + 1 : 1
-  const ms = Math.min(announcedMs * 2 ** (block.streak - 1), Math.max(announcedMs, MAX_ESCALATED_BLOCK_MS))
+  const requestedMs = block.streak > 1 ? Math.max(announcedMs, block.pauseMs * 2) : announcedMs
+  const ms = Math.min(requestedMs, MAX_ESCALATED_BLOCK_MS)
+  block.pauseMs = ms
   block.until = Date.now() + ms
   console.warn(
     `[alo] ${kind} pages blocked with HTTP 429 after ${block.ok} successful request(s)` +
@@ -79,20 +85,25 @@ function openBreakerFor(kind: PageKind, announcedMs: number): number {
 
 function noteRateLimited(kind: PageKind): void {
   consecutive429++
+  const block = blocks[kind]
+  block.consecutive429++
   successStreak = 0
   gapMs = Math.min(gapMs * 2, MAX_GAP_MS)
   pauseUntil = Date.now() + Math.min(FIRST_PAUSE_MS * 2 ** (consecutive429 - 1), MAX_PAUSE_MS)
-  if (consecutive429 >= BREAKER_THRESHOLD) {
-    blocks[kind].until = Date.now() + BREAKER_OPEN_MS
-    blocks[kind].ok = 0
+  if (block.consecutive429 >= BREAKER_THRESHOLD) {
+    block.until = Date.now() + BREAKER_OPEN_MS
+    block.ok = 0
     // Half-open afterwards: one more 429 re-opens it after a short pause.
-    consecutive429 = BREAKER_THRESHOLD - 2
+    block.consecutive429 = BREAKER_THRESHOLD - 2
   }
 }
 
 function noteSuccess(kind: PageKind): void {
   consecutive429 = 0
-  blocks[kind].ok++
+  const block = blocks[kind]
+  block.consecutive429 = 0
+  block.streak = 0
+  block.ok++
   if (gapMs > CRAWL_DELAY_MS && ++successStreak >= SUCCESSES_PER_SPEEDUP) {
     successStreak = 0
     gapMs = Math.max(CRAWL_DELAY_MS, Math.floor(gapMs / 2))
