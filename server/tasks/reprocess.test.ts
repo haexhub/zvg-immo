@@ -13,6 +13,7 @@ import { isLlmBatchPending, submitLlmBatch } from '../utils/extract/llm-batch'
 import { extractByLlm } from '../utils/extract/llm'
 import { isLlmProviderUnavailable } from '../utils/extract/llm-errors'
 import { prepareArchivedLlmDocuments } from '../utils/extract/llm-documents'
+import { buildReprocessFields } from '../utils/extract/reprocess-fields'
 import { writeAuctionDetails } from '../utils/auction-details'
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
@@ -357,6 +358,74 @@ describe('reprocessAuction without an LLM result on a changed document set', () 
       condition: 'gepflegt', yearBuilt: 1936, marketValueEur: 250_000, llmAnalyzedAt: '2026-08-01T10:00:00.000Z',
     })
     expect(result?.artifactVersionId).toBe(11)
+  })
+})
+
+describe('runReprocess without an LLM call left', () => {
+  // The rules entry this run would rebuild for auction() anyway.
+  function currentRulesEntry(): AuctionExtraction {
+    const fields = buildReprocessFields(auction(), undefined, true)
+    return extraction({ ...fields, source: 'rules', confidence: 'low' })
+  }
+
+  function storeEntry(entry: AuctionExtraction, artifactVersionId: number | null = null) {
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([['zvg-portal:7265', {
+      auction: { ...auction(), extraction: entry }, detailsId: 7, detailsVersion: 2, artifactVersionId,
+    }]]))
+  }
+
+  it('skips a stored rules entry the rules would rebuild unchanged', async () => {
+    storeEntry(currentRulesEntry())
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+
+    expect(downloadBlob).not.toHaveBeenCalled()
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+  })
+
+  it('still rebuilds a stored rules entry whose rules values changed', async () => {
+    storeEntry({ ...currentRulesEntry(), propertyType: null })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 0 })
+    expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips an LLM extraction with a new document set until the LLM can parse it', async () => {
+    storeEntry(extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' }), 11)
+    vi.mocked(readArtifactProcessingState).mockResolvedValue({
+      latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+      parsedArtifactVersionId: 11,
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 0, skipped: 1 })
+    expect(writeAuctionDetails).not.toHaveBeenCalled()
+  })
+
+  it('skips unchanged candidates once the run budget is spent', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '1' } }))
+    vi.mocked(getPool).mockReturnValue({
+      query: vi.fn(async () => ({ rows: [
+        { platform: 'zvg-portal', external_id: '7265', country: 'de' },
+        { platform: 'zvg-portal', external_id: '7266', country: 'de' },
+      ] })),
+    } as never)
+    vi.mocked(readAuctionRecordMap).mockResolvedValue(new Map([
+      ['zvg-portal:7265', { auction: auction(), detailsId: 7, detailsVersion: 2, artifactVersionId: null }],
+      ['zvg-portal:7266', {
+        auction: { ...auction(), externalId: '7266', extraction: currentRulesEntry() }, detailsId: 8, detailsVersion: 2, artifactVersionId: null,
+      }],
+    ]))
+    vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+      baseUrl: 'https://api.example.test', apiKey: 'secret', model: 'test-model', provider: 'openai-compatible',
+    }])
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    await expect(runReprocess({ country: 'de' })).resolves.toMatchObject({ processed: 1, skipped: 1, llmCalls: 1 })
+    expect(writeAuctionDetails).toHaveBeenCalledTimes(1)
   })
 })
 
