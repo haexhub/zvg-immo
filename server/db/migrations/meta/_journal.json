@@ -232,6 +232,13 @@
       "when": 1792145498055,
       "tag": "0032_mushy_natasha_romanoff",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792418685990,
+      "tag": "0033_clear_null_island_coordinates",
+      "breakpoints": true
     }
   ]
 }
