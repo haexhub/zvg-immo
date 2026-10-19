@@ -86,7 +86,8 @@ describe('runMapReduceExtraction', () => {
     const onLlmCall = vi.fn()
     const result = await runMapReduceExtraction(groups, base, config, { onLlmAttempt, onLlmCall })
 
-    expect(result?.propertyType).toBe('einfamilienhaus')
+    expect(result.extraction?.propertyType).toBe('einfamilienhaus')
+    expect(result.failedMaps).toBe(0)
     expect(extractByLlmMock).toHaveBeenCalledTimes(3) // 2 map + 1 reduce
     expect(onLlmAttempt).toHaveBeenCalledTimes(3)
     expect(onLlmCall).toHaveBeenCalledTimes(3)
@@ -118,7 +119,8 @@ describe('runMapReduceExtraction', () => {
 
     const result = await runMapReduceExtraction(groups, base, config, {})
 
-    expect(result?.documentSummary).toBe('reduced')
+    expect(result.extraction?.documentSummary).toBe('reduced')
+    expect(result.failedMaps).toBe(1)
     expect(extractByLlmMock).toHaveBeenCalledTimes(3)
     const reduceInput = extractByLlmMock.mock.calls[2]![0] as LlmInput
     expect(reduceInput.pdfText).toContain('Gutachten (Analyse fehlgeschlagen)')
@@ -135,7 +137,7 @@ describe('runMapReduceExtraction', () => {
 
     const result = await runMapReduceExtraction(groups, base, config, {})
 
-    expect(result).toBeNull()
+    expect(result).toEqual({ extraction: null, failedMaps: 2 })
     expect(extractByLlmMock).toHaveBeenCalledTimes(2) // both maps attempted, no reduce
   })
 
@@ -202,7 +204,8 @@ describe('runMapReduceExtraction', () => {
 
     const result = await runMapReduceExtraction(groups, base, config, {})
 
-    expect(result?.documentSummary).toBe('ok')
+    expect(result.extraction?.documentSummary).toBe('ok')
+    expect(result.failedMaps).toBe(1)
     expect(extractByLlmMock).toHaveBeenCalledTimes(3)
   })
 
@@ -217,7 +220,7 @@ describe('runMapReduceExtraction', () => {
       { label: 'Nicht gesendet', documentLabels: ['Nicht gesendet'], deferredDocumentLabels: ['Nicht gesendet'], parts: { pdfText: 'nicht gesendet', pdfPageImages: null, pdfBytes: null } },
     ], base, config, {})
 
-    expect(result?.documentSummary).toBe('reduced')
+    expect(result.extraction?.documentSummary).toBe('reduced')
     const reduceInput = extractByLlmMock.mock.calls[3]![0] as LlmInput
     expect(reduceInput.pdfText).toContain('Dokumente nicht ausgewertet')
     expect(reduceInput.pdfText).toContain('Nicht gesendet')

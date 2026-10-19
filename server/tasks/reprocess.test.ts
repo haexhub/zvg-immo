@@ -458,6 +458,59 @@ describe('reprocessAuction map-reduce', () => {
     expect(extractByLlm).toHaveBeenCalledTimes(2)
   })
 
+  const parsedElsewhereState = {
+    latest: { id: 5, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+    parsedArtifactVersionId: 4,
+  }
+
+  it('marks the document set as parsed only when every group was read', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return clampedExtraction()
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: parsedElsewhereState, prebuiltBase: mapReduceBase() },
+    )
+
+    expect(result?.artifactVersionId).toBe(5)
+  })
+
+  it('leaves the document set unparsed when groups were cut for the budget', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return clampedExtraction({ documentSummary: 'teilweise' })
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: parsedElsewhereState, prebuiltBase: mapReduceBase(), remainingLlmBudget: 2, priorLlmFailures: 1 },
+    )
+
+    expect(result?.entry.documentSummary).toBe('teilweise')
+    expect(result?.artifactVersionId).toBe(4)
+    // A budget cut is not a failure.
+    expect(result?.llmFailures).toBe(0)
+  })
+
+  it('leaves the document set unparsed and counts a failure when a map call failed', async () => {
+    vi.mocked(extractByLlm).mockImplementation(async (input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      if (opts?.name === DOCUMENT_SUMMARY_SCHEMA_NAME && (input as { pdfText?: string }).pdfText === 'Gutachten Text') return null
+      return clampedExtraction({ documentSummary: 'ohne Gutachten' })
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: parsedElsewhereState, prebuiltBase: mapReduceBase(), priorLlmFailures: 1 },
+    )
+
+    expect(result?.entry.documentSummary).toBe('ohne Gutachten')
+    expect(result?.artifactVersionId).toBe(4)
+    expect(result?.llmFailures).toBe(2)
+  })
+
   it('increments llmFailures and reports failure when every map call fails', async () => {
     vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
       opts?.onProviderAttempt?.()

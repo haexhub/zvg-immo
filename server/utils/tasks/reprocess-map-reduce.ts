@@ -136,14 +136,16 @@ function buildReduceDocumentText(
  * rather than aborting the whole candidate — one bad document must not lock
  * out an otherwise-working auction. Only when every map call fails is the
  * candidate treated as failed (reduce is skipped entirely — nothing to
- * reconcile, and it would burn a call for free).
+ * reconcile, and it would burn a call for free). `failedMaps` tells the
+ * caller a result was built without some documents, so it must not mark
+ * the document set as parsed.
  */
 export async function runMapReduceExtraction(
   documentGroups: ReadonlyArray<DocumentSummaryInput<PreparedAttachmentDocument>>,
   base: LlmInput,
   config: LlmConfig,
   callbacks: MapReduceCallbacks,
-): Promise<ClampedExtraction | null> {
+): Promise<{ extraction: ClampedExtraction | null; failedMaps: number }> {
   // One map call at a time: reprocess already runs `llmConcurrency` candidates
   // in parallel, and firing every group at once put up to five more requests
   // per candidate on the same provider. Sequential also means an outage
@@ -161,7 +163,8 @@ export async function runMapReduceExtraction(
     })
   }
 
-  if (mapResults.every((r) => r.extraction == null)) return null
+  const failedMaps = mapResults.filter((r) => r.extraction == null).length
+  if (failedMaps === mapResults.length) return { extraction: null, failedMaps }
 
   const deferredDocumentLabels = [...new Set(
     documentGroups.flatMap((group) => group.deferredDocumentLabels ?? []),
@@ -170,5 +173,5 @@ export async function runMapReduceExtraction(
     ...base,
     pdfText: buildReduceDocumentText(mapResults, deferredDocumentLabels),
   }
-  return attemptExtraction(reduceInput, config, {}, callbacks)
+  return { extraction: await attemptExtraction(reduceInput, config, {}, callbacks), failedMaps }
 }

@@ -112,6 +112,10 @@ export async function reprocessAuction(
   let llmDurationMs: number | null = null
   let llmUsage: LlmUsage | null = null
   let providerAttempted = false
+  /** Map-reduce built its result without every document group. */
+  let mapReduceIncomplete = false
+  /** ...because at least one map call failed (not a budget cut). */
+  let mapCallFailed = false
   const onLlmAttempt = () => {
     providerAttempted = true
     opts.onLlmAttempt?.()
@@ -121,9 +125,8 @@ export async function reprocessAuction(
     // Map-reduce: no fallback chain here (unlike the loop below) — running
     // fallbackConfigs per-document would let a failing chain spend well past
     // the budget the caller computed (e.g. 5 calls on config A, then 5 more
-    // on config B). A provider-unavailable mid-sequence fails the whole
-    // attempt instead; the normal llmFailures/24h-cooldown safety net picks
-    // it up again next run, same as any other failed candidate.
+    // on config B). A provider outage mid-sequence propagates out of
+    // runMapReduceExtraction instead, exactly like a single call's would.
     const remaining = opts.reserveLlmCalls
       ? opts.reserveLlmCalls(base.documentSummaryInputs.length + 1)
       : opts.remainingLlmBudget ?? Infinity
@@ -149,11 +152,19 @@ export async function reprocessAuction(
       `[reprocess] map-reduce for ${platform}:${externalId} — ${documentsForMapPhase.length} document group(s) + 1 reduce call`,
     )
     const attemptStartedAt = Date.now()
-    llm = await runMapReduceExtraction(documentsForMapPhase, base.input!, llmConfig, {
+    const mapReduce = await runMapReduceExtraction(documentsForMapPhase, base.input!, llmConfig, {
       onLlmAttempt,
       onLlmError: opts.onLlmError,
       onLlmCall: opts.onLlmCall,
     })
+    llm = mapReduce.extraction
+    // Groups cut for this run's budget or lost to a failed map call were
+    // never read, so the set must stay unparsed for a later run to retry.
+    // ponytail: a retry re-sends every group, not just the missing ones, and
+    // a per-run budget below groups+1 never completes the set; per-group
+    // parse state would fix both.
+    mapCallFailed = mapReduce.failedMaps > 0
+    mapReduceIncomplete = mapCallFailed || documentsForMapPhase.length < base.documentSummaryInputs.length
     llmConfigUsed = llmConfig
     // Wall-clock across every map+reduce call, not one request — the
     // per-request onLlmCall callback above already recorded each call's own
@@ -237,7 +248,7 @@ export async function reprocessAuction(
       : llm.photoCuration
     curatedPhotos = applyPhotoCuration(curatedPhotos, curation)
   }
-  const parsedCurrentSet = llm != null && base.documentSetComplete
+  const parsedCurrentSet = llm != null && base.documentSetComplete && !mapReduceIncomplete
   // Same filter the batch path applies: base.fields still carries the
   // platform-reported rooms/securityDeposit that buildReprocessInput
   // deliberately kept out of the hint, so an unsolicited `false` for one of
@@ -262,7 +273,13 @@ export async function reprocessAuction(
     rulesFalsified,
     llmCalled: providerAttempted,
     llmInputEmpty: !providerAttempted,
-    llmFailures: llm === null ? (opts.priorLlmFailures ?? 0) + (providerAttempted ? 1 : 0) : 0,
+    // A failed map call counts like a failed call even when the reduce still
+    // produced a result: the unstamped set keeps the auction eligible, and
+    // without the counter (and its cooldown) it would re-send every group on
+    // every run.
+    llmFailures: llm === null || mapCallFailed
+      ? (opts.priorLlmFailures ?? 0) + (providerAttempted ? 1 : 0)
+      : 0,
     artifactVersionId: parsedCurrentSet
       ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
