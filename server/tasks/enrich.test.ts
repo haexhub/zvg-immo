@@ -234,10 +234,28 @@ describe('runEnrich structured persistence', () => {
 
     const outcome = await runEnrich({ country: 'de' })
 
-    expect(outcome.result).toMatchObject({ archived: 2, failed: 1 })
+    expect(outcome.result).toMatchObject({ archived: 1, failed: 1 })
     expect(outcome.warning).toContain('connection reset')
     expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '42', null)
     expect(writeAuctionEnrichClaim).toHaveBeenCalledWith('test-platform', '43', null)
+  })
+
+  it('counts an auction with several errors once as failed and not as archived', async () => {
+    const listing = { ...auction(), photoUrls: ['https://example.test/front.jpg'] }
+    testPlatforms.push({ id: 'test-platform', enrichOne: vi.fn().mockRejectedValue(new Error('HTTP 503')) } as never)
+    try {
+      vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
+      // A prior detail fetch lets the photo step run, and fail, after the
+      // detail fetch itself failed.
+      vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['test-platform:42', fetchState()]]))
+      vi.mocked(downloadNativeImages).mockRejectedValue(new Error('image timeout'))
+
+      const outcome = await runEnrich({ country: 'de' })
+
+      expect(outcome.result).toMatchObject({ todo: 1, archived: 0, failed: 1, errors: 2 })
+    } finally {
+      testPlatforms.splice(0, testPlatforms.length)
+    }
   })
 
   it('keeps an aborted run pending until every sibling worker settled its in-flight item', async () => {

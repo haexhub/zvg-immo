@@ -97,12 +97,17 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
       return out
     }
     const runErrors: string[] = []
+    // Auctions with at least one error this run — one auction can collect
+    // several (detail fetch, document archive, photos), so runErrors.length
+    // over-counts failed auctions.
+    const failedAuctions = new Set<string>()
     // Mirrors every runErrors entry into task_run_errors (Postgres) so it
     // survives past this run's lastWarning being overwritten by the next one,
     // and past a container restart — unlike a bare console.warn. Best-effort;
     // never blocks the run itself.
     function pushRunError(category: string, message: string, identity?: { platform?: string; externalId?: string }) {
       runErrors.push(message)
+      if (identity?.platform && identity.externalId) failedAuctions.add(cacheKey(identity.platform, identity.externalId))
       void recordTaskRunError('enrich', { category, message, platform: identity?.platform, externalId: identity?.externalId })
     }
     // Platforms whose source is rate-limiting us (see source-rate-limit.ts):
@@ -424,7 +429,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             pushRunError('enrich_claim', `Enrich-Claim ${a.platform}:${a.externalId}: ${(err as Error).message}`, a)
           }
         }
-        archived++
+        if (!failedAuctions.has(cacheKey(a.platform, a.externalId))) archived++
         reportItemDone(a)
       }
     }
@@ -460,7 +465,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
 
     const durationMs = Date.now() - startedAt
     console.log(
-      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} todo=${todo.length} archived=${archived} deferred=${deferred} enriched=${enrichedCount} photos=${photosTotal}/${photoExtractions}`,
+      `[enrich] done in ${(durationMs / 1000).toFixed(0)}s · crawled=${result.auctions.length} todo=${todo.length} archived=${archived} deferred=${deferred} failed=${failedAuctions.size} enriched=${enrichedCount} photos=${photosTotal}/${photoExtractions}`,
     )
 
     return {
@@ -472,7 +477,8 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
         enriched: enrichedCount,
         photoExtractions,
         photosTotal,
-        failed: runErrors.length,
+        failed: failedAuctions.size,
+        errors: runErrors.length,
         durationMs,
       },
       warning: runErrors.length > 0
