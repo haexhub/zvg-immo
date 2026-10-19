@@ -326,6 +326,8 @@ describe('runLlmBatchPoll', () => {
         usage: null,
       },
     ])
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
     expect(writeAuctionDetails).toHaveBeenCalledWith(
@@ -333,6 +335,12 @@ describe('runLlmBatchPoll', () => {
       expect.objectContaining({ propertyType: 'eigentumswohnung' }),
       expect.anything(),
     )
+    // An overruled rules value is expected behaviour, not a failure: the
+    // host's failure collector reports every console.warn.
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('llm overruled rules value(s) for zvg-portal:7265: propertyType'))
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('llm overruled'))
+    warn.mockRestore()
+    info.mockRestore()
   })
 
   it('ignores a ruleCheck verdict about a value that changed since the batch was submitted', async () => {
