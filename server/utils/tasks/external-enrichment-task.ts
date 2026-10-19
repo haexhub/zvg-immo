@@ -1,6 +1,7 @@
 import type { Auction, HazardAssessment, LandValueBaseline, LocationContext, MarketComparison } from '~/types/auction'
 import { iterateAuctionRecords, readAuctionRecord, readAuctionRecordsByKeys } from '~/server/utils/auction-record'
 import { geocodeAddress } from '~/server/utils/geocode'
+import { hasUsableCoordinates, usableCoordinates } from '~/server/utils/coordinates'
 import { getPool } from '~/server/utils/db'
 import { coordinatesMovedSignificantly } from '~/server/utils/external-data/geo'
 import {
@@ -128,6 +129,12 @@ export async function runExternalEnrichmentTask(
 // full sweep, which measured ~16h — long enough that the next colliding
 // runExclusiveTask abort costs a whole day's progress, not a batch's.
 const DEFAULT_BATCH_LIMIT = 40
+// Auctions without a usable point never get a checkedAt, so they stay at the
+// front of orderByStaleness forever. Slicing the batch to exactly the limit
+// let ~40 of them fill every run (processed 0, skippedMissingCoordinates 40);
+// looking a bounded stretch further keeps the scan cheap while the rest of
+// the backlog still moves.
+const MISSING_POINT_SCAN_FACTOR = 4
 
 /**
  * Refreshes external enrichment for a bounded batch or one explicitly selected
@@ -182,10 +189,9 @@ export async function runExternalEnrichment(
   const effectiveLimit = options.limit ?? DEFAULT_BATCH_LIMIT
   // Two phases so the whole table is never held: stream just the identities in
   // scope, order those by staleness, and only then load the records of the
-  // batch. Sliced to the limit up front: resolvePoint below skips (not counts)
-  // auctions without coordinates, so looping the unsliced scope and relying
-  // only on the processed>=effectiveLimit break could still scan arbitrarily
-  // far past the intended batch size.
+  // batch. Sliced up front to a bounded multiple of the limit: resolvePoint
+  // below skips (not counts) auctions without coordinates, so looping the
+  // unsliced scope could still scan arbitrarily far past the batch size.
   const candidates: Array<{ platform: string; externalId: string; country: string }> = []
   if (platform && externalId) {
     const record = await readAuctionRecord(platform, externalId)
@@ -195,18 +201,22 @@ export async function runExternalEnrichment(
   } else {
     for await (const record of iterateAuctionRecords(options.country, { includePhotos: false })) {
       const { auction } = record
+      // Neither a usable source point nor an address to look up in the
+      // geocode cache: resolvePoint can never succeed, so don't let it take a
+      // batch slot.
+      if (!hasUsableCoordinates(auction.lat, auction.lng) && !auction.address?.trim()) continue
       if (inScope(auction, options) && wantsLocationContext(auction)) {
         candidates.push({ platform: auction.platform, externalId: auction.externalId, country: auction.country })
       }
     }
   }
-  const batchKeys = orderByStaleness(candidates, staleness).slice(0, effectiveLimit)
+  const batchKeys = orderByStaleness(candidates, staleness).slice(0, effectiveLimit * MISSING_POINT_SCAN_FACTOR)
   const batchRecords = await readAuctionRecordsByKeys(batchKeys, { includePhotos: false })
   const batch = batchKeys.flatMap((candidate) => {
     const record = batchRecords.get(cacheKey(candidate.platform, candidate.externalId))
     return record ? [record.auction] : []
   })
-  const total = batch.length
+  const total = Math.min(batch.length, effectiveLimit)
 
   for (const rawAuction of batch) {
     throwIfTaskAborted(signal)
@@ -306,9 +316,10 @@ function progressSnapshot(summary: ExternalEnrichmentSummary, total: number): Ta
 }
 
 async function resolvePoint(auction: Auction): Promise<{ lat: number; lng: number } | null> {
-  if (auction.lat != null && auction.lng != null) {
-    return { lat: auction.lat, lng: auction.lng }
-  }
+  // usableCoordinates, not a null check: rows stored before the 0/0 fix keep
+  // "null island" until their next crawl, and expired auctions never get one.
+  const source = usableCoordinates(auction.lat, auction.lng)
+  if (source) return source
   const point = await geocodeAddress(auction.address, auction.country, { fetchMissing: false })
   return point ? { lat: point.lat, lng: point.lng } : null
 }

@@ -911,7 +911,7 @@ describe('runExternalEnrichment', () => {
     )
   })
 
-  it('does not scan past the limit even when leading auctions lack coordinates', async () => {
+  it('reaches auctions with coordinates behind never-checked auctions that cannot be located', async () => {
     vi.stubGlobal('defineTask', (def: unknown) => def)
     const { readAuctionRecords } = await import('~/server/utils/auction-record')
     const { geocodeAddress } = await import('~/server/utils/geocode')
@@ -935,9 +935,65 @@ describe('runExternalEnrichment', () => {
     const { runExternalEnrichment } = await import('./external-enrichment')
     const summary = await runExternalEnrichment({ limit: 1, marketAdapters: [marketAdapter] })
 
-    expect(summary.skippedMissingCoordinates).toBe(1)
+    expect(summary.skippedMissingCoordinates).toBe(2)
+    expect(summary.processed).toBe(1)
+    expect(marketAdapter.compare).toHaveBeenCalledWith(expect.objectContaining({ externalId: 'coded' }))
+  })
+
+  it('still bounds the scan when far more auctions than the limit cannot be located', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    const { readLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      ...Array.from({ length: 10 }, (_, index) => auction({ externalId: `uncoded-${index}`, lat: undefined, lng: undefined })),
+      auction({ externalId: 'coded' }),
+    ))
+    vi.mocked(geocodeAddress).mockResolvedValue(null)
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({ limit: 1, marketAdapters: [] })
+
+    expect(summary.skippedMissingCoordinates).toBe(4)
     expect(summary.processed).toBe(0)
-    expect(marketAdapter.compare).not.toHaveBeenCalled()
+  })
+
+  it('never lets an auction without coordinates and without an address take a batch slot', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(
+      ...Array.from({ length: 10 }, (_, index) => auction({ externalId: `nowhere-${index}`, lat: undefined, lng: undefined, address: null })),
+      auction({ externalId: 'coded' }),
+    ))
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    const summary = await runExternalEnrichment({ limit: 1, marketAdapters: [] })
+
+    expect(summary.skippedMissingCoordinates).toBe(0)
+    expect(summary.processed).toBe(1)
+    expect(geocodeAddress).not.toHaveBeenCalled()
+  })
+
+  it('treats a stored 0/0 position as missing instead of enriching null island', async () => {
+    vi.stubGlobal('defineTask', (def: unknown) => def)
+    const { readAuctionRecords } = await import('~/server/utils/auction-record')
+    const { geocodeAddress } = await import('~/server/utils/geocode')
+    const { readLocationEnrichmentCache, writeLocationEnrichmentCache } = await import('~/server/utils/external-data/location-enrichment')
+    vi.mocked(readAuctionRecords).mockResolvedValue(records(auction({ externalId: 'null-island', lat: 0, lng: 0 })))
+    vi.mocked(geocodeAddress).mockResolvedValue({ lat: 48.1, lng: 11.6 } as never)
+    vi.mocked(readLocationEnrichmentCache).mockResolvedValue({})
+    vi.mocked(writeLocationEnrichmentCache).mockResolvedValue(true)
+
+    const { runExternalEnrichment } = await import('./external-enrichment')
+    await runExternalEnrichment({ marketAdapters: [], landValueAdapters: [], hazardAdapters: [], locationContextAdapters: [] })
+
+    const written = Object.values(vi.mocked(writeLocationEnrichmentCache).mock.calls[0]![0])[0]!
+    expect({ lat: written.lat, lng: written.lng }).toEqual({ lat: 48.1, lng: 11.6 })
   })
 
   it('persists checkedAt when every adapter finds nothing, so the auction does not stay first forever', async () => {
