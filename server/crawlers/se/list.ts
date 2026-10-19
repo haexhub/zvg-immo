@@ -6,6 +6,11 @@ import { extractFact, parseSekAmount, extractBody, parseStorlek, cleanCategory, 
 
 const DETAIL_CONCURRENCY = 4
 const ALL_LISTINGS_CACHE_MS = 5 * 60_000
+/** Pseudo-region for listings whose Kommun maps to no län. */
+const UNMAPPED_REGION = 'Schweden'
+/** Below this share of listings mapped to a real län the Kommun mapping (or
+ *  the markup it reads) is taken as broken, not as a quiet week. */
+const MIN_MAPPED_SHARE = 0.5
 const SEARCH_PATHS = [
   '/Sokfastigheterbostadsratter.html',
   '/22660.html',
@@ -197,7 +202,7 @@ function mapDetail(id: string, html: string, platformId: string): Auction | null
   // Unmapped listings land in a pseudo-region that no per-län crawl picks up,
   // so they never appear; make that visible instead of dropping them silently.
   if (!mappedRegion) console.warn(`[se-kronofogden] ${id}: kommun ${JSON.stringify(kommun)} not mapped to a län`)
-  const regionName = mappedRegion ?? 'Schweden'
+  const regionName = mappedRegion ?? UNMAPPED_REGION
   const marknadsvardRaw = extractFact(html, 'Marknadsvarde')
   const arendenummer = extractFact(html, 'Arendenummer') ?? ''
   const storlek = extractFact(html, 'Storlek')
@@ -319,10 +324,18 @@ export async function fetchAllListings(
   const auctions = regionName
     ? all.auctions.filter((auction) => auction.region === regionName)
     : all.auctions
+  // Same guard as dga-ag's missing Bundesland markers: if the national feed
+  // has listings but (almost) none map to a län, every per-län crawl would
+  // come back empty yet complete and crawl-state.ts would hide them all.
+  const mapped = all.auctions.filter((auction) => auction.region !== UNMAPPED_REGION).length
+  const mappingBroken = regionName != null && all.auctions.length > 0 && mapped < all.auctions.length * MIN_MAPPED_SHARE
+  if (mappingBroken) {
+    console.warn(`[se-kronofogden] only ${mapped}/${all.auctions.length} listings map to a län — reporting ${regionName} incomplete`)
+  }
   return {
     auctions: auctions.map((auction) => ({ ...auction })),
     total: auctions.length,
-    complete: all.complete,
+    complete: all.complete && !mappingBroken,
   }
 }
 

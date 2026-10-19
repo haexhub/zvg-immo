@@ -456,6 +456,26 @@ describe('fetchAllListings', () => {
     expect(result.auctions[0]?.region).toBe('Västerbotten')
   })
 
+  it('reports a per-län crawl incomplete when (almost) no listing maps to a län', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
+      const href = String(url)
+      if (href === `${BASE}/Sokfastigheterbostadsratter.html?query=*`) {
+        return new Response(searchHtml(['101001', '101002'], 2), { status: 200 })
+      }
+      if (href === `${BASE}/22660.html?query=*`) return new Response(searchHtml([], 0), { status: 200 })
+      const id = href.match(/\/(\d+)\.html$/)?.[1]
+      if (id) return new Response(detailHtml(id).replace('Umeå kommun', 'Okänd ort'), { status: 200 })
+      return new Response('not found', { status: 404 })
+    }))
+
+    const scoped = await fetchAllListings('se-kronofogden', 'vasterbotten')
+
+    expect(scoped.auctions).toEqual([])
+    expect(scoped.complete).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('0/2 listings map to a län'))
+  })
+
   it('stores Kronofogden gallery URLs for the native photo pipeline', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request) => {
       const href = String(url)
