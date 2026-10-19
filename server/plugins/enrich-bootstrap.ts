@@ -3,17 +3,25 @@
 // longer than the geocode bootstrap (which fires at 5s) so the two full crawls
 // don't hammer the upstream portals simultaneously on boot.
 //
-// Guarded like refresh-bootstrap: a restart that lands on an already-warm list
-// cache skips the boot run (enrichment fetches detail pages/PDFs from upstream
-// portals, so re-running on every restart risks an IP ban). The 6h cron keeps
-// it current; a fresh/stale start still runs it.
+// Guarded on the last enrich run first: the scope-freshness gate alone almost
+// never closes, because the hourly refresh keeps 6h-cadence portals at 6-7h
+// and bg-alo at up to 24h (crawl-cadence.ts) — so nearly every restart
+// re-fired a full ~40-minute crawl/detail run against the upstream portals
+// (enrichment fetches detail pages/PDFs, re-running it on every restart risks
+// an IP ban). The 6h cron keeps it current; a cold/stale start still runs it.
 
-import { shouldSkipBootCrawl } from '../utils/boot-crawl-gate'
+import { shouldSkipBootCrawl, taskStartedWithin } from '../utils/boot-crawl-gate'
+
+// The enrich cron cadence ('30 */6 * * *' in nuxt.config.ts): a run started
+// within it means the next regular tick comes sooner than a boot run would add
+// anything — including a run a restart interrupted.
+const ENRICH_CRON_INTERVAL_MS = 6 * 60 * 60 * 1000
 
 export default defineNitroPlugin(() => {
   if (process.env.ZVG_SKIP_BOOT_TASKS) return
   setTimeout(() => {
     void (async () => {
+      if (await taskStartedWithin('enrich', ENRICH_CRON_INTERVAL_MS, 'enrich-bootstrap')) return
       if (await shouldSkipBootCrawl('enrich-bootstrap')) return
       await runTask('enrich')
     })().catch((err: unknown) => {

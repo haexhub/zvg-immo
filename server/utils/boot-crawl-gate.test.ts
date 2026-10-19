@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const allScopesFreshWithin = vi.fn()
 vi.mock('./crawl-state', () => ({ allScopesFreshWithin }))
 
+const getTaskRunStatus = vi.fn()
+vi.mock('./task-runs', () => ({ getTaskRunStatus }))
+
 const ensureEnabledCountriesLoaded = vi.fn()
 const listRegions = vi.fn()
 vi.mock('../crawlers/registry', () => ({ ensureEnabledCountriesLoaded, listRegions }))
@@ -54,5 +57,32 @@ describe('shouldSkipBootCrawl', () => {
     allScopesFreshWithin.mockResolvedValue(false)
 
     expect(await shouldSkipBootCrawl('refresh-bootstrap')).toBe(false)
+  })
+})
+
+describe('taskStartedWithin', () => {
+  const HOUR = 60 * 60 * 1000
+
+  it('is true when the task started within the window', async () => {
+    const { taskStartedWithin } = await import('./boot-crawl-gate')
+    getTaskRunStatus.mockResolvedValue({ startedAt: new Date(Date.now() - HOUR).toISOString() })
+
+    expect(await taskStartedWithin('enrich', 6 * HOUR, 'enrich-bootstrap')).toBe(true)
+    expect(getTaskRunStatus).toHaveBeenCalledWith('enrich')
+  })
+
+  it('is false once the last start is older than the window', async () => {
+    const { taskStartedWithin } = await import('./boot-crawl-gate')
+    getTaskRunStatus.mockResolvedValue({ startedAt: new Date(Date.now() - 7 * HOUR).toISOString() })
+
+    expect(await taskStartedWithin('enrich', 6 * HOUR, 'enrich-bootstrap')).toBe(false)
+  })
+
+  it('is false without a recorded or with an unparsable or future start', async () => {
+    const { taskStartedWithin } = await import('./boot-crawl-gate')
+    for (const startedAt of [null, 'not-a-date', new Date(Date.now() + HOUR).toISOString()]) {
+      getTaskRunStatus.mockResolvedValue({ startedAt })
+      expect(await taskStartedWithin('enrich', 6 * HOUR, 'enrich-bootstrap')).toBe(false)
+    }
   })
 })
