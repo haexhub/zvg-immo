@@ -19,6 +19,7 @@ watch(user, () => {
   watchlistError.value = null
 })
 
+/** Clears a stale landing-page error before starting the watchlist action. */
 function handleToggleWatchlist(a: WatchlistableAuction) {
   watchlistError.value = null
   toggleWatchlist(a)
@@ -74,7 +75,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />
@@ -91,7 +91,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />
@@ -109,7 +108,6 @@ const geoRails = computed(() => {
           <AuctionCard
             :auction="a"
             class="h-full"
-            :logged-in="!!user"
             :in-watchlist="watchlistIds.has(auctionKey(a))"
             @toggle-watchlist="handleToggleWatchlist(a)"
           />

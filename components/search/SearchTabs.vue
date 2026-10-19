@@ -8,7 +8,6 @@ const props = defineProps<{
   totalCount: number
   canLoadMore: boolean
   pending: boolean
-  loggedIn: boolean
   watchlistIds: Map<string, string>
   activeAuctionKey?: string | null
   scrollTargetKey?: string | null
@@ -47,7 +46,6 @@ const auctionSummaries = computed(() => new Map(props.auctions.map((a) => [aucti
         :total-count="totalCount"
         :can-load-more="canLoadMore"
         :pending="pending"
-        :logged-in="loggedIn"
         :watchlist-ids="watchlistIds"
         :active-auction-key="activeAuctionKey"
         :scroll-target-key="scrollTargetKey"

@@ -9,11 +9,13 @@ export interface WatchlistableAuction {
   caseNumber: string
 }
 
+/** Coordinates watchlist loading and toggling for auction views. */
 export function useAuctionWatchlist(options: {
   onError?: (message: string) => void
 } = {}) {
   const { user } = useAuth()
   const { t } = useI18n()
+  const route = useRoute()
   const watchlistIds = ref<Map<string, string>>(new Map())
   const pendingKeys = new Set<string>()
 
@@ -30,8 +32,14 @@ export function useAuctionWatchlist(options: {
     }
   }
 
+  /** Toggles an auction and sends signed-out users to login with a return path. */
   async function toggleWatchlist(auction: WatchlistableAuction): Promise<void> {
-    if (!user.value) return
+    // The heart stays visible while logged out (e.g. after the session
+    // expired), so a click leads to the login instead of doing nothing.
+    if (!user.value) {
+      await navigateTo(`/login?redirect=${encodeURIComponent(route.fullPath)}`)
+      return
+    }
     const key = auctionKey(auction)
     if (pendingKeys.has(key)) return
     pendingKeys.add(key)

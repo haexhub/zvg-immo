@@ -12,7 +12,6 @@ import { activeAuctionSearchFilterCount, parseAuctionSearchFilters } from '~/lib
 
 definePageMeta({ layout: 'search' })
 
-const { user } = useAuth()
 const { t } = useI18n()
 
 const route = useRoute()
@@ -393,10 +392,19 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
     listActionError.value = message
   },
 })
+
+/** Clears the current search error before starting the watchlist action. */
+function handleToggleWatchlist(a: AuctionSummary): void {
+  listActionError.value = null
+  toggleWatchlist(a)
+}
 </script>
 
 <template>
   <main class="h-full flex flex-col px-4 py-3">
+    <p v-if="listActionError" role="alert" class="mb-3 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+      {{ listActionError }}
+    </p>
     <div class="flex-1 min-h-0">
       <div v-if="isDesktop" class="h-full flex gap-4">
         <AuctionMapPane
@@ -421,11 +429,10 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
           :total-count="listTotalCount"
           :can-load-more="canLoadMore"
           :pending="listPending"
-          :logged-in="!!user"
           :watchlist-ids="watchlistIds"
           :active-auction-key="activeAuctionKey"
           :scroll-target-key="scrollTargetKey"
-          @toggle-watchlist="toggleWatchlist"
+          @toggle-watchlist="handleToggleWatchlist"
           @load-more="loadMore"
           @auction-hover="setAuctionHover"
         />
@@ -437,7 +444,6 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         :total-count="listTotalCount"
         :can-load-more="canLoadMore"
         :pending="listPending"
-        :logged-in="!!user"
         :watchlist-ids="watchlistIds"
         :active-auction-key="activeAuctionKey"
         :scroll-target-key="scrollTargetKey"
@@ -448,7 +454,7 @@ const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
         :geo-pending="geoPending"
         :geo-data="geoData"
         :geo-error="geoError ?? geoBackgroundError"
-        @toggle-watchlist="toggleWatchlist"
+        @toggle-watchlist="handleToggleWatchlist"
         @load-more="loadMore"
         @bounds-change="mapBounds = $event"
         @view-change="handleMapViewChange"

@@ -19,8 +19,18 @@ const { data: a, error, pending } = await useFetch<AuctionDetail | null>(
   { default: () => null },
 )
 
-const { user } = useAuth()
-const { watchlistIds, toggleWatchlist } = useAuctionWatchlist()
+const watchlistError = ref<string | null>(null)
+const { watchlistIds, toggleWatchlist } = useAuctionWatchlist({
+  onError: (message) => {
+    watchlistError.value = message
+  },
+})
+
+/** Clears the detail-page error before starting the watchlist action. */
+function handleToggleWatchlist(auction: AuctionDetail): void {
+  watchlistError.value = null
+  toggleWatchlist(auction)
+}
 const inWatchlist = computed(() => watchlistIds.value.has(auctionKey({ platform, externalId: id })))
 
 const {
@@ -189,16 +199,17 @@ useHead(() => ({
           <TranslationPendingBadge v-if="translationPending" />
           <span v-if="titleTranslated" class="text-xs text-muted-foreground">({{ $t('objektDetail.autoTranslatedHint') }})</span>
           <button
-            v-if="user"
             type="button"
             class="flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted"
             :class="{ 'text-red-500': inWatchlist }"
+            :aria-label="inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
             :title="inWatchlist ? $t('search.removeFromWatchlist') : $t('search.addToWatchlist')"
-            @click="toggleWatchlist(a)"
+            @click="handleToggleWatchlist(a)"
           >
             <Heart class="h-4 w-4" :class="{ 'fill-current': inWatchlist }" />
           </button>
         </div>
+        <p v-if="watchlistError" role="alert" class="text-sm text-destructive">{{ watchlistError }}</p>
         <p v-if="displayAddress" class="text-muted-foreground">{{ displayAddress }}</p>
         <div v-if="a.cancelled" class="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-foreground">
           <p class="font-semibold text-destructive">{{ $t('objektDetail.cancelledNoticeTitle') }}</p>
