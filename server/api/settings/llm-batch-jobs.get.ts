@@ -14,7 +14,7 @@ import {
 } from '~/server/utils/llm-batch-jobs'
 import { iterateAuctionRecords } from '~/server/utils/auction-record'
 import { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
-import { hasMissingLlmFields, isLlmExtractionInScope } from '~/server/utils/llm-status'
+import { classifyLlmStatus, hasMissingLlmFields, isLlmExtractionInScope } from '~/server/utils/llm-status'
 import { cacheKey } from '~/server/utils/verkehrswert-cache'
 import { isGeminiBatchTierPaid } from '~/server/utils/extract/gemini-batch'
 import { getTaskRunStatus, type TaskRunStatus } from '~/server/utils/task-runs'
@@ -207,6 +207,15 @@ async function computeOverview(): Promise<LlmBatchJobsOverview> {
       }
       continue
     }
+
+    // Same verdict as the per-country LLM status overview and reprocess's
+    // eligibility gate: a completed extraction (llmAnalyzedAt) is done even
+    // when an optional field stayed empty or a stale llm_failures counter is
+    // left over, and an auction with a retry in flight is not waiting. Both
+    // used to count toward readyRequests/failedLimit here — a backlog no run
+    // ever picks up, contradicting the status card right next to it.
+    const llmStatus = classifyLlmStatus(record)
+    if (llmStatus === 'done' || llmStatus === 'pending') continue
 
     // No auction_details row at all — a brand-new crawl this task's cron
     // hasn't reached yet, never run through even the rules-only fallback.
