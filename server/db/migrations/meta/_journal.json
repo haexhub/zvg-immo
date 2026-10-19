@@ -239,6 +239,13 @@
       "when": 1792418685990,
       "tag": "0033_clear_null_island_coordinates",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792439477614,
+      "tag": "0034_release_resolved_llm_batch_markers",
+      "breakpoints": true
     }
   ]
 }
