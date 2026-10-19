@@ -38,6 +38,14 @@ describe('data-api-auth middleware', () => {
     await expect(handler(makeEvent('/api/data/v1/auctions'))).rejects.toMatchObject({ statusCode: 401 })
   })
 
+  it('rejects percent-encoded and differently-cased variants of the /api/data/ prefix', async () => {
+    vi.mocked(getApiKeyRecord).mockResolvedValue(null)
+    const handler = await loadMiddleware()
+    for (const url of ['/api/%64ata/v1/auctions', '/api/%64%61%74%61/v1/observations?pageSize=500', '/API/Data/v1/auctions']) {
+      await expect(handler(makeEvent(url))).rejects.toMatchObject({ statusCode: 401 })
+    }
+  })
+
   it('sets the key context and answers 429 once the burst limit of 60 is exhausted', async () => {
     vi.mocked(getApiKeyRecord).mockResolvedValue({ id: 'key-1', user_id: 'user-1' } as never)
     const handler = await loadMiddleware()
