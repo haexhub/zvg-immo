@@ -599,6 +599,36 @@ describe('reprocessAuction map-reduce', () => {
     expect(result?.llmFailures).toBe(2)
   })
 
+  it('logs an overruled rules value as information, not as a warning', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
+      opts?.onProviderAttempt?.()
+      return clampedExtraction({
+        propertyType: 'eigentumswohnung',
+        ruleCheck: { propertyType: false, rooms: null, units: null, securityDeposit: null },
+      })
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', undefined, config, '2026-08-02T11:00:00.000Z',
+      {
+        artifactState: emptyArtifactState,
+        prebuiltBase: mapReduceBase({
+          documentSummaryInputs: undefined,
+          fields: { propertyType: 'einfamilienhaus', landAreaSqm: null, livingAreaSqm: null, rooms: null, units: null, securityDeposit: null },
+          input: { title: 'Testauktion', description: 'Beschreibung', rulesHint: { propertyType: 'einfamilienhaus', rooms: null, units: null, securityDeposit: null } },
+        }),
+      },
+    )
+
+    expect(result?.rulesFalsified).toEqual(['propertyType'])
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('llm overruled rules value(s)'))
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('llm overruled'))
+    warn.mockRestore()
+    info.mockRestore()
+  })
+
   it('increments llmFailures and reports failure when every map call fails', async () => {
     vi.mocked(extractByLlm).mockImplementation(async (_input, _cfg, opts) => {
       opts?.onProviderAttempt?.()

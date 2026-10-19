@@ -273,7 +273,7 @@ export async function reprocessAuction(
   const entry = mergeLlmResult(priorEntry, mergeFields, verified, at, curatedPhotos)
   const rulesFalsified = falsifiedRuleFields(base.fields, verified)
   if (rulesFalsified.length) {
-    console.warn(`[reprocess] llm overruled rules value(s) for ${platform}:${externalId}: ${rulesFalsified.join(',')}`)
+    console.info(`[reprocess] llm overruled rules value(s) for ${platform}:${externalId}: ${rulesFalsified.join(',')}`)
   }
   return {
     entry,
