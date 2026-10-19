@@ -1,6 +1,6 @@
 import { getPool } from '~/server/utils/db'
 import { CURRENT_AUCTION_CONDITIONS } from '~/server/utils/current-auction-sql'
-import { MAX_LLM_FAILURES } from '~/lib/llm-limits'
+import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES } from '~/lib/llm-limits'
 import type { Candidate, ReprocessOptions } from './reprocess-input'
 
 /**
@@ -16,6 +16,12 @@ import type { Candidate, ReprocessOptions } from './reprocess-input'
  *
  * Mirrors classifyLlmStatus's 'error' bucket: a stale counter on an auction
  * that already has a successful extraction (llm_analyzed_at) is not locked.
+ *
+ * Unless `ignoreCooldown` is set (the manual "retry failed" actions), only
+ * auctions past their llmFailureRetryCooldownHours backoff are selected —
+ * the scheduled slice would otherwise retry every locked auction several
+ * times a day forever. Filtered here rather than after the fact, so the
+ * LIMIT is not spent on auctions that are still cooling down.
  */
 export async function findLockedCandidates(opts: ReprocessOptions, countries: readonly string[]): Promise<Candidate[]> {
   if (countries.length === 0) return []
@@ -31,6 +37,13 @@ export async function findLockedCandidates(opts: ReprocessOptions, countries: re
                  WHERE d.platform = s.platform AND d.external_id = s.external_id
                    AND NOT d.is_trial AND d.llm_analyzed_at IS NOT NULL)`,
   ]
+  if (!opts.ignoreCooldown) {
+    // Same formula as llmFailureRetryCooldownHours.
+    const base = params.push(LLM_FAILURE_RETRY_COOLDOWN_HOURS)
+    const cap = params.push(MAX_LLM_FAILURE_RETRY_COOLDOWN_HOURS)
+    conditions.push(`(s.llm_last_attempted_at IS NULL OR s.llm_last_attempted_at <= now() - interval '1 hour' *
+      LEAST($${cap}::float8, $${base}::float8 * power(2::float8, GREATEST(s.llm_failures - $1, 0))))`)
+  }
   if (opts.platform) conditions.push(`s.platform = $${params.push(opts.platform)}`)
   if (opts.externalId) conditions.push(`s.external_id = $${params.push(opts.externalId)}`)
   if (opts.caseNumber) conditions.push(`a.case_number = $${params.push(opts.caseNumber)}`)
