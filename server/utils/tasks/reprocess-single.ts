@@ -62,6 +62,13 @@ export async function reprocessAuction(
    *  runReprocess counts them into ReprocessResult.rulesFalsified. */
   rulesFalsified: RuleCheckedField[]
   llmCalled: boolean
+  /** An LLM was configured, but the archived snapshot gave it nothing to read
+   *  (no title, description or documents), so no request went out. Neither
+   *  an LLM call nor a failure: counting it as one locked such auctions out
+   *  after MAX_LLM_FAILURES "failures" that never reached a provider. The
+   *  caller still records the attempt time so the auction drops behind
+   *  never-attempted candidates instead of being picked first every run. */
+  llmInputEmpty: boolean
   llmFailures: number
   artifactVersionId: number | null
   auction: Auction
@@ -88,6 +95,7 @@ export async function reprocessAuction(
       entry: buildRulesOnlyEntry(base.fields, priorEntry, at),
       rulesFalsified: [],
       llmCalled: false,
+      llmInputEmpty: false,
       llmFailures: opts.priorLlmFailures ?? 0,
       artifactVersionId: artifactState.parsedArtifactVersionId,
       auction: base.auction,
@@ -102,6 +110,11 @@ export async function reprocessAuction(
   let llmConfigUsed: LlmConfig | null = null
   let llmDurationMs: number | null = null
   let llmUsage: LlmUsage | null = null
+  let providerAttempted = false
+  const onLlmAttempt = () => {
+    providerAttempted = true
+    opts.onLlmAttempt?.()
+  }
 
   if (base.documentSummaryInputs?.length) {
     // Map-reduce: no fallback chain here (unlike the loop below) — running
@@ -136,7 +149,7 @@ export async function reprocessAuction(
     )
     const attemptStartedAt = Date.now()
     llm = await runMapReduceExtraction(documentsForMapPhase, base.input!, llmConfig, {
-      onLlmAttempt: opts.onLlmAttempt,
+      onLlmAttempt,
       onLlmError: opts.onLlmError,
       onLlmCall: opts.onLlmCall,
     })
@@ -156,7 +169,7 @@ export async function reprocessAuction(
         if (!rebuilt) break
         base = rebuilt
       }
-      let providerAttempted = false
+      let attemptStarted = false
       let providerError: string | null = null
       let attemptUsage: LlmUsage | null = null
       const attemptStartedAt = Date.now()
@@ -168,8 +181,8 @@ export async function reprocessAuction(
         // that was never asked would misreport it on the WP-2 admin page.
         llm = await extractByLlm(base.input!, config, {
           onProviderAttempt: () => {
-            providerAttempted = true
-            opts.onLlmAttempt?.()
+            attemptStarted = true
+            onLlmAttempt()
           },
           onProviderError: (err) => {
             providerError = err instanceof Error ? err.message : String(err)
@@ -177,7 +190,7 @@ export async function reprocessAuction(
           },
           onUsage: (usage) => { attemptUsage = usage },
         })
-        if (providerAttempted) {
+        if (attemptStarted) {
           llmConfigUsed = config
           llmDurationMs = Date.now() - attemptStartedAt
           llmUsage = attemptUsage
@@ -191,7 +204,7 @@ export async function reprocessAuction(
         }
         break
       } catch (err) {
-        if (providerAttempted) {
+        if (attemptStarted) {
           await opts.onLlmCall?.({
             config,
             durationMs: Date.now() - attemptStartedAt,
@@ -241,8 +254,9 @@ export async function reprocessAuction(
   return {
     entry,
     rulesFalsified,
-    llmCalled: true,
-    llmFailures: llm === null ? (opts.priorLlmFailures ?? 0) + 1 : 0,
+    llmCalled: providerAttempted,
+    llmInputEmpty: !providerAttempted,
+    llmFailures: llm === null ? (opts.priorLlmFailures ?? 0) + (providerAttempted ? 1 : 0) : 0,
     artifactVersionId: parsedCurrentSet
       ? base.artifactVersionId
       : artifactState.parsedArtifactVersionId,
