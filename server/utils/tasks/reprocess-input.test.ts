@@ -36,7 +36,15 @@ describe('findCandidates', () => {
     expect(lastSql()).toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
     expect(lastSql()).toContain('a.last_seen_at < cs.last_success_at')
     await findCandidates({ platform: 'bg-bcpea', externalId: '1' }, ['bg'])
-    expect(lastSql()).not.toContain('a.auction_date_iso')
+    expect(lastSql()).not.toContain('a.auction_date_iso IS NULL OR a.auction_date_iso >= now()')
+  })
+
+  it('orders never-attempted auctions first, then by the soonest auction date', async () => {
+    await findCandidates({ limit: 50 }, ['de'])
+    expect(lastSql()).toMatch(
+      /ORDER BY s\.llm_last_attempted_at IS NOT NULL, a\.auction_date_iso ASC NULLS LAST,\s+s\.llm_last_attempted_at ASC NULLS FIRST, a\.platform, a\.external_id LIMIT \$\d+$/,
+    )
+    expect(lastSql()).toContain('LEFT JOIN auction_fetch_state s')
   })
 
   it('hands failedOnly runs to the SQL-level locked selection', async () => {
