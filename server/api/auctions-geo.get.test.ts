@@ -31,6 +31,7 @@ function mockPool(query: (sql: string, params: unknown[]) => Promise<unknown>) {
 vi.mock('~/server/utils/geocode', () => ({
   geocodeAddress: vi.fn(),
   geocodeStatus: vi.fn(),
+  lookupCachedGeocode: vi.fn(async () => ({ point: null, status: 'pending' })),
 }))
 vi.mock('~/server/crawlers/registry', () => ({
   ensureEnabledCountriesLoaded: vi.fn(async () => ['de']),
@@ -151,8 +152,8 @@ describe('/api/auctions-geo', () => {
     })
     const { getPool } = await import('~/server/utils/db')
     vi.mocked(getPool).mockReturnValue(mockPool(query) as never)
-    const { geocodeAddress } = await import('~/server/utils/geocode')
-    vi.mocked(geocodeAddress).mockResolvedValue({ lat: 48.137, lng: 11.575, displayName: 'x' })
+    const { geocodeAddress, lookupCachedGeocode } = await import('~/server/utils/geocode')
+    vi.mocked(lookupCachedGeocode).mockResolvedValue({ point: { lat: 48.137, lng: 11.575, displayName: 'x' }, status: 'geocoded' })
     const handler = (await import('./auctions-geo.get')).default as unknown as (
       event: { node: { req: { on: (name: string, callback: () => void) => void } } }
     ) => Promise<unknown>
@@ -164,7 +165,9 @@ describe('/api/auctions-geo', () => {
       unresolvableCount: 0,
       auctions: [{ platform: 'zvg-portal', externalId: '44', lat: 48.137, lng: 11.575 }],
     })
-    expect(geocodeAddress).toHaveBeenCalledWith('Musterstraße 1', 'de', { fetchMissing: false })
+    // Cache-only: the one-pass cache lookup, never the fetching geocoder.
+    expect(lookupCachedGeocode).toHaveBeenCalledWith('Musterstraße 1', 'de')
+    expect(geocodeAddress).not.toHaveBeenCalled()
   })
 
   it('selects lat/lng from auctions ("a"), not the versioned auction_details ("d")', async () => {

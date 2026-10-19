@@ -1,4 +1,4 @@
-import { geocodeAddress, geocodeStatus } from '~/server/utils/geocode'
+import { lookupCachedGeocode } from '~/server/utils/geocode'
 import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { GEO_METRICS_JOIN_SQL, LATEST_DETAILS_JOIN_SQL } from '~/server/api/auctions.get'
@@ -78,10 +78,9 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
     throw err
   }
 
-  // This public endpoint only observes the disk cache. Cache misses are
-  // resolved by the exclusive scheduled/admin geocode task, never by map
-  // polling (even if an old client still sends fetch=1).
-  const fetchMissing = false
+  // This public endpoint only observes the disk cache (lookupCachedGeocode).
+  // Cache misses are resolved by the exclusive scheduled/admin geocode task,
+  // never by map polling (even if an old client still sends fetch=1).
   const markers: Array<GeoAuction | undefined> = new Array(rows.length)
   let unresolvableCount = 0
   // Distinct from auctions.length: rows placed at their country's centroid
@@ -112,12 +111,10 @@ export default defineEventHandler(async (event): Promise<GeoCrawlResult> => {
         if (!row.address) {
           unresolvableCount++
         } else {
-          const point = await geocodeAddress(row.address, row.country, { fetchMissing })
+          const { point, status } = await lookupCachedGeocode(row.address, row.country)
           lat = point?.lat ?? null
           lng = point?.lng ?? null
-          if (!point && await geocodeStatus(row.address, row.country) === 'unresolvable') {
-            unresolvableCount++
-          }
+          if (status === 'unresolvable') unresolvableCount++
         }
       }
       if (lat != null && lng != null) {
