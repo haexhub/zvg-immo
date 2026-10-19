@@ -415,7 +415,7 @@ describe('/api/settings/llm-batch-jobs', () => {
     expect(readAuctionRecords).toHaveBeenCalledTimes(1)
   })
 
-  it('recomputes once the cache TTL has elapsed', async () => {
+  it('refreshes task status after a few seconds but rescans the backlog only after a minute', async () => {
     vi.useFakeTimers()
     try {
       vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
@@ -436,6 +436,11 @@ describe('/api/settings/llm-batch-jobs', () => {
       vi.advanceTimersByTime(5000)
       await handler()
 
+      expect(vi.mocked(listPendingLlmBatchJobs)).toHaveBeenCalledTimes(2)
+      expect(readAuctionRecords).toHaveBeenCalledTimes(1)
+
+      vi.advanceTimersByTime(60_000)
+      await handler()
       expect(readAuctionRecords).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
