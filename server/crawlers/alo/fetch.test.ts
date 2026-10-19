@@ -227,4 +227,62 @@ describe('fetchAloPage', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('after 3 successful request(s)'))
     warn.mockRestore()
   })
+  it('doubles the pause when the probe after a block is refused again, and starts over after a success', async () => {
+    const blocked = () => new Response('', { status: 429, headers: { 'retry-after': '3600' } })
+    let answer: () => Response = blocked
+    const fetchMock = vi.fn(async () => answer())
+    vi.stubGlobal('fetch', fetchMock)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+    const probe = async (id: string) => {
+      const p = fetchAloPage(`https://www.alo.bg/${id}`).catch((e: unknown) => e)
+      await vi.advanceTimersByTimeAsync(5_000)
+      return p
+    }
+
+    await probe('a') // block #1: 60 min
+    await vi.advanceTimersByTimeAsync(61 * 60_000)
+    await probe('b') // refused again without any success: block #2, 120 min
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('block #2'))
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('120 min'))
+
+    await vi.advanceTimersByTimeAsync(119 * 60_000)
+    await probe('c')
+    expect(fetchMock).toHaveBeenCalledTimes(2) // still inside the doubled pause: nothing sent
+
+    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    answer = () => new Response('ok')
+    await probe('d')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    answer = blocked // a success happened since the last block, so the next one is a fresh #1
+    await probe('e')
+    expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('after 1 successful request(s); not asking again for 60 min'))
+    warn.mockRestore()
+  })
+
+  it('keeps list pages walking while detail pages are blocked', async () => {
+    const fetchMock = vi.fn(async (url: unknown) =>
+      String(url).includes('/obiavi/')
+        ? new Response('list')
+        : new Response('', { status: 429, headers: { 'retry-after': '3600' } }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const fetchAloPage = await loadFetch()
+    const { SourceRateLimitedError } = await import('~/server/utils/source-rate-limit')
+
+    const detail = fetchAloPage('https://www.alo.bg/some-ad-123').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await detail).toBeInstanceOf(SourceRateLimitedError)
+
+    const list = fetchAloPage('https://www.alo.bg/obiavi/imoti-prodajbi/apartamenti-stai/?region_id=22&page=2')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect((await list).status).toBe(200)
+
+    const again = fetchAloPage('https://www.alo.bg/other-ad-456').catch((e: unknown) => e)
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await again).toBeInstanceOf(SourceRateLimitedError)
+    expect(fetchMock).toHaveBeenCalledTimes(2) // the second detail request was never sent
+  })
 })
