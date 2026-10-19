@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchAloPage } from './fetch'
 import { ALO_OBLASTI } from './constants'
-import { fetchCategoryListings, fetchListPage } from './list'
+import { fetchAllListings, fetchCategoryListings, fetchListPage } from './list'
+import { SourceRateLimitedError } from '~/server/utils/source-rate-limit'
 
 vi.mock('./fetch', () => ({ fetchAloPage: vi.fn() }))
 // Shrunk so the runaway-pagination guard is reachable without mocking 700 pages.
@@ -102,5 +103,28 @@ describe('fetchCategoryListings', () => {
     expect(complete).toBe(false)
     expect(mockFetch).toHaveBeenCalledTimes(3)
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('MAX_PAGES'))
+  })
+})
+
+describe('fetchAllListings', () => {
+  it('keeps the scopes already walked and stops asking once alo rate-limits a later scope', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetch
+      .mockResolvedValueOnce(listPage('1'))
+      .mockResolvedValueOnce(new Response('', { status: 404 }))
+      .mockRejectedValueOnce(new SourceRateLimitedError('alo.bg rate limit'))
+
+    const { auctions, complete } = await fetchAllListings()
+
+    expect(auctions.map((a) => a.externalId)).toEqual(['1'])
+    expect(complete).toBe(false)
+    expect(mockFetch).toHaveBeenCalledTimes(3) // no further scope was tried
+  })
+
+  it('still fails hard when no scope yielded anything', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    mockFetch.mockRejectedValueOnce(new SourceRateLimitedError('alo.bg rate limit'))
+
+    await expect(fetchAllListings()).rejects.toBeInstanceOf(SourceRateLimitedError)
   })
 })
