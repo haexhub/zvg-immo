@@ -3,7 +3,7 @@ import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { type RulesHint } from '~/server/utils/extract/llm-clamp'
-import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import { isConnectionLostError, isLlmProviderError, isRateLimitError, isTransientRequestError } from '~/server/utils/extract/llm-errors'
 import { waitForProviderRecovery } from '~/server/utils/extract/provider-recovery'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { createCandidateRecordLoader } from '~/server/utils/auction-record'
@@ -22,6 +22,10 @@ import { createReprocessProgress } from './reprocess-progress'
 import { reprocessAuction } from './reprocess-single'
 import { isReprocessEligible, rulesOnlyRebuildChangesEntry } from './reprocess-eligibility'
 import { submitReprocessBatch } from './reprocess-batch-submit'
+
+/** Transient provider errors (5xx, 408, no response) a run waits out before it
+ *  gives up; see transientProviderErrors in runReprocess. */
+const MAX_TRANSIENT_PROVIDER_ERRORS = 3
 
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
   const startedAt = Date.now()
@@ -112,6 +116,10 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const { totals, bump, progressByCountry } = createReprocessProgress(candidates)
   let rulesFalsified = 0
   let stopRun = false
+  // A claude-proxy 502/503 or one timed-out prompt usually clears within
+  // seconds, yet stopping at the first one cost the rest of the hour's budget.
+  // Bounded, so a provider that keeps failing still ends the run.
+  let transientProviderErrors = 0
   // LLM calls promised to candidates still in flight, so lanes started
   // together can't all pass the budget check against the same stale count.
   let llmReserved = 0
@@ -422,6 +430,13 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // itself carries on once the provider answers again.
         if (isConnectionLostError(err) && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
           console.warn('[reprocess] LLM provider connection was lost but it is back — continuing this run')
+          return
+        }
+        // Same for a transient error status (5xx, 408) or no response at all;
+        // 401/402/403 and other client errors still stop the run at once.
+        const transient = isTransientRequestError(err.cause ?? err) && ++transientProviderErrors <= MAX_TRANSIENT_PROVIDER_ERRORS
+        if (transient && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
+          console.warn(`[reprocess] LLM provider error ${transientProviderErrors}/${MAX_TRANSIENT_PROVIDER_ERRORS} this run, provider answers again — continuing: ${err.message}`)
           return
         }
         warning = `LLM-Providerfehler: ${err.message}`
