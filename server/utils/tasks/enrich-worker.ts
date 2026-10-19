@@ -268,6 +268,19 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           }
           if (enriched) enrichedCount++
 
+          // A platform with a detail step only learns its attachments and photo
+          // gallery from it — its list crawl leaves them empty. Running the
+          // document/photo steps on that list shape would archive an empty
+          // document set and mark an empty gallery as checked, after which the
+          // next successful detail fetch is never archived or mined. When only
+          // this run's fetch failed, an earlier one's stored payload stands in.
+          const prevState = fetchStates.get(key)
+          const hasDetailData = fetchDone || prevState?.detailFetchedAt != null
+          if (!fetchDone && prevState?.detailFetchedAt != null) {
+            if (a.attachments.length === 0) a.attachments = prevState.attachments
+            if (!a.photoUrls?.length && prevState.photoUrls?.length) a.photoUrls = prevState.photoUrls
+          }
+
           const documentIdentity = {
             platform: a.platform,
             country: a.country,
@@ -282,7 +295,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           // Only the archived bytes matter here — reprocess.ts re-reads and
           // parses them independently, so this task never needs to keep the
           // parsed text/pages around.
-          if (needsDocumentSetCheck(a)) {
+          if (hasDetailData && needsDocumentSetCheck(a)) {
             const preparedDocuments = await prepareLiveLlmDocuments(a.attachments, documentIdentity, at)
             if (!preparedDocuments.documentSetComplete) {
               if (a.attachments.length > 0) {
@@ -305,10 +318,10 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
           const priorEntry = priorRecord?.auction.extraction ?? undefined
 
           // Photo pipeline — see enrich-photos.ts.
-          const photoOutcome = await processEnrichPhotos(a, priorEntry, fetchStates.get(key), documentIdentity, {
+          const photoOutcome = await processEnrichPhotos(a, priorEntry, prevState, documentIdentity, {
             at,
             scopedForce,
-            needsPhotoBackfill,
+            needsPhotoBackfill: (auction) => hasDetailData && needsPhotoBackfill(auction),
             nativePhotoUrls,
             targetPhotoPipelineVersion,
           })

@@ -16,7 +16,8 @@ import {
 } from '../utils/auction-fetch-state'
 import { downloadNativeImages } from '../utils/extract/native-images'
 import { extractDocumentPhotos } from '../utils/extract/document-images'
-import { archiveAuction } from '../utils/raw-archive'
+import { prepareLiveLlmDocuments } from '../utils/extract/llm-documents-live'
+import { archiveAuction, archiveDocumentSet } from '../utils/raw-archive'
 import { recordObservations } from '../utils/history'
 import { recordCrawlScope } from '../utils/crawl-state'
 import { recordTaskRunStart } from '../utils/task-runs'
@@ -366,6 +367,60 @@ describe('runEnrich source rate limiting', () => {
     } finally {
       testPlatforms.splice(0, testPlatforms.length)
     }
+  })
+})
+
+describe('runEnrich detail-dependent document and photo steps', () => {
+  const appraisal: Attachment = {
+    kind: 'appraisal',
+    label: 'Gutachten',
+    filename: 'gutachten.pdf',
+    sizeBytes: null,
+    fileId: 'gutachten',
+    proxyUrl: 'https://example.test/gutachten.pdf',
+  }
+
+  afterEach(() => { testPlatforms.splice(0, testPlatforms.length) })
+
+  it('leaves documents and photos unchecked when the first detail fetch failed', async () => {
+    testPlatforms.push({ id: 'test-platform', enrichOne: vi.fn().mockRejectedValue(new Error('HTTP 503')) } as never)
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([auction()]))
+
+    const outcome = await runEnrich({ country: 'de' })
+
+    expect(outcome.warning).toContain('HTTP 503')
+    // The list crawl's empty attachments must not become an empty archived
+    // set or a "checked, no photos" marker that later blocks the real ones.
+    expect(prepareLiveLlmDocuments).not.toHaveBeenCalled()
+    expect(archiveDocumentSet).not.toHaveBeenCalled()
+    expect(writeAuctionPhotoPipelineState).toHaveBeenCalledWith('test-platform', '42', expect.objectContaining({
+      photosCheckedAt: null,
+      photoAttempted: false,
+    }))
+  })
+
+  it('works from the stored detail payload when only this run\'s re-fetch failed', async () => {
+    testPlatforms.push({ id: 'test-platform', enrichOne: vi.fn().mockRejectedValue(new Error('HTTP 503')) } as never)
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([auction()]))
+    vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
+      ['test-platform:42', fetchState({ attachments: [appraisal] })],
+    ]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(prepareLiveLlmDocuments).toHaveBeenCalledWith([appraisal], expect.anything(), expect.any(String))
+    expect(downloadNativeImages).toHaveBeenCalledWith(['https://example.test/front.jpg'], expect.anything())
+  })
+
+  it('archives the document set once the detail fetch delivered the attachments', async () => {
+    const enrichOne = vi.fn(async (a: Auction) => { a.attachments = [appraisal] })
+    testPlatforms.push({ id: 'test-platform', enrichOne } as never)
+    vi.mocked(crawlAll).mockResolvedValue(crawlResult([auction()]))
+
+    await runEnrich({ country: 'de' })
+
+    expect(prepareLiveLlmDocuments).toHaveBeenCalledWith([appraisal], expect.anything(), expect.any(String))
+    expect(archiveDocumentSet).toHaveBeenCalled()
   })
 })
 
