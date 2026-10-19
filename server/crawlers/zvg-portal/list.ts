@@ -5,6 +5,10 @@ import { clean, parseEuro, parseGermanDateTime, parseGermanTimestamp } from './t
 
 export interface ParseResult {
   totalReported: number | null
+  /** Result rows on the page, before skipping unidentifiable ones and
+   *  de-duplicating — what "Insgesamt N" counts, so a lower number means a
+   *  truncated response. */
+  rowCount: number
   auctions: Auction[]
 }
 
@@ -149,7 +153,7 @@ export function parseAuctionsHtml(html: string, landAbk: string, platformId: str
     return true
   })
 
-  return { totalReported, auctions: unique }
+  return { totalReported, rowCount: chunks.length, auctions: unique }
 }
 
 const IMMOBILIEN_OBJ_IDS = ['1', '2', '3', '19', '4', '5', '6', '7', '8', '13', '14', '15', '16', '17']
