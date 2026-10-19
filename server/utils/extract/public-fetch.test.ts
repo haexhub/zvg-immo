@@ -4,6 +4,7 @@ vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async (hostname: string) => {
     if (hostname === 'internal.test') return [{ address: '10.0.0.5', family: 4 }]
     if (hostname === 'mixed.test') return [{ address: '93.184.216.34', family: 4 }, { address: '127.0.0.1', family: 4 }]
+    if (hostname === 'flaky-dns.test') throw Object.assign(new Error('getaddrinfo EAI_AGAIN flaky-dns.test'), { code: 'EAI_AGAIN' })
     return [{ address: '93.184.216.34', family: 4 }]
   }),
 }))
@@ -38,6 +39,17 @@ describe('fetchPublicUrl', () => {
     await expect(fetchPublicUrl('http://169.254.169.254/latest/meta-data/', init())).rejects.toThrow(/non-public host/)
     await expect(fetchPublicUrl('file:///etc/passwd', init())).rejects.toThrow(/non-http/)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('surfaces a failed DNS lookup as the network error it is, not as a blocked host', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const err = await fetchPublicUrl('https://flaky-dns.test/doc.pdf', init()).catch((e: unknown) => e)
+    expect(err).toMatchObject({ code: 'EAI_AGAIN' })
+    expect((err as Error).message).not.toMatch(/non-public/)
+    expect(fetchMock).not.toHaveBeenCalled()
+    // The boolean pre-check keeps reading an unresolvable host as not public.
+    expect(await isPublicHost('flaky-dns.test')).toBe(false)
   })
 
   it('re-checks each redirect hop and stops at an internal target', async () => {

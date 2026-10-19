@@ -13,18 +13,27 @@ function isPublicIp(address: string): boolean {
   return ipaddr.isValid(address) && ipaddr.parse(address).range() === 'unicast'
 }
 
-/** True when `hostname` is, or resolves exclusively to, public unicast IPs. */
-export async function isPublicHost(hostname: string): Promise<boolean> {
+/** Like isPublicHost, but a failed lookup rejects with the resolver's error
+ *  (e.g. a transient EAI_AGAIN) instead of reading as a private host. */
+async function resolvesToPublicIps(hostname: string): Promise<boolean> {
   const normalized = hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname
   if (ipaddr.isValid(normalized)) return isPublicIp(normalized)
-  const records = await lookup(normalized, { all: true, verbatim: true }).catch(() => [])
+  const records = await lookup(normalized, { all: true, verbatim: true })
   return records.length > 0 && records.every((record) => isPublicIp(record.address))
+}
+
+/** True when `hostname` is, or resolves exclusively to, public unicast IPs.
+ *  A failed lookup counts as not public — callers that must tell a DNS
+ *  outage apart from a blocked host use fetchPublicUrl. */
+export async function isPublicHost(hostname: string): Promise<boolean> {
+  return await resolvesToPublicIps(hostname).catch(() => false)
 }
 
 /**
  * fetch() for an upstream-supplied URL: only http(s) targets whose host
  * resolves exclusively to public unicast addresses, with every redirect hop
- * re-checked the same way. `data:` URLs never touch the network and pass
+ * re-checked the same way. A host that cannot be resolved rejects with the
+ * resolver's error, not as blocked. `data:` URLs never touch the network and pass
  * through. The returned Response's `url` is the final hop, like a followed
  * fetch.
  *
@@ -45,7 +54,9 @@ export async function fetchPublicUrl(
     if (current.protocol !== 'http:' && current.protocol !== 'https:') {
       throw new Error(`blocked non-http(s) URL: ${current.protocol}`)
     }
-    if (!(await isPublicHost(current.hostname))) {
+    // A lookup failure propagates as the network error it is (retryable when
+    // transient) — reporting it as an SSRF block hid every DNS hiccup.
+    if (!(await resolvesToPublicIps(current.hostname))) {
       throw new Error(`blocked non-public host: ${current.hostname}`)
     }
     const res = await fetch(current.toString(), { headers, signal: init.signal, redirect: 'manual' })
