@@ -3,7 +3,7 @@ import { readLlmExecutionMode } from '~/server/utils/app-settings'
 import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { type RulesHint } from '~/server/utils/extract/llm-clamp'
-import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
+import { isConnectionLostError, isLlmProviderError, isRateLimitError, isTransientRequestError } from '~/server/utils/extract/llm-errors'
 import { waitForProviderRecovery } from '~/server/utils/extract/provider-recovery'
 import { recordLlmUsage } from '~/server/utils/llm-usage'
 import { createCandidateRecordLoader } from '~/server/utils/auction-record'
@@ -22,6 +22,10 @@ import { createReprocessProgress } from './reprocess-progress'
 import { reprocessAuction } from './reprocess-single'
 import { isReprocessEligible, rulesOnlyRebuildChangesEntry } from './reprocess-eligibility'
 import { submitReprocessBatch } from './reprocess-batch-submit'
+
+/** Transient provider errors (5xx, 408, no response) a run waits out before it
+ *  gives up; see transientProviderErrors in runReprocess. */
+const MAX_TRANSIENT_PROVIDER_ERRORS = 3
 
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
   const startedAt = Date.now()
@@ -94,26 +98,33 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
     console.log('[reprocess] llm disabled — rules-only')
   }
 
-  // maxLlmPerRun is shared across all platforms; a per-platform cap keeps one
-  // huge platform's backlog from burning through the whole budget before
-  // smaller platforms' listings are ever reached (same rationale enrich.ts
-  // used to apply — see interleave-by-platform.ts).
+  // Share maxLlmPerRun fairly across platforms before a second pass.
   const llmPlatformCount = new Set(candidates.map((c) => c.platform)).size || 1
   let llmCapPerPlatform = Math.max(1, Math.ceil(maxLlmPerRun / llmPlatformCount))
-  // Candidates held back because their platform used up its fair share while
-  // budget was still left; they get a second pass with the cap lifted.
+  // Deferred candidates get a second pass with the cap lifted.
   const candidateOrder = new Map(candidates.map((candidate, index) => [cacheKey(candidate.platform, candidate.externalId), index]))
   const deferred: { candidate: Candidate; order: number }[] = []
   const llmCallsByPlatform = new Map<string, number>()
 
-  // Candidates run in parallel lanes (see runPool below): counters are bumped
-  // where they happen — aggregate and per-country snapshot (for /settings)
-  // together — instead of being diffed per iteration.
+  // Parallel lanes update aggregate and per-country counters together.
   const { totals, bump, progressByCountry } = createReprocessProgress(candidates)
   let rulesFalsified = 0
   let stopRun = false
-  // LLM calls promised to candidates still in flight, so lanes started
-  // together can't all pass the budget check against the same stale count.
+  // Bounded run-level recovery for transient claude-proxy errors.
+  let transientRecoveryEpisodes = 0
+  const activeTransientRecovery = new Map<string, Promise<boolean>>()
+  async function waitForTransientRecovery(config: LlmConfig | null): Promise<boolean> {
+    const key = config?.provider === 'claude-proxy' && config.baseUrl ? config.baseUrl : null
+    const existing = key ? activeTransientRecovery.get(key) : undefined
+    if (existing) return existing
+    if (transientRecoveryEpisodes >= MAX_TRANSIENT_PROVIDER_ERRORS) return false
+
+    transientRecoveryEpisodes++
+    const probe = waitForProviderRecovery(config)
+    if (key) activeTransientRecovery.set(key, probe)
+    return probe.finally(() => { if (key && activeTransientRecovery.get(key) === probe) activeTransientRecovery.delete(key) })
+  }
+  // Reservations keep parallel lanes from overspending the shared LLM budget.
   let llmReserved = 0
   const llmReservedByPlatform = new Map<string, number>()
   let lastLlmError: string | undefined
@@ -122,9 +133,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const batchArtifactVersions = new Map<string, number | null>()
   const batchRulesHints = new Map<string, RulesHint | null>()
 
-  // Distinguishes a persistEntry (DB write) failure from an LLM-call failure
-  // in the catch block below — both land there, but they need different
-  // task_run_errors categories (a storage outage isn't an LLM problem).
+  // Distinguishes persistEntry failures from LLM-call failures in the catch.
   const persistCtx = { runTrigger: opts.trigger ?? 'cron', at }
   const persistFailureMark = Symbol('persistFailure')
   function markPersistFailure(err: unknown): unknown {
@@ -422,6 +431,17 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
         // itself carries on once the provider answers again.
         if (isConnectionLostError(err) && await waitForProviderRecovery(lastLlmConfig ?? llmConfig)) {
           console.warn('[reprocess] LLM provider connection was lost but it is back — continuing this run')
+          return
+        }
+        // Same for a transient error status (5xx, 408) or no response at all;
+        // 401/402/403 and other client errors still stop the run at once.
+        const providerError = err.cause ?? err
+        const status = (providerError as { response?: { status?: unknown } })?.response?.status
+        // 404 is transient for provider-local retries, but here may mean a
+        // missing model/route and must follow the ordinary 4xx stop path.
+        const transient = status !== 404 && isTransientRequestError(providerError)
+        if (transient && await waitForTransientRecovery(lastLlmConfig ?? llmConfig)) {
+          console.warn(`[reprocess] LLM provider error, recovery episode ${transientRecoveryEpisodes}/${MAX_TRANSIENT_PROVIDER_ERRORS} this run, provider answers again — continuing: ${err.message}`)
           return
         }
         warning = `LLM-Providerfehler: ${err.message}`

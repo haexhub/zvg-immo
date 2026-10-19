@@ -19,7 +19,7 @@ import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { recordTaskRunError } from '../utils/task-run-errors'
 import { recordLlmUsage } from '../utils/llm-usage'
 import { recordTaskRunProgress, recordTaskRunStart } from '../utils/task-runs'
-import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '../utils/extract/llm-errors'
+import { isConnectionLostError, isLlmProviderError, isRateLimitError, isTransientRequestError } from '../utils/extract/llm-errors'
 import { waitForProviderRecovery } from '../utils/extract/provider-recovery'
 
 vi.mock('../utils/storage-download', () => ({
@@ -72,6 +72,7 @@ vi.mock('../utils/extract/llm-errors', () => ({
   isLlmProviderError: vi.fn(() => false),
   isLlmProviderUnavailable: vi.fn(() => false),
   isRateLimitError: vi.fn(() => false),
+  isTransientRequestError: vi.fn(() => false),
 }))
 vi.mock('../utils/extract/llm-documents', () => ({
   prepareArchivedLlmDocuments: vi.fn(async (_auction, opts) => ({
@@ -1537,6 +1538,110 @@ describe('runReprocess parallel lanes', () => {
       expect(waitForProviderRecovery).toHaveBeenCalledWith(fallback)
       expect(result.warning).toBeUndefined()
       expect(result).toMatchObject({ candidates: 12, skipped: 1, processed: 11 })
+    })
+  })
+
+  describe('a transient provider error status (e.g. a claude-proxy 502)', () => {
+    /** Makes the first `times` provider requests fail with the given HTTP status. */
+    async function failWithStatus(status: number, times: number): Promise<void> {
+      const actual = await vi.importActual<typeof import('../utils/extract/llm-errors')>('../utils/extract/llm-errors')
+      vi.mocked(isTransientRequestError).mockImplementation(actual.isTransientRequestError)
+      const failures = new Set<unknown>()
+      vi.mocked(isLlmProviderError).mockImplementation((err) => failures.has(err))
+      let calls = 0
+      vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+        opts?.onProviderAttempt?.()
+        if (calls++ < times) {
+          const cause = Object.assign(new Error(`HTTP ${status}`), { response: { status } })
+          const err = Object.assign(new Error(`claude-proxy: ${status}`), { cause })
+          failures.add(err)
+          throw err
+        }
+        return null
+      })
+    }
+
+    afterEach(() => {
+      vi.mocked(isLlmProviderError).mockReset().mockReturnValue(false)
+      vi.mocked(isTransientRequestError).mockReset().mockReturnValue(false)
+      vi.mocked(waitForProviderRecovery).mockReset().mockResolvedValue(false)
+    })
+
+    it('waits for the provider and keeps the run going instead of stopping at the first 502', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      await failWithStatus(502, 1)
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).toHaveBeenCalledTimes(1)
+      expect(result.warning).toBeUndefined()
+      expect(result).toMatchObject({ candidates: 12, skipped: 1, processed: 11 })
+    })
+
+    it('stops the run once the provider failed more often than it may be waited out', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      await failWithStatus(503, 12)
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).toHaveBeenCalledTimes(3)
+      expect(result.warning).toContain('LLM-Providerfehler')
+      expect(result).toMatchObject({ skipped: 4, processed: 0 })
+    })
+
+    it('counts concurrent failures sharing one recovery probe as one episode', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(4)
+      vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
+        baseUrl: 'http://proxy:8080/', apiKey: '', model: 'claude', provider: 'claude-proxy',
+      }])
+      let resolveRecovery!: (recovered: boolean) => void
+      const recovery = new Promise<boolean>((resolve) => { resolveRecovery = resolve })
+      vi.mocked(waitForProviderRecovery).mockReturnValue(recovery)
+      await failWithStatus(503, 4)
+
+      const resultPromise = runReprocess({ country: 'de' })
+      await vi.waitFor(() => expect(waitForProviderRecovery).toHaveBeenCalledTimes(1))
+      resolveRecovery(true)
+      const result = await resultPromise
+
+      expect(result.warning).toBeUndefined()
+      expect(result).toMatchObject({ skipped: 4, processed: 8 })
+    })
+
+    it('stops immediately for a 404 instead of waiting for provider recovery', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      await failWithStatus(404, 12)
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).not.toHaveBeenCalled()
+      expect(result.warning).toContain('LLM-Providerfehler')
+      expect(result.processed).toBe(0)
+    })
+
+    it('still stops at once for a client error such as an exhausted balance (402)', async () => {
+      seedCandidates()
+      vi.stubGlobal('useRuntimeConfig', () => ({ extractLlm: { maxPerRun: '50' } }))
+      vi.mocked(getLlmConcurrency).mockResolvedValue(1)
+      vi.mocked(waitForProviderRecovery).mockResolvedValue(true)
+      await failWithStatus(402, 12)
+
+      const result = await runReprocess({ country: 'de' })
+
+      expect(waitForProviderRecovery).not.toHaveBeenCalled()
+      expect(result.warning).toContain('LLM-Providerfehler')
+      expect(result.processed).toBe(0)
     })
   })
 })
