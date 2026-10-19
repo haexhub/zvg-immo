@@ -82,6 +82,44 @@ describe('refresh failure reporting', () => {
     expect(outcome.result).toMatchObject({ ok: 1, failed: 0 })
   })
 
+  it('does not re-crawl a region within its interval after a failed attempt', async () => {
+    vi.mocked(listRegions).mockReturnValue([region('bg', 'all'), region('de', 'by')] as never)
+    vi.mocked(regionCrawlAgeMs).mockResolvedValue(null)
+    vi.mocked(crawlSingle).mockImplementation(async (opts: { country: string }) => {
+      if (opts.country === 'bg') throw new Error('alo.bg rate limit: HTTP 429')
+      return { auctions: [] } as never
+    })
+    const task = await loadTask()
+
+    await task.run()
+    const second = await task.run()
+
+    expect(vi.mocked(crawlSingle).mock.calls.filter(([opts]) => opts.country === 'bg')).toHaveLength(1)
+    expect(second.result).toMatchObject({ skipped: 2 })
+  })
+
+  it('still crawls an hourly region again on the next hourly run after a failure', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-10-19T10:00:00Z'))
+      vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
+      vi.mocked(regionCrawlAgeMs).mockResolvedValue(null)
+      vi.mocked(crawlSingle).mockImplementation(async () => {
+        vi.advanceTimersByTime(5 * 60_000) // a slow region attempt
+        throw new Error('upstream down')
+      })
+      const task = await loadTask()
+
+      await task.run().catch(() => {})
+      vi.setSystemTime(new Date('2026-10-19T11:00:00Z'))
+      await task.run().catch(() => {})
+
+      expect(crawlSingle).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('skips a region whose list cache is still within its refresh interval', async () => {
     vi.mocked(listRegions).mockReturnValue([region('de', 'by')] as never)
     vi.mocked(regionCrawlAgeMs).mockResolvedValue(60_000)
