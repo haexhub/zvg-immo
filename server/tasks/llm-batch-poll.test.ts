@@ -472,11 +472,11 @@ describe('runLlmBatchPoll', () => {
     expect(upsertCurrentAuctions).not.toHaveBeenCalled()
   })
 
-  it('increments failures and clears state for a null batch extraction', async () => {
+  it('increments failures and clears state for an unparseable 2xx batch item', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
     vi.mocked(fetchLlmBatchResults).mockResolvedValue([
-      { key: 'zvg-portal:7265', extraction: null, usage: null, error: 'provider rejected request' },
+      { key: 'zvg-portal:7265', extraction: null, usage: null, error: 'unparseable response', requestFailed: false },
     ])
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
@@ -488,9 +488,27 @@ describe('runLlmBatchPoll', () => {
     })
     expect(recordTaskRunError).toHaveBeenCalledWith('reprocess', {
       category: 'llm',
-      message: 'provider rejected request',
+      message: 'unparseable response',
       platform: 'zvg-portal',
       externalId: '7265',
+    })
+  })
+
+  it('keeps the failure counter for an item the provider rejected at request level', async () => {
+    // A 402 (exhausted balance), 429 or 5xx item status says nothing about
+    // the auction; counting it locked healthy auctions after three batches.
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: null, usage: null, error: 'Insufficient credits', requestFailed: true },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(writeAuctionLlmPipelineState).toHaveBeenCalledWith('zvg-portal', '7265', {
+      llmBatchJob: null,
+      llmArtifactVersionId: null,
+      llmRulesHint: null,
+      llmFailures: 2,
     })
   })
 

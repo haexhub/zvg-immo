@@ -199,7 +199,7 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
       const results = await fetchLlmBatchResults(job.jobName, poll, jobConfig, job.customIdMap)
       throwIfTaskAborted(signal)
       let rulesFalsified = 0
-      for (const { key, extraction, usage, error } of results) {
+      for (const { key, extraction, usage, error, requestFailed } of results) {
         throwIfTaskAborted(signal)
         const identity = splitKey(key)
         if (!identity) continue
@@ -285,7 +285,12 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
           llmBatchJob: null,
           llmArtifactVersionId: null,
           llmRulesHint: null,
-          llmFailures: extraction === null ? (priorState?.llmFailures ?? 0) + 1 : 0,
+          // An item-level request failure (402 balance, 429, 5xx, ...) is a
+          // provider problem, not evidence about this auction: keep its
+          // counter so a provider outage never locks auctions out.
+          llmFailures: extraction !== null
+            ? 0
+            : requestFailed ? (priorState?.llmFailures ?? 0) : (priorState?.llmFailures ?? 0) + 1,
         })
         record.auction = updated
         record.artifactVersionId = artifactVersionId

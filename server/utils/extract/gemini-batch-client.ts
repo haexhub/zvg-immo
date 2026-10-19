@@ -76,6 +76,7 @@ export async function fetchGeminiBatchResults(resultFileName: string, config: Ll
       key,
       extraction,
       usage,
+      requestFailed: !!itemError || response == null,
       error: extraction ? null : ((typeof itemError?.message === 'string' ? itemError.message : undefined) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
     })
   }

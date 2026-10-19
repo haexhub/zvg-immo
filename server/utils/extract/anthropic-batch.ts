@@ -246,7 +246,7 @@ export async function fetchAnthropicBatchResults(
         (typeof parsed.result?.type === 'string' && !succeeded
           ? `Batch-Ergebnis: ${parsed.result.type}`
           : 'Keine gültige Extraktion in der Batch-Antwort')
-    out.push({ key, extraction, usage, error })
+    out.push({ key, extraction, usage, error, requestFailed: !succeeded })
   }
   return out
 }
