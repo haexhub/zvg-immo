@@ -148,6 +148,15 @@ describe('enrichOne', () => {
     expect(auction.attachments).toEqual([])
   })
 
+  it('keeps the stored description when the detail page no longer has one', async () => {
+    vi.stubGlobal('useRuntimeConfig', () => ({ dgaAg: { username: '', password: '' } }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(htmlResponse(DETAIL_HTML_MINIMAL)))
+    const auction = makeAuction({ description: 'Ruhige Wohnlage am Stadtrand von Dresden.' })
+    await enrichOne(auction)
+
+    expect(auction.description).toBe('Ruhige Wohnlage am Stadtrand von Dresden.')
+  })
+
   it('does nothing when the auction has no detail URL', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
