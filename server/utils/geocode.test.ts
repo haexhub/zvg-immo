@@ -269,3 +269,36 @@ describe('geocodeOnce (LocationIQ backend)', () => {
     expect(requestedUrl).toContain('key=pk.test')
   })
 })
+
+describe('lookupCachedGeocode', () => {
+  afterEach(() => {
+    vi.doUnmock('node:fs/promises')
+    vi.resetModules()
+  })
+
+  it('reports point and status from a single read per cached query variant', async () => {
+    const readFile = vi.fn(async () => JSON.stringify({ notFound: true }))
+    vi.doMock('node:fs/promises', () => ({ readFile, writeFile: vi.fn(), mkdir: vi.fn() }))
+    const { lookupCachedGeocode } = await import('./geocode')
+    const { buildGeocodeQueries } = await import('./geocode-normalizers')
+
+    const result = await lookupCachedGeocode('Musterstraße 1, 80331 München', 'de')
+
+    expect(result).toEqual({ point: null, status: 'unresolvable' })
+    expect(readFile).toHaveBeenCalledTimes(buildGeocodeQueries('Musterstraße 1, 80331 München', 'de').length)
+  })
+
+  it('returns the first cached hit as geocoded', async () => {
+    vi.doMock('node:fs/promises', () => ({
+      readFile: vi.fn(async () => JSON.stringify({ lat: 48.137, lng: 11.575, displayName: 'München' })),
+      writeFile: vi.fn(),
+      mkdir: vi.fn(),
+    }))
+    const { lookupCachedGeocode } = await import('./geocode')
+
+    const result = await lookupCachedGeocode('Musterstraße 1, 80331 München', 'de')
+
+    expect(result.status).toBe('geocoded')
+    expect(result.point).toMatchObject({ lat: 48.137, lng: 11.575 })
+  })
+})

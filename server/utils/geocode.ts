@@ -154,15 +154,28 @@ export async function geocodeStatus(
   address: string | null,
   country: string,
 ): Promise<GeocodeStatus> {
-  if (!address) return 'unresolvable'
+  return (await lookupCachedGeocode(address, country)).status
+}
+
+/**
+ * Cache-only lookup returning the point and its status from one pass over the
+ * query variants. Callers that need both (the public map endpoint, for up to
+ * 60k rows per request) previously read every cache file twice, once via
+ * geocodeAddress and again via geocodeStatus.
+ */
+export async function lookupCachedGeocode(
+  address: string | null,
+  country: string,
+): Promise<{ point: GeoPoint | null; status: GeocodeStatus }> {
+  if (!address) return { point: null, status: 'unresolvable' }
   const c = country.toLowerCase()
   let allAttempted = true
   for (const q of buildGeocodeQueries(address, c)) {
     const cached = await readCacheEntry(q, c)
-    if (cached.state === 'hit') return 'geocoded'
+    if (cached.state === 'hit') return { point: cached.point!, status: 'geocoded' }
     if (cached.state === 'missing') allAttempted = false
   }
-  return allAttempted ? 'unresolvable' : 'pending'
+  return { point: null, status: allAttempted ? 'unresolvable' : 'pending' }
 }
 
 export async function geocodeAddress(
