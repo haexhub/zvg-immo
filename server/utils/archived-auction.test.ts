@@ -59,6 +59,11 @@ describe('overlayDetailData', () => {
     expect(merged.marketValueText).toBe('120.000 €')
   })
 
+  it('fills an empty title from the older snapshot but never replaces an existing one', () => {
+    expect(overlayDetailData(auction({ title: '' }), auction({ title: 'Wohnung', description: 'x' })).title).toBe('Wohnung')
+    expect(overlayDetailData(auction({ title: 'neu' }), auction({ title: 'alt', description: 'x' })).title).toBe('neu')
+  })
+
   it('does not overwrite detail values the base already has', () => {
     const merged = overlayDetailData(auction({ description: 'neu' }), auction({ description: 'alt', sourceRooms: 3 }))
     expect(merged.description).toBe('neu')
@@ -94,6 +99,12 @@ describe('readArchivedAuctionSnapshot', () => {
     ])
     const result = await readArchivedAuctionSnapshot('kip', 'H1')
     expect(result).toMatchObject({ description: 'Baujahr 1936, 109 m²', sourceRooms: 3 })
+  })
+
+  it('takes the title from an older listing-only capture when the newest one has none', async () => {
+    stubSnapshots([auction({ title: '', currentBid: 95_000 }), auction({ title: '  ' }), auction({ title: 'Einfamilienhaus' })])
+    const result = await readArchivedAuctionSnapshot('kip', 'H1')
+    expect(result).toMatchObject({ title: 'Einfamilienhaus', currentBid: 95_000, description: null })
   })
 
   it('skips unreadable older blobs and keeps looking', async () => {

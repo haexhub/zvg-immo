@@ -47,6 +47,7 @@ export function hasDetailData(auction: Auction): boolean {
  *  values the base already has (bids, dates, cancelled, ...) stay as they are. */
 export function overlayDetailData(base: Auction, detail: Auction): Auction {
   const merged: Auction = { ...base }
+  if (!merged.title?.trim() && detail.title?.trim()) merged.title = detail.title
   if (!merged.description?.trim()) merged.description = detail.description
   if (!(merged.attachments?.length)) merged.attachments = detail.attachments ?? []
   if (merged.sourceLivingAreaSqm == null) merged.sourceLivingAreaSqm = detail.sourceLivingAreaSqm
@@ -80,7 +81,12 @@ export async function readArchivedAuctionSnapshot(platform: string, externalId: 
     const bytes = await downloadBlob(capture.contentHash)
     if (!bytes) continue
     const older = parseAuction(bytes)
-    if (older && hasDetailData(older)) merged = overlayDetailData(merged, older)
+    if (!older) continue
+    if (hasDetailData(older)) merged = overlayDetailData(merged, older)
+    // A newer capture can lack the title an older one carried. Without it
+    // (and without detail data) the LLM input is empty, so an older
+    // listing-only capture still counts for the title alone.
+    else if (!merged.title?.trim() && older.title?.trim()) merged = { ...merged, title: older.title }
   }
   return merged
 }
