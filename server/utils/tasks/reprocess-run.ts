@@ -1,6 +1,6 @@
-import { batchSupportsMultimodal, isLlmBatchPending, isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
+import { batchSupportsMultimodal, isLlmBatchProviderBroken, supportsLlmBatch, supportsNativeBatchDocuments } from '~/server/utils/extract/llm-batch'
 import { readLlmExecutionMode } from '~/server/utils/app-settings'
-import { LLM_FAILURE_RETRY_COOLDOWN_HOURS, MAX_LLM_FAILURES, readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
+import { readExtractionChainStrategy, readExtractionLlmConfigChain } from '~/server/utils/extract/llm-task-config'
 import { type LlmConfig, type LlmInput } from '~/server/utils/extract/llm'
 import { type RulesHint } from '~/server/utils/extract/llm-clamp'
 import { isConnectionLostError, isLlmProviderError, isRateLimitError } from '~/server/utils/extract/llm-errors'
@@ -15,11 +15,12 @@ import { recordTaskRunError } from '~/server/utils/task-run-errors'
 import { recordTaskRunProgress } from '~/server/utils/task-runs'
 import { throwIfTaskAborted } from '~/server/utils/exclusive-task'
 import { runPool } from '~/server/utils/run-pool'
-import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, hasNewArchivedDocuments, inputNeedsMultimodal, type Candidate, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
+import { buildLlmRateLimitWarning, buildReprocessInput, buildRulesOnlyEntry, effectiveCandidateCountries, findCandidates, inputNeedsMultimodal, type Candidate, type ReprocessInput, type ReprocessOptions, type ReprocessResult } from './reprocess-input'
 import { resolveLlmConcurrency, resolveMaxLlmPerRun } from './reprocess-budget'
 import { persistReprocessEntry } from './reprocess-persist'
 import { createReprocessProgress } from './reprocess-progress'
 import { reprocessAuction } from './reprocess-single'
+import { isReprocessEligible } from './reprocess-eligibility'
 import { submitReprocessBatch } from './reprocess-batch-submit'
 
 export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSignal): Promise<ReprocessResult> {
@@ -64,15 +65,6 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
   const concurrency = await resolveLlmConcurrency()
   const at = new Date().toISOString()
   const nowMs = new Date(at).getTime()
-  /** Whether a locked-out auction (llm_failures >= MAX_LLM_FAILURES) is past
-   *  its cooldown and can retry again — see LLM_FAILURE_RETRY_COOLDOWN_HOURS.
-   *  A never-attempted timestamp (older rows predating this column, or a
-   *  chain that's never actually made a request) counts as elapsed rather
-   *  than blocking eligibility on a value that doesn't exist yet. */
-  function cooldownElapsed(lastAttemptedAt: string | null | undefined): boolean {
-    if (!lastAttemptedAt) return true
-    return nowMs - new Date(lastAttemptedAt).getTime() >= LLM_FAILURE_RETRY_COOLDOWN_HOURS * 60 * 60 * 1000
-  }
   // Any provider without a Batch API integration falls back to the
   // synchronous path even if `batch: true` was requested.
   const batchRequested = opts.batch ?? executionMode === 'batch'
@@ -194,26 +186,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       const priorEntry = storedPriorEntry
       priorLlmFailures = priorState?.llmFailures ?? 0
       const artifactState = await readArtifactProcessingState(platform, externalId)
-      // `undefined` means an optional field was absent from an otherwise
-      // valid model response, not that the whole auction is unprocessed.
-      // Treating each optional field as a retry criterion caused the cron to
-      // send successful auctions to the LLM again every hour.  A completed
-      // LLM extraction is explicitly marked by llmAnalyzedAt; changed source
-      // documents still make it eligible through hasNewArchivedDocuments.
-      const hasSuccessfulLlmExtraction = priorEntry?.llmAnalyzedAt != null
-      const eligible =
-        (!opts.failedOnly || priorLlmFailures >= MAX_LLM_FAILURES) &&
-        (opts.force ||
-          ((!priorEntry ||
-            (priorEntry.source === 'rules' && priorEntry.confidence === 'low') ||
-            (llmConfig != null && !hasSuccessfulLlmExtraction) ||
-            hasNewArchivedDocuments(artifactState)) &&
-            (priorLlmFailures < MAX_LLM_FAILURES ||
-              (!opts.openOnly && (cooldownElapsed(priorState?.llmLastAttemptedAt) || opts.ignoreCooldown))) &&
-            (opts.ignoreBatchPending || !isLlmBatchPending(priorState?.llmBatchJob
-              ? { llmBatchJob: priorState.llmBatchJob, at: priorState.updatedAt }
-              : undefined))))
-      if (!eligible) {
+      if (!isReprocessEligible(opts, { priorEntry, priorState, artifactState, llmConfigured: llmConfig != null, nowMs })) {
         bump(country, 'skipped')
         return
       }
@@ -417,7 +390,7 @@ export async function runReprocess(opts: ReprocessOptions = {}, signal?: AbortSi
       if (syncLlmAttempted) {
         // A real request went out this iteration even though the outcome
         // never reached persistEntry (thrown, not resolved to null) — record
-        // it so a locked-out auction's 24h cooldown (see cooldownElapsed)
+        // it so a locked-out auction's 24h cooldown (see reprocess-eligibility.ts)
         // actually advances instead of re-triggering every run forever.
         // llmFailures stays at its prior count: a capacity outage still must
         // never count toward MAX_LLM_FAILURES (see the comment above).
