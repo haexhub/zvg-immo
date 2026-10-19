@@ -7,6 +7,7 @@ import { readAuctionFetchStates, writeAuctionLlmPipelineState, type AuctionFetch
 import { upsertCurrentAuctions } from '../utils/current-auctions'
 import { writeAuctionDetails } from '../utils/auction-details'
 import {
+  clearLlmBatchJobMarkers,
   listPendingLlmBatchJobs,
   markLlmBatchJobChecked,
   markLlmBatchJobResolved,
@@ -37,6 +38,7 @@ vi.mock('../utils/auction-fetch-state', () => ({
 vi.mock('../utils/current-auctions', () => ({ upsertCurrentAuctions: vi.fn() }))
 vi.mock('../utils/auction-details', () => ({ writeAuctionDetails: vi.fn() }))
 vi.mock('../utils/llm-batch-jobs', () => ({
+  clearLlmBatchJobMarkers: vi.fn(),
   listPendingLlmBatchJobs: vi.fn(),
   markLlmBatchJobChecked: vi.fn(),
   markLlmBatchJobResolved: vi.fn(),
@@ -183,6 +185,7 @@ beforeEach(() => {
   }]]))
   vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', fetchState()]]))
   vi.mocked(writeAuctionDetails).mockResolvedValue({ version: 3, changed: true })
+  vi.mocked(clearLlmBatchJobMarkers).mockResolvedValue(0)
 })
 
 afterEach(() => {
@@ -241,6 +244,45 @@ describe('runLlmBatchPoll', () => {
     })
   })
 
+  it('releases the item markers of a failed job before resolving it', async () => {
+    // Without this the items kept llm_batch_job, and isLlmBatchPending's age
+    // check (measured from auction_fetch_state.updated_at, bumped by every
+    // crawl) kept actively crawled auctions out of reprocess indefinitely.
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job({ customIdMap: { c1: 'zvg-portal:7265' } })])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'failed', errorMessage: 'provider failed' })
+    vi.mocked(clearLlmBatchJobMarkers).mockResolvedValue(1)
+
+    await runLlmBatchPoll()
+    expect(clearLlmBatchJobMarkers).toHaveBeenCalledWith('batches/abc')
+    expect(vi.mocked(clearLlmBatchJobMarkers).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(markLlmBatchJobResolved).mock.invocationCallOrder[0]!)
+    expect(writeAuctionLlmPipelineState).not.toHaveBeenCalled()
+  })
+
+  it('releases markers of items a completed job left out of its result set', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job({
+      itemCount: 2,
+      customIdMap: { c1: 'zvg-portal:7265', c2: 'zvg-portal:9999' },
+    })])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
+    vi.mocked(fetchLlmBatchResults).mockResolvedValue([
+      { key: 'zvg-portal:7265', extraction: llmResult, usage: null },
+    ])
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 1 })
+    expect(clearLlmBatchJobMarkers).toHaveBeenCalledWith('batches/abc')
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String), null)
+  })
+
+  it('keeps a terminal job pending when its markers cannot be released', async () => {
+    vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
+    vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'expired' })
+    vi.mocked(clearLlmBatchJobMarkers).mockRejectedValue(new Error('database unavailable'))
+
+    await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
+    expect(markLlmBatchJobResolved).not.toHaveBeenCalled()
+  })
+
   it('writes a successful result to details and clears its fetch-state marker', async () => {
     vi.mocked(listPendingLlmBatchJobs).mockResolvedValue([job()])
     vi.mocked(pollLlmBatch).mockResolvedValue({ state: 'succeeded', resultFileName: 'files/result' })
@@ -263,7 +305,7 @@ describe('runLlmBatchPoll', () => {
       llmRulesHint: null,
       llmFailures: 0,
     })
-    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String))
+    expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'succeeded', expect.any(String), null)
     expect(recordLlmUsage).not.toHaveBeenCalled()
   })
 
@@ -475,6 +517,7 @@ describe('runLlmBatchPoll', () => {
 
     await expect(runLlmBatchPoll()).resolves.toEqual({ checked: 1, merged: 0 })
     expect(markLlmBatchJobResolved).toHaveBeenCalledWith('batches/abc', 'expired', expect.any(String), 'unauthorized')
+    expect(clearLlmBatchJobMarkers).toHaveBeenCalledWith('batches/abc')
   })
 
   it('keeps retrying a job whose poll request fails within the 48h grace window', async () => {
