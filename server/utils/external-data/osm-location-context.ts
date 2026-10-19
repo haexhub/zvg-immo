@@ -1,7 +1,9 @@
-import type { Pool } from 'pg'
+import type { Pool, PoolClient } from 'pg'
 import type { Auction } from '~/types/auction'
 import type { LocationContextAdapter } from '~/server/tasks/external-enrichment'
 import { hasUsableCoordinates } from '~/server/utils/coordinates'
+import { withStatementTimeout } from '~/server/utils/db'
+import { runPool } from '~/server/utils/run-pool'
 import { type Point } from './geo'
 import { buildLocationContext } from './osm-location-context-builder'
 import {
@@ -16,12 +18,23 @@ const NOISY_ROAD_RADIUS_METERS = 8_000
 const MINOR_ROAD_RADIUS_METERS = 5_000
 const OFFICE_RADIUS_METERS = 1_500
 
-// A context fans out ~30 category queries at once. Individually they are
+// A context runs ~25 category queries. Individually they are
 // indexed and fast, yet a few dense-city auctions hit the pool's 15 s
 // query_timeout on every run. These timings make the culprit visible: a
 // context slower than this, or one that fails, logs per-category duration and
 // row count plus the queries that were still in flight.
 const SLOW_CONTEXT_MS = 5_000
+
+// The categories share the app-wide pool (default max 10) with every web
+// request. Firing all of them at once parked search/detail/settings requests
+// behind OSM queries for up to 15 s per auction, so only a few run at a time.
+const CATEGORY_CONCURRENCY = 4
+
+// Server-side cap per category, kept below the pool's client-side 15 s
+// query_timeout: that one only stops node-pg from *waiting* and leaves the
+// backend running the query, so every timed-out railway query kept burning
+// DB CPU while the next auction's queries piled on top of it.
+const CATEGORY_STATEMENT_TIMEOUT_MS = 12_000
 
 interface OsmCategory {
   radiusMeters: number
@@ -88,7 +101,7 @@ interface LocalOsmRow {
   tags: Record<string, string>
 }
 
-async function queryCategory(db: Pool, country: string, point: Point, category: OsmCategory): Promise<OsmElement[]> {
+async function queryCategory(db: Pool | PoolClient, country: string, point: Point, category: OsmCategory): Promise<OsmElement[]> {
   const tagCondition = category.values ? `osm.tags ->> $5 = ANY($6::text[])` : `osm.tags ? $5`
   const params: unknown[] = [country, point.lng, point.lat, category.radiusMeters, category.tagKey]
   if (category.values) params.push(category.values)
@@ -200,6 +213,9 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
     if (!covered) {
       covered = hasAnyDataFor(options.db, country)
       coveredCountries.set(country, covered)
+      // A single timed-out probe must not fail every auction of that country
+      // for the rest of the run: forget it so the next auction asks again.
+      covered.catch(() => coveredCountries.delete(country))
     }
     return covered
   }
@@ -222,7 +238,11 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
         timings.push(timing)
         const queryStartedAt = Date.now()
         try {
-          const elements = await queryCategory(options.db, country, point, category)
+          const elements = await withStatementTimeout(
+            options.db,
+            CATEGORY_STATEMENT_TIMEOUT_MS,
+            (client) => queryCategory(client, country, point, category),
+          )
           timing.rows = elements.length
           timing.status = 'completed'
           return elements
@@ -233,13 +253,17 @@ export function createLocalOsmLocationContextAdapter(options: LocalOsmLocationCo
           timing.ms = Date.now() - queryStartedAt
         }
       }
-      let results: OsmElement[][]
+      const results: OsmElement[][] = []
       try {
         if (!(await isCovered(country))) {
           if (Date.now() - startedAt >= SLOW_CONTEXT_MS) logContextTimings(auction, point, timings, startedAt)
           return null
         }
-        results = await Promise.all(CATEGORIES.map(timed))
+        // runPool lets in-flight categories finish before rethrowing the first
+        // failure, so a failed context leaves no orphaned queries behind.
+        await runPool(CATEGORIES, CATEGORY_CONCURRENCY, async (category) => {
+          results.push(await timed(category))
+        })
       } catch (err) {
         // Still-running queries have ms = -1; report how long they had been out.
         for (const timing of timings) if (timing.ms < 0) timing.ms = Date.now() - startedAt

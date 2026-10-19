@@ -3,6 +3,13 @@ import type { Pool } from 'pg'
 import { createLocalOsmLocationContextAdapter } from './osm-location-context'
 import { buildLocationContext } from './osm-location-context-builder'
 import type { Auction } from '~/types/auction'
+import { withStatementTimeout } from '~/server/utils/db'
+
+// The fake pools below only implement query(); run each category on the pool
+// itself instead of a checked-out client with SET LOCAL statement_timeout.
+vi.mock('~/server/utils/db', () => ({
+  withStatementTimeout: vi.fn((db: unknown, _timeoutMs: number, fn: (client: unknown) => unknown) => fn(db)),
+}))
 
 function auction(overrides: Partial<Auction> = {}): Auction {
   return {
@@ -327,6 +334,44 @@ describe('createLocalOsmLocationContextAdapter', () => {
     expect(calls.filter((call) => call.sql.includes('SELECT EXISTS'))).toHaveLength(1)
   })
 
+  it('runs at most four category queries at once, each under a server-side statement timeout', async () => {
+    let inFlight = 0
+    let maxInFlight = 0
+    const query = async (sql: string) => {
+      if (sql.includes('SELECT EXISTS')) return { rows: [{ exists: true }] }
+      inFlight++
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      inFlight--
+      return { rows: [] }
+    }
+    const adapter = createLocalOsmLocationContextAdapter({ db: { query } as unknown as Pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    await adapter.context(auction())
+
+    expect(maxInFlight).toBe(4)
+    expect(vi.mocked(withStatementTimeout)).toHaveBeenCalledWith(expect.anything(), 12_000, expect.any(Function))
+  })
+
+  it('asks for coverage again after a failed coverage check instead of failing the whole run', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let coverageCalls = 0
+    const query = async (sql: string) => {
+      if (sql.includes('SELECT EXISTS')) {
+        coverageCalls++
+        if (coverageCalls === 1) throw new Error('coverage read timeout')
+        return { rows: [{ exists: true }] }
+      }
+      return { rows: [] }
+    }
+    const adapter = createLocalOsmLocationContextAdapter({ db: { query } as unknown as Pool, checkedAt: '2026-07-26T00:00:00.000Z' })
+
+    await expect(adapter.context(auction({ externalId: '1' }))).rejects.toThrow('coverage read timeout')
+    await expect(adapter.context(auction({ externalId: '2' }))).resolves.not.toBeNull()
+    expect(coverageCalls).toBe(2)
+    warn.mockRestore()
+  })
+
   it('stays unsupported without coordinates', () => {
     const { pool } = fakeOsmPool()
     const adapter = createLocalOsmLocationContextAdapter({ db: pool, checkedAt: '2026-07-26T00:00:00.000Z' })
@@ -337,24 +382,32 @@ describe('createLocalOsmLocationContextAdapter', () => {
   describe('query timing log', () => {
     afterEach(() => vi.restoreAllMocks())
 
-    it('names the failing and the still-running categories when a query times out', async () => {
+    it('names the failing category and starts no further queries once one times out', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const started: unknown[] = []
+      let inFlight = 0
       const query = async (sql: string, params: unknown[] = []) => {
         if (sql.includes('SELECT EXISTS')) return { rows: [{ exists: true }] }
-        if (params[4] === 'building' && params[5] === undefined) throw new Error('Query read timeout')
-        return new Promise(() => {}) // every other category is still running
+        started.push(params[4])
+        if (params[4] === 'railway') throw new Error('canceling statement due to statement timeout')
+        inFlight++
+        await new Promise((resolve) => setTimeout(resolve, 1))
+        inFlight--
+        return { rows: [] }
       }
       const adapter = createLocalOsmLocationContextAdapter({ db: { query } as unknown as Pool, checkedAt: '2026-07-26T00:00:00.000Z' })
 
-      await expect(adapter.context(auction({ lat: 49.01, lng: 8.4 }))).rejects.toThrow('Query read timeout')
+      await expect(adapter.context(auction({ lat: 49.01, lng: 8.4 }))).rejects.toThrow('statement timeout')
 
+      // The queries already running finished before the error surfaced, so a
+      // failed context leaves nothing behind on the shared pool.
+      expect(inFlight).toBe(0)
+      expect(started.length).toBeLessThan(10)
       expect(warn).toHaveBeenCalledTimes(1)
       const line = String(warn.mock.calls[0]?.[0])
       expect(line).toContain('[osm-context]')
-      expect(line).toContain('at 49.01,8.4 failed (Query read timeout)')
-      expect(line).toContain('failed: building@')
-      expect(line).toContain('unfinished:')
-      expect(line).not.toContain('unfinished/failed:')
+      expect(line).toContain('at 49.01,8.4 failed (canceling statement due to statement timeout)')
+      expect(line).toContain('failed: railway=station|halt|tram_stop@15000m')
     })
 
     it('logs a failed coverage check', async () => {
