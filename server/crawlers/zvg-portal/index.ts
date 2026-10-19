@@ -22,7 +22,11 @@ async function enrichOne(auction: Auction): Promise<void> {
   // Missing land_abk / non-numeric externalId is permanent — nothing to fetch, ever.
   if (!landAbk || !/^\d+$/.test(auction.externalId)) return
   const r = await enrichInBatches([auction], landAbk, (a, info) => applyDetail(a, info, landAbk))
-  if (r.errors > 0) throw new Error('zvg-portal detail fetch failed')
+  if (r.errors > 0) {
+    // The enrich task only logs the message, so carry the reason in it too
+    // (same as zvbawu/index.ts).
+    throw new Error(`zvg-portal detail fetch failed: ${(r.firstError as Error).message}`, { cause: r.firstError })
+  }
 }
 
 const FETCH_TIMEOUT_MS = 20_000

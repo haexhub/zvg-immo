@@ -112,3 +112,9 @@ export function fixMojibake(s: string): string {
 export function clean(s: string): string {
   return fixMojibake(decodeEntities(s)).replace(/\s+/g, ' ').trim()
 }
+
+/** The portal's whole answer under load or for a dropped session, served with
+ *  HTTP 200 instead of a real page. */
+export function isZvgErrorBody(body: string): boolean {
+  return body.length < 64 && body.trim() === 'error'
+}

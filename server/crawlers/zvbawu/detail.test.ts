@@ -136,10 +136,30 @@ describe('enrichInBatches', () => {
   })
 
   it('keeps the HTTP status of a failed detail fetch', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })))
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => new Response('', { status: 503 }))
+    vi.stubGlobal('fetch', fetchMock)
 
-    const result = await enrichInBatches([item], () => {})
+    const pending = enrichInBatches([item], () => {})
+    await vi.advanceTimersByTimeAsync(5_000)
+    const result = await pending
+    vi.useRealTimers()
 
     expect(result.firstError).toMatchObject({ message: expect.stringMatching(/HTTP 503/) })
+    expect(fetchMock).toHaveBeenCalledTimes(3) // a 5xx is retried twice first
+  })
+
+  it('retries a dropped connection and names its code once the retries are spent', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () => { throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const pending = enrichInBatches([item], () => {})
+    await vi.advanceTimersByTimeAsync(5_000)
+    const result = await pending
+    vi.useRealTimers()
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(result.firstError).toMatchObject({ message: expect.stringContaining('fetch failed (ECONNRESET)') })
   })
 })

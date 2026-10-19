@@ -1,4 +1,5 @@
 import type { Auction } from '~/types/auction'
+import { describeFetchError, retryTransient, TransientUpstreamError } from '../transient-retry'
 import { ZVBAWU_BASE, UA, COUNTRY } from './constants'
 import { extractInertiaPage, parseEuro, parseGermanDateTimeString } from './text'
 
@@ -38,28 +39,28 @@ const FETCH_TIMEOUT_MS = 15_000
 
 /** Throws on HTTP/network/timeout/payload failures: an empty court result is
  *  indistinguishable from "this court has no auctions", so a failed fetch must
- *  reject crawlCourt for index.ts to withhold the platform's success. */
+ *  reject crawlCourt for index.ts to withhold the platform's success. A
+ *  dropped connection or 5xx is retried first (retryTransient). */
 async function fetchPage(courtSlug: string, page: number): Promise<ListPage> {
   const url = `${ZVBAWU_BASE}/amtsgerichte/${courtSlug}/zwangsversteigerungen${page > 1 ? `?page=${page}` : ''}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'de-DE,de;q=0.9',
-      },
+    return await retryTransient(async () => {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'de-DE,de;q=0.9',
+        },
+      })
+      if (res.status >= 500) throw new TransientUpstreamError(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const parsed = extractInertiaPage<ListPage>(await res.text())
+      if (!parsed) throw new Error('no Inertia page payload')
+      return parsed
     })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const parsed = extractInertiaPage<ListPage>(await res.text())
-    if (!parsed) throw new Error('no Inertia page payload')
-    return parsed
   } catch (err) {
-    throw new Error(`zvbawü ${url} failed: ${(err as Error).message}`, { cause: err })
-  } finally {
-    clearTimeout(timer)
+    throw new Error(`zvbawü ${url} failed: ${describeFetchError(err)}`, { cause: err })
   }
 }
 

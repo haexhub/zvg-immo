@@ -3,7 +3,8 @@ import type { Attachment } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import type { DocumentIdentity } from '~/server/utils/raw-archive'
 import { ZVG_BASE, UA } from './constants'
-import { decodeEntities, parseFileSize } from './text'
+import { decodeEntities, isZvgErrorBody, parseFileSize } from './text'
+import { describeFetchError, retryTransient, TransientUpstreamError } from '../transient-retry'
 import { classifyAttachment } from '~/server/utils/classify-attachment'
 
 export interface DetailInfo {
@@ -19,29 +20,30 @@ export async function fetchDetailPage(
   identity?: DocumentIdentity,
 ): Promise<DetailInfo> {
   const url = `${ZVG_BASE}/index.php?button=showZvg&zvg_id=${zvgId}&land_abk=${landAbk}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
   let html: string
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html',
-        'Accept-Language': 'de-DE,de;q=0.9',
-        Referer: `${ZVG_BASE}/index.php?button=Suchen`,
-      },
+    html = await retryTransient(async () => {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html',
+          'Accept-Language': 'de-DE,de;q=0.9',
+          Referer: `${ZVG_BASE}/index.php?button=Suchen`,
+        },
+      })
+      if (res.status >= 500) throw new TransientUpstreamError(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const body = await res.text()
+      // The portal answers a bare 'error' under load or for a dropped session.
+      // Throw (after the retries) so the enrich task retries later — returning
+      // an empty detail would be stamped as fetched and permanently replace
+      // the stored attachments.
+      if (isZvgErrorBody(body)) throw new TransientUpstreamError('returned error page')
+      return body
     })
-    if (!res.ok) throw new Error(`ZVG detail HTTP ${res.status} for ${zvgId}`)
-    html = await res.text()
-  } finally {
-    clearTimeout(timer)
-  }
-  // The portal answers a bare 'error' under load or for a dropped session.
-  // Throw so the enrich task retries later — returning an empty detail would
-  // be stamped as fetched and permanently replace the stored attachments.
-  if (html.length < 64 && html.trim() === 'error') {
-    throw new Error(`ZVG detail returned error page for ${zvgId}`)
+  } catch (err) {
+    throw new Error(`ZVG detail ${zvgId}: ${describeFetchError(err)}`, { cause: err })
   }
 
   // Gutachten-PDF is not present on every auction — HTML is archived
@@ -105,10 +107,11 @@ export async function enrichInBatches<T extends DocumentIdentity>(
   landAbk: string,
   enricher: (item: T, info: DetailInfo) => void,
   concurrency = 10,
-): Promise<{ enriched: number; errors: number }> {
+): Promise<{ enriched: number; errors: number; firstError?: unknown }> {
   let cursor = 0
   let enriched = 0
   let errors = 0
+  let firstError: unknown
   async function worker() {
     while (cursor < items.length) {
       const idx = cursor++
@@ -123,9 +126,10 @@ export async function enrichInBatches<T extends DocumentIdentity>(
           `[zvg-portal] detail enrichment failed for ${item.externalId}: ${(err as Error).message}`,
         )
         errors++
+        firstError ??= err
       }
     }
   }
   await Promise.all(Array.from({ length: concurrency }, worker))
-  return { enriched, errors }
+  return { enriched, errors, firstError }
 }
