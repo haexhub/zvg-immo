@@ -203,6 +203,13 @@ describe('pollAnthropicBatch', () => {
     await expect(pollAnthropicBatch('msgbatch_done', config)).resolves.toEqual({ state: 'succeeded' })
     await expect(pollAnthropicBatch('msgbatch_wait', config)).resolves.toEqual({ state: 'pending' })
   })
+
+  it('rethrows a durable poll rejection instead of reporting the job pending forever', async () => {
+    stubOfetch([{ match: '/msgbatch_gone', error: Object.assign(new Error('404 Not Found'), { response: { status: 404 } }) }])
+    const { pollAnthropicBatch } = await import('./anthropic-batch')
+
+    await expect(pollAnthropicBatch('msgbatch_gone', config)).rejects.toThrow('404 Not Found')
+  })
 })
 
 describe('fetchAnthropicBatchResults', () => {

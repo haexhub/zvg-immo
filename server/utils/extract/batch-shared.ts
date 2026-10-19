@@ -80,3 +80,46 @@ export function extractBatchItemErrorMessage(
   }
   return null
 }
+
+/** A batch poll request that failed. A durable HTTP rejection — 401 revoked
+ *  key, 402 exhausted balance, 404 unknown job, i.e. any 4xx except 408/429
+ *  — is rethrown with the provider's own message so llm-batch-poll.ts can
+ *  give the job up after LLM_BATCH_JOB_EXPIRY_MS; reporting it as "pending"
+ *  kept such a job polled forever, since that give-up only fires for a
+ *  throwing poll. Everything else (no response at all, timeout, 408/429,
+ *  5xx) stays pending: a blip must not expire a job whose results may be
+ *  waiting. Deliberately broader than isTransientBatchError, which treats an
+ *  unrecognised network error as durable for the capability flag. */
+export function pendingOnTransientPollError(err: unknown, tag: string, jobName: string): { state: 'pending' } {
+  const message = extractOfetchErrorMessage(err)
+  const status = (err as { response?: { status?: unknown } })?.response?.status ??
+    (err as { statusCode?: unknown })?.statusCode
+  const durable = typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 429
+  if (durable) throw new Error(message, { cause: err })
+  console.warn(`[${tag}] poll failed for ${jobName}: ${message}`)
+  return { state: 'pending' }
+}
+
+function errorText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value.trim() || undefined
+  const message = (value as { message?: unknown } | null | undefined)?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : undefined
+}
+
+/** The reason a provider gives for a failed/expired batch job. The shapes
+ *  differ (and OpenRouter's beta API is undocumented): `error` as a plain
+ *  string or `{message}`, or OpenAI-style `errors` as a list or as
+ *  `{data: [...]}` of strings or `{message}` objects. */
+export function extractBatchFailureReason(resp: unknown): string | undefined {
+  const job = resp as { error?: unknown; errors?: unknown } | null | undefined
+  const direct = errorText(job?.error)
+  if (direct) return direct
+  const errors = job?.errors
+  const list = Array.isArray(errors) ? errors : (errors as { data?: unknown } | null | undefined)?.data
+  if (!Array.isArray(list)) return undefined
+  for (const item of list) {
+    const text = errorText(item)
+    if (text) return text
+  }
+  return undefined
+}

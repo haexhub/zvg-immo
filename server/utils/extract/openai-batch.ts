@@ -6,7 +6,14 @@ import {
 import { clampExtraction } from './llm-clamp'
 import { SYSTEM_PROMPT, UNIVERSAL_AUCTION_SCHEMA, UNIVERSAL_AUCTION_SCHEMA_NAME } from './llm-schema'
 import { parseOpenAiExtractionResponse, parseOpenAiUsage, toOpenAiContent } from './providers/openai-compatible'
-import { apiBase, customIdForKey, extractBatchItemErrorMessage, extractOfetchErrorMessage, isTransientBatchError } from './batch-shared'
+import {
+  apiBase,
+  customIdForKey,
+  extractBatchItemErrorMessage,
+  extractOfetchErrorMessage,
+  isTransientBatchError,
+  pendingOnTransientPollError,
+} from './batch-shared'
 import { insertLlmBatchJob, recordLlmBatchCapability } from '../llm-batch-jobs'
 import type { PollResult } from './gemini-batch-client'
 import type { LlmBatchResultItem, LlmBatchSubmitResult } from './llm-batch'
@@ -236,8 +243,7 @@ export async function pollOpenAiBatch(jobName: string, config: LlmConfig): Promi
     if (resp.status === 'expired') return { state: 'expired', errorMessage }
     return { state: 'pending' }
   } catch (err) {
-    console.warn(`[openai-batch] poll failed for ${jobName}: ${(err as Error).message}`)
-    return { state: 'pending' }
+    return pendingOnTransientPollError(err, 'openai-batch', jobName)
   }
 }
 
