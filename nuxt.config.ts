@@ -282,10 +282,12 @@ export default defineNuxtConfig({
       asyncContext: true,
     },
     scheduledTasks: {
-      // Every 6 hours: re-crawl and fill in missing geocodes. After the first
-      // bulk run the cache is hot; subsequent ticks finish in seconds.
+      // Every 6 hours: geocode stored current auctions that still lack
+      // coordinates (no crawl — it reads what enrich persisted, so a new
+      // listing gets its position on the first tick after its enrich run).
+      // After the first bulk run the cache is hot; later ticks take seconds.
       '0 */6 * * *': ['geocode'],
-      // Offset 30 min from geocode so the two full crawls don't overlap. Crawls,
+      // Offset 30 min from geocode so their DB work doesn't overlap. Crawls,
       // fetches detail pages, and downloads/archives documents + photos for new
       // or changed listings — no extraction here (see 'reprocess' below), so
       // this keeps making progress regardless of LLM availability/budget.

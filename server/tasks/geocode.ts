@@ -1,46 +1,34 @@
-// Crawls every registered region and resolves missing addresses to lat/lng via
-// Nominatim. Idempotent: addresses already in the disk cache are skipped, so
-// the first run is slow (~40 min for ~2200 cold lookups at 1 req/s) and
-// subsequent runs finish in seconds.
+// Resolves addresses of current stored auctions that have no usable position
+// yet via the geocoder (Nominatim/LocationIQ) and writes the newly found
+// coordinates onto their `auctions` rows. Idempotent: addresses already in the
+// geocode cache (hits and known misses) cost no upstream request, so a cold
+// run is slow (~40 min for ~2200 lookups at 1 req/s) and later runs finish in
+// seconds. Also fills the AT-Edikte/Biddit Verkehrswert cache.
+//
+// Works from stored data only and never crawls: crawling is refresh's job
+// (which honours the per-portal cadence in crawl-cadence.ts) and enrich's,
+// which also persists every crawled auction. The trade-off is latency — a
+// newly crawled auction gets its stored record (with address) from enrich,
+// so geocode picks it up on its first run after that enrich run.
+//
+// Still gated by the "automatic crawling" switch: the run talks to upstreams
+// (the geocoder, and the AT/BE detail pages for the Verkehrswert), which is
+// exactly the background traffic that switch exists to stop.
 //
 // Triggered by the scheduled task config in nuxt.config.ts and once on server
 // startup via server/plugins/geocode-bootstrap.ts.
 
-import type { Auction } from '~/types/auction'
-import { crawlAll } from '../crawlers/registry'
-import { enrichInBatches as enrichAtDetails } from '../crawlers/at/detail'
-import { enrichInBatches as enrichBidditDetails, formatVerkehrswertText } from '../crawlers/biddit/detail'
-import { activeGeocoderProvider, geocodeAddress, geocodeStatus } from '../utils/geocode'
-import { writeAuctionDetails } from '../utils/auction-details'
-import { applyAuctionExtraction } from '../utils/auction-extraction'
-import { mergeStoredAuction } from '../utils/auction-merge'
-import {
-  ensureAuctionIdentity,
-  recordGeocodeAttempts,
-  upsertCurrentAuctions,
-  type GeocodeAttempt,
-} from '../utils/current-auctions'
-import { readAuctionRecordsByKeys } from '../utils/auction-record'
-import {
-  cacheKey,
-  readVerkehrswertCache,
-  writeVerkehrswertCache,
-  type VerkehrswertCache,
-} from '../utils/verkehrswert-cache'
-import { runExclusiveTask, throwIfTaskAborted } from '../utils/exclusive-task'
+import { runGeocode } from '../utils/tasks/geocode-run'
+import { runExclusiveTask } from '../utils/exclusive-task'
 import { isAutomaticCrawlingEnabled } from '../utils/automatic-task-gate'
-
-// Matches recordGeocodeAttempts' own chunk size, so a flush is exactly one
-// UPDATE statement.
-const GEOCODE_ATTEMPT_FLUSH_SIZE = 500
 
 // Guards against overlapping runs: a cold-start bootstrap run can take ~40 min
 // and would otherwise race a cron-triggered run of the same task (duplicate
-// Nominatim traffic, concurrent verkehrswert cache writes).
+// geocoder traffic, concurrent verkehrswert cache writes).
 export default defineTask({
   meta: {
     name: 'geocode',
-    description: 'Crawl all registered regions and geocode addresses missing from the cache.',
+    description: 'Geocode stored current auctions that have an address but no coordinates (no crawl).',
   },
   async run() {
     if (!await isAutomaticCrawlingEnabled()) {
@@ -50,197 +38,3 @@ export default defineTask({
     return await runExclusiveTask('geocode', runGeocode)
   },
 })
-
-async function runGeocode(signal: AbortSignal) {
-    const startedAt = Date.now()
-    console.log('[geocode] start')
-
-    const result = await crawlAll({ immobilienOnly: true, enrichDetails: false, signal })
-    // Listings whose crawler already supplied coordinates never need the geocoder.
-    const withAddress = result.auctions.filter((a) => a.address && (a.lat == null || a.lng == null))
-    console.log(
-      `[geocode] crawled ${result.auctions.length} auctions (${withAddress.length} with address)`,
-    )
-
-    let processed = 0
-    let geocoded = 0
-    let failed = 0
-    const provider = activeGeocoderProvider()
-    // Flushed in chunks rather than once at the end: a cold run takes ~40 min
-    // and gets aborted whenever a newer run supersedes it (runExclusiveTask)
-    // or the container redeploys — buffering everything would throw away the
-    // observability for exactly the long runs it exists for.
-    const attempts: GeocodeAttempt[] = []
-    const flushAttempts = async (): Promise<void> => {
-      if (attempts.length === 0) return
-      const pending = attempts.splice(0, attempts.length)
-      await recordGeocodeAttempts(pending, new Date().toISOString())
-    }
-    const startGeo = Date.now()
-    try {
-      for (const a of withAddress) {
-        throwIfTaskAborted(signal)
-        processed++
-        const point = await geocodeAddress(a.address, a.country, { fetchMissing: true }).catch(() => {
-          failed++
-          return null
-        })
-        if (point) {
-          a.lat = point.lat
-          a.lng = point.lng
-          geocoded++
-        }
-        // Recorded regardless of outcome: "never attempted" vs "attempted, still
-        // unresolved" is only distinguishable in the DB once this run stamps it
-        // (see WP-3) — 'pending' means the cache still has un-queried variants
-        // (e.g. the failure cooldown skipped them this run).
-        const status = point ? 'geocoded' : await geocodeStatus(a.address, a.country)
-        attempts.push({ platform: a.platform, externalId: a.externalId, result: status, provider })
-        if (attempts.length >= GEOCODE_ATTEMPT_FLUSH_SIZE) await flushAttempts()
-        if (processed % 100 === 0 || processed === withAddress.length) {
-          const rate = processed / Math.max(1, (Date.now() - startGeo) / 1000)
-          console.log(
-            `[geocode] ${processed}/${withAddress.length} · ${geocoded} hit · ${failed} err · ${rate.toFixed(1)}/s`,
-          )
-        }
-      }
-    } finally {
-      await flushAttempts()
-    }
-
-    // AT-Edikte and Biddit both hide their Schätzwert / estimatedPrice on the
-    // listing path the API uses. Enrich missing entries here and persist them
-    // so the API can overlay the value read-only. Load the cache once and
-    // share it — two concurrent writers would each rebuild the file from their
-    // own local read, silently dropping the sibling's entries.
-    const vwCache: VerkehrswertCache = { ...(await readVerkehrswertCache()) }
-    const [vwAt, vwBe] = await Promise.all([
-      enrichAtVerkehrswert(result.auctions, vwCache),
-      enrichBidditVerkehrswert(result.auctions, vwCache),
-    ])
-    const vwAdded = vwAt.added + vwBe.added
-    const vwErrors = vwAt.errors + vwBe.errors
-    if (vwAdded > 0) await writeVerkehrswertCache(vwCache)
-
-    const persistedCoordinates = await persistGeocodedAuctions(
-      result.auctions.filter((a) => a.lat != null && a.lng != null),
-      signal,
-    )
-
-    const durationMs = Date.now() - startedAt
-    console.log(
-      `[geocode] done in ${(durationMs / 1000).toFixed(0)}s · geocoded=${geocoded} persisted=${persistedCoordinates} failed=${failed} · verkehrswert(at)=${vwAt.added}/${vwAt.errors} · verkehrswert(be)=${vwBe.added}/${vwBe.errors}`,
-    )
-
-    return {
-      result: {
-        processed,
-        geocoded,
-        persistedCoordinates,
-        failed,
-        verkehrswertAdded: vwAdded,
-        verkehrswertErrors: vwErrors,
-        durationMs,
-      },
-    }
-}
-
-const PERSIST_CHUNK_SIZE = 500
-
-async function persistGeocodedAuctions(auctions: Auction[], signal: AbortSignal): Promise<number> {
-  if (auctions.length === 0) return 0
-  await ensureAuctionIdentity(auctions)
-  const at = new Date().toISOString()
-  let persisted = 0
-
-  // A chunk of auctions at a time: their stored records are read just for that
-  // chunk instead of the whole table (~350 MB) up front.
-  for (let start = 0; start < auctions.length; start += PERSIST_CHUNK_SIZE) {
-    const chunk = auctions.slice(start, start + PERSIST_CHUNK_SIZE)
-    const records = await readAuctionRecordsByKeys(chunk)
-    for (const auction of chunk) {
-      throwIfTaskAborted(signal)
-      try {
-        const record = records.get(cacheKey(auction.platform, auction.externalId))
-        if (auction.detailFetchedAt == null && record) mergeStoredAuction(auction, record.auction)
-        applyAuctionExtraction(auction, auction.extraction ?? record?.auction.extraction)
-        const written = await writeAuctionDetails(auction, auction.extraction ?? null, {
-          artifactVersionId: record?.artifactVersionId ?? null,
-        })
-        if (written?.changed) persisted++
-      } catch (err) {
-        console.warn(`[geocode] persist ${auction.platform}:${auction.externalId}: ${(err as Error).message}`)
-      }
-    }
-  }
-
-  await upsertCurrentAuctions(auctions, at)
-  return persisted
-}
-
-async function enrichAtVerkehrswert(
-  auctions: Auction[],
-  cache: VerkehrswertCache,
-): Promise<{ added: number; errors: number }> {
-  const atAuctions = auctions.filter((a) => a.platform === 'at-edikte')
-  if (atAuctions.length === 0) return { added: 0, errors: 0 }
-
-  const toFetch = atAuctions.filter((a) => !(cacheKey(a.platform, a.externalId) in cache))
-  if (toFetch.length === 0) {
-    console.log(`[geocode] verkehrswert(at): ${atAuctions.length} entries, all cached`)
-    return { added: 0, errors: 0 }
-  }
-  console.log(
-    `[geocode] verkehrswert(at): fetching ${toFetch.length}/${atAuctions.length} missing details`,
-  )
-
-  let added = 0
-  const result = await enrichAtDetails(toFetch, (auction, info) => {
-    cache[cacheKey('at-edikte', auction.externalId)] = {
-      marketValueEur: info.schaetzwertEur,
-      marketValueText: info.schaetzwertText,
-    }
-    added++
-  })
-  return { added, errors: result.errors }
-}
-
-// Biddit's estimatedPrice is on the detail (BFF) JSON but not on the search
-// listing the /api/auctions crawl uses. Mirror the AT flow: fetch once per new
-// auction, store null when the field is a placeholder so we don't re-fetch it
-// every run.
-async function enrichBidditVerkehrswert(
-  auctions: Auction[],
-  cache: VerkehrswertCache,
-): Promise<{ added: number; errors: number }> {
-  const beAuctions = auctions.filter((a) => a.platform === 'biddit')
-  if (beAuctions.length === 0) return { added: 0, errors: 0 }
-
-  // Also refetch cached nulls once: before the startingPrice fallback existed,
-  // every lot cached null (estimatedPrice is a placeholder platform-wide), and
-  // first-write-wins would keep those nulls forever. The `retried` marker keeps
-  // this a one-time backfill — lots that genuinely have no price don't get
-  // re-fetched on every run.
-  const toFetch = beAuctions.filter((a) => {
-    const hit = cache[cacheKey(a.platform, a.externalId)]
-    return hit == null || (hit.marketValueEur == null && !hit.retried)
-  })
-  if (toFetch.length === 0) {
-    console.log(`[geocode] verkehrswert(be): ${beAuctions.length} entries, all cached`)
-    return { added: 0, errors: 0 }
-  }
-  console.log(
-    `[geocode] verkehrswert(be): fetching ${toFetch.length}/${beAuctions.length} missing details`,
-  )
-
-  let added = 0
-  const result = await enrichBidditDetails(toFetch, (auction, info) => {
-    cache[cacheKey('biddit', auction.externalId)] = {
-      marketValueEur: info.estimatedPrice,
-      marketValueText: formatVerkehrswertText(info),
-      ...(info.estimatedPrice == null ? { retried: true } : {}),
-    }
-    added++
-  })
-  return { added, errors: result.errors }
-}
