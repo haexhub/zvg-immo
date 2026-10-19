@@ -44,16 +44,22 @@ Dieselbe Technik für `amenity` (Fähre, Hochschule), `route=ferry` und `aeroway
 
 ## Ausführung
 
-Siehe [2026-08-04-gis-wp1-index-notfall.md](2026-08-04-gis-wp1-index-notfall.md): **eine Session, nicht parallelisieren, off-peak**, kein Ad-hoc-Container (Connection-Erschöpfung hat am 2026-08-03 einen Prod-Ausfall verursacht). `CREATE INDEX CONCURRENTLY` liest die 44 Mio. Zeilen einmal pro Index; Dauer Minuten, Schreibzugriffe (osm2pgsql-Job) bleiben möglich.
+Siehe [2026-08-04-gis-wp1-index-notfall.md](2026-08-04-gis-wp1-index-notfall.md): **eine Session, nicht parallelisieren, off-peak**, kein Ad-hoc-Container (Connection-Erschöpfung hat am 2026-08-03 einen Prod-Ausfall verursacht). `CREATE INDEX CONCURRENTLY` scannt die Tabelle zweimal pro Index und kann auf bestehende Transaktionen warten; plane Zeit und Last entsprechend ein. Schreibzugriffe (osm2pgsql-Job) bleiben möglich.
 
 Danach prüfen, dass beide Indizes valide sind (der Schritt, der 2026-08 übersprungen wurde):
 
 ```sql
-SELECT indexrelid::regclass, indisvalid, pg_size_pretty(pg_relation_size(indexrelid))
-FROM pg_index WHERE indrelid = 'osm_local_elements'::regclass AND NOT indisvalid;
--- muss 0 Zeilen liefern
+SELECT count(*) = 2 AS all_expected_indexes_present,
+       bool_and(indisvalid) AS all_valid
+FROM pg_index
+WHERE indrelid = 'osm_local_elements'::regclass
+  AND indexrelid::regclass::text IN (
+    'idx_osm_local_elements_geog_railway_station',
+    'idx_osm_local_elements_geog_place'
+  );
+-- muss `true | true` liefern
 ```
 
 Wirkung: `podman logs zvg-immo | grep '\[osm-context\]'` nach dem nächsten External-Enrichment-Lauf. Erwartung: kein `railway=…@15000m` und `place=…@30000m` mehr unter den langsamsten Kategorien, keine `Query read timeout` für die zvbawu-Auktionen.
 
-Rückbau: `DROP INDEX CONCURRENTLY idx_osm_local_elements_geog_railway_station, idx_osm_local_elements_geog_place;` (Schema-Drift beachten: Indizes zusätzlich in `server/db/schema.sql` nachtragen, falls dieser Stand dort gepflegt wird).
+Rückbau: `DROP INDEX CONCURRENTLY idx_osm_local_elements_geog_railway_station;` danach `DROP INDEX CONCURRENTLY idx_osm_local_elements_geog_place;` (Schema-Drift beachten: Indizes zusätzlich in `server/db/schema.sql` nachtragen, falls dieser Stand dort gepflegt wird).
