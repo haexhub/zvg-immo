@@ -4,6 +4,7 @@ import { isDailyQuotaError, isLlmProviderUnavailable } from '~/server/utils/extr
 import type { PhotoCuration } from '~/server/utils/extract/llm-clamp'
 import { falsifiedRuleFields, mergeLlmResult, ruleChecksMatchingHint, type RuleCheckedField } from '~/server/utils/extract/merge-llm-result'
 import { readArtifactProcessingState, type ArtifactProcessingState } from '~/server/utils/artifact-version-state'
+import { priorLlmFields } from '~/server/utils/extract/reprocess-fields'
 import { normalizePhoto } from '~/lib/photo'
 import { applyPhotoCuration, buildReprocessInput, buildRulesOnlyEntry, type ReprocessInput } from './reprocess-input'
 import { runMapReduceExtraction } from './reprocess-map-reduce'
@@ -92,7 +93,7 @@ export async function reprocessAuction(
 
   if (!llmConfig) {
     return {
-      entry: buildRulesOnlyEntry(base.fields, priorEntry, at),
+      entry: buildRulesOnlyEntry({ ...base.fields, ...priorLlmFields(priorEntry) }, priorEntry, at),
       rulesFalsified: [],
       llmCalled: false,
       llmInputEmpty: false,
@@ -236,7 +237,6 @@ export async function reprocessAuction(
       : llm.photoCuration
     curatedPhotos = applyPhotoCuration(curatedPhotos, curation)
   }
-  const effectivePriorEntry = base.documentSetChanged ? undefined : priorEntry
   const parsedCurrentSet = llm != null && base.documentSetComplete
   // Same filter the batch path applies: base.fields still carries the
   // platform-reported rooms/securityDeposit that buildReprocessInput
@@ -246,7 +246,13 @@ export async function reprocessAuction(
     ...llm,
     ruleCheck: ruleChecksMatchingHint(llm.ruleCheck, base.input?.rulesHint ?? null, base.fields),
   }
-  const entry = mergeLlmResult(effectivePriorEntry, base.fields, verified, at, curatedPhotos)
+  // Without an LLM result the new document set stays unparsed (see
+  // artifactVersionId below), so the auction remains eligible; until a later
+  // run parses it, the prior LLM values and llmAnalyzedAt stay as they were
+  // instead of a rules-only version replacing them. A result replaces every
+  // LLM-owned field anyway.
+  const mergeFields = llm ? base.fields : { ...base.fields, ...priorLlmFields(priorEntry) }
+  const entry = mergeLlmResult(priorEntry, mergeFields, verified, at, curatedPhotos)
   const rulesFalsified = falsifiedRuleFields(base.fields, verified)
   if (rulesFalsified.length) {
     console.warn(`[reprocess] llm overruled rules value(s) for ${platform}:${externalId}: ${rulesFalsified.join(',')}`)

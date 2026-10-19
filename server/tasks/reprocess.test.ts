@@ -313,6 +313,53 @@ describe('reprocessAuction structured provenance', () => {
   })
 })
 
+describe('reprocessAuction without an LLM result on a changed document set', () => {
+  const changedSetState = {
+    latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+    parsedArtifactVersionId: 11,
+  }
+  const priorLlmEntry = extraction({
+    condition: 'gepflegt',
+    features: ['garten'],
+    yearBuilt: 1936,
+    marketValueEur: 250_000,
+    documentSummary: 'Gutachten von 2025',
+    llmAnalyzedAt: '2026-08-01T10:00:00.000Z',
+  })
+
+  it('keeps the prior LLM values when the LLM call fails', async () => {
+    const config = { baseUrl: 'https://api.example.test', apiKey: 'k', model: 'test-model', provider: 'openai-compatible' as const }
+    vi.mocked(extractByLlm).mockImplementation(async (_input, _config, opts) => {
+      opts?.onProviderAttempt?.()
+      return null
+    })
+
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', priorLlmEntry, config, '2026-08-02T11:00:00.000Z',
+      { artifactState: changedSetState },
+    )
+
+    expect(result?.entry).toMatchObject({
+      condition: 'gepflegt', features: ['garten'], yearBuilt: 1936, marketValueEur: 250_000,
+      documentSummary: 'Gutachten von 2025', llmAnalyzedAt: '2026-08-01T10:00:00.000Z',
+    })
+    // Still unparsed, so a later run retries the new document set.
+    expect(result?.artifactVersionId).toBe(11)
+  })
+
+  it('keeps the prior LLM values when no LLM call is made (budget spent or no model)', async () => {
+    const result = await reprocessAuction(
+      'zvg-portal', '7265', priorLlmEntry, null, '2026-08-02T11:00:00.000Z',
+      { artifactState: changedSetState },
+    )
+
+    expect(result?.entry).toMatchObject({
+      condition: 'gepflegt', yearBuilt: 1936, marketValueEur: 250_000, llmAnalyzedAt: '2026-08-01T10:00:00.000Z',
+    })
+    expect(result?.artifactVersionId).toBe(11)
+  })
+})
+
 describe('runReprocess empty LLM input', () => {
   it('books no LLM call and keeps the failure count, but records the attempt time', async () => {
     vi.mocked(readExtractionLlmConfigChain).mockResolvedValue([{
