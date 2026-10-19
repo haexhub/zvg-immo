@@ -1,6 +1,6 @@
 import { load } from 'cheerio'
 import type { Auction } from '~/types/auction'
-import { hasUsableCoordinates } from '~/server/utils/coordinates'
+import { usableCoordinates } from '~/server/utils/coordinates'
 import { AUCTION_HOUSE_LABELS, BASE_URL, COUNTRY, DGA_REGION_NAMES, DGA_REGIONS, LIST_URL, PLATFORM_ID, UA } from './constants'
 
 const FETCH_TIMEOUT_MS = 20_000
@@ -108,8 +108,12 @@ export function parseListPage(html: string): ListItem[] {
     })
 
     const mapAnchor = $el.find('.ortIco a').first()
-    const lat = Number(mapAnchor.attr('data-lat'))
-    const lng = Number(mapAnchor.attr('data-lon'))
+    const latRaw = mapAnchor.attr('data-lat')?.trim() ?? ''
+    const lngRaw = mapAnchor.attr('data-lon')?.trim() ?? ''
+    const point = usableCoordinates(
+      latRaw ? Number(latRaw) : null,
+      lngRaw ? Number(lngRaw) : null,
+    )
 
     const limitRaw = clean($el.find('.auktion_limit.price .auktionLimitAmoutForSorting').first().text())
     const limitNum = limitRaw ? Number(limitRaw) : NaN
@@ -124,9 +128,10 @@ export function parseListPage(html: string): ListItem[] {
       street,
       cityLine,
       regionCode,
-      // An empty data-lat/-lon attribute reads as 0 through Number('').
-      lat: hasUsableCoordinates(lat, lng) ? lat : null,
-      lng: hasUsableCoordinates(lat, lng) ? lng : null,
+      // Check the raw attributes first: Number('') is 0, but an empty
+      // attribute must not become a real equator/meridian position.
+      lat: point?.lat ?? null,
+      lng: point?.lng ?? null,
       auktionslimit: Number.isFinite(limitNum) && limitNum > 0 ? limitNum : null,
       auktionslimitText: limitText ? `${limitText} €` : null,
       thumbnailUrl: thumbSrc ? absoluteUrl(thumbSrc) : null,
