@@ -432,6 +432,30 @@ describe('prepareLiveLlmDocuments', () => {
     vi.unstubAllGlobals()
   })
 
+  it('retries a document whose connection dropped and names the network code once it keeps failing', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout'] })
+    const reset = () => new TypeError('fetch failed', { cause: Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }) })
+    const fetchMock = vi.fn().mockRejectedValueOnce(reset()).mockResolvedValueOnce(new Response('', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const attachments: Attachment[] = [
+      att({ kind: 'appraisal', label: 'Beskrivning och värdering', filename: 'F-2209-25.pdf', proxyUrl: 'https://auktionstorget.kronofogden.se/download/F-2209-25.pdf' }),
+    ]
+
+    const recovered = prepareLiveLlmDocuments(attachments, identity, '2026-07-31T08:27:35.000Z')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect((await recovered).documentSetComplete).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+
+    fetchMock.mockReset().mockImplementation(async () => { throw reset() })
+    const failed = prepareLiveLlmDocuments(attachments, identity, '2026-07-31T08:27:35.000Z')
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect((await failed).errors).toEqual(['Beskrivning och värdering: fetch failed (ECONNRESET)'])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
   it('leaves errors undefined once every candidate fetch succeeds', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 200 })))
 

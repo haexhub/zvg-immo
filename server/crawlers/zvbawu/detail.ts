@@ -1,6 +1,7 @@
 import type { Auction, Attachment } from '~/types/auction'
 import { archiveDetailCapture } from '~/server/utils/fetch-archive'
 import type { DocumentIdentity } from '~/server/utils/raw-archive'
+import { describeFetchError, retryTransient, TransientUpstreamError } from '../transient-retry'
 import { ZVBAWU_BASE, UA } from './constants'
 import { extractInertiaPage, parseSqm, stripHtml } from './text'
 
@@ -70,36 +71,39 @@ export interface DetailInfo {
 const FETCH_TIMEOUT_MS = 15_000
 
 /** Throws on every failure, keeping the cause, so the enrich task can tell an
- *  upstream problem apart from a broken raw archive. */
+ *  upstream problem apart from a broken raw archive. A dropped connection or
+ *  5xx is retried first (retryTransient). */
 async function fetchDetail(link: string, identity: DocumentIdentity): Promise<DetailPage> {
   const url = `${ZVBAWU_BASE}${link.startsWith('/') ? link : `/${link}`}`
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  let body: string
   try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': UA,
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'de-DE,de;q=0.9',
-      },
+    body = await retryTransient(async () => {
+      const res = await fetch(url, {
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        headers: {
+          'User-Agent': UA,
+          Accept: 'text/html,application/xhtml+xml',
+          'Accept-Language': 'de-DE,de;q=0.9',
+        },
+      })
+      if (res.status >= 500) throw new TransientUpstreamError(`HTTP ${res.status}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      return await res.text()
     })
-    if (!res.ok) throw new Error(`zvbawü detail ${url}: HTTP ${res.status}`)
-    const body = await res.text()
-    // zvbawü is an Inertia.js SSR shell — the facts live in a `data-page` JSON
-    // attribute (extractInertiaPage below), not in prosaic HTML. Archived
-    // anyway: the raw response body still preserves the facts.
-    try {
-      await archiveDetailCapture(Buffer.from(body, 'utf8'), identity, url, new Date().toISOString())
-    } catch (err) {
-      throw new Error(`zvbawü detail ${url}: raw archive failed`, { cause: err })
-    }
-    const page = extractInertiaPage<DetailPage>(body)
-    if (!page) throw new Error(`zvbawü detail ${url}: no Inertia page payload`)
-    return page
-  } finally {
-    clearTimeout(timer)
+  } catch (err) {
+    throw new Error(`zvbawü detail ${url}: ${describeFetchError(err)}`, { cause: err })
   }
+  // zvbawü is an Inertia.js SSR shell — the facts live in a `data-page` JSON
+  // attribute (extractInertiaPage below), not in prosaic HTML. Archived
+  // anyway: the raw response body still preserves the facts.
+  try {
+    await archiveDetailCapture(Buffer.from(body, 'utf8'), identity, url, new Date().toISOString())
+  } catch (err) {
+    throw new Error(`zvbawü detail ${url}: raw archive failed`, { cause: err })
+  }
+  const page = extractInertiaPage<DetailPage>(body)
+  if (!page) throw new Error(`zvbawü detail ${url}: no Inertia page payload`)
+  return page
 }
 
 function buildAttachments(d: DetailPage['props']['auction']): Attachment[] {

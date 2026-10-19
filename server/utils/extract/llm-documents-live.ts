@@ -6,6 +6,7 @@
 
 import type { Attachment } from '~/types/auction'
 import { getDgaAgSessionCookie, isDgaAgLoginRedirect } from '~/server/crawlers/dga-ag/session'
+import { describeFetchError, retryTransient, TransientUpstreamError } from '~/server/crawlers/transient-retry'
 import type { ArchivedDocumentSetItem, DocumentIdentity } from '../raw-archive'
 import {
   attachmentLabel,
@@ -50,38 +51,50 @@ interface FetchedAttachment {
   error?: string
 }
 
+async function downloadAttachment(
+  url: string,
+  headers: Record<string, string>,
+): Promise<FetchedAttachment & { finalUrl: string | null }> {
+  const res = await fetchPublicUrl(url, { headers, signal: AbortSignal.timeout(30_000) })
+  const finalUrl = res.url || null
+  if (res.status >= 500) {
+    await res.body?.cancel().catch(() => undefined)
+    throw new TransientUpstreamError(`HTTP ${res.status}`)
+  }
+  if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
+  const contentLength = Number(res.headers.get('content-length') ?? '')
+  if (Number.isFinite(contentLength) && contentLength > MAX_ATTACHMENT_BYTES) {
+    await res.body?.cancel().catch(() => undefined)
+    return { bytes: null, error: `attachment too large (${contentLength} bytes)`, finalUrl }
+  }
+  if (!res.body) return { bytes: null, error: 'empty response body', finalUrl }
+  const reader = res.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    total += value.byteLength
+    if (total > MAX_ATTACHMENT_BYTES) {
+      await reader.cancel().catch(() => undefined)
+      return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)`, finalUrl }
+    }
+    chunks.push(Buffer.from(value))
+  }
+  return { bytes: Buffer.concat(chunks, total), finalUrl }
+}
+
+/** A dropped connection or 5xx is retried (retryTransient): one failed
+ *  document marks the whole archived document set incomplete. */
 async function fetchAttachmentBytesOnce(
   url: string,
   headers: Record<string, string>,
 ): Promise<FetchedAttachment & { finalUrl: string | null }> {
-  let finalUrl: string | null = null
   try {
-    const res = await fetchPublicUrl(url, { headers, signal: AbortSignal.timeout(30_000) })
-    finalUrl = res.url || null
-    if (!res.ok) return { bytes: null, error: `HTTP ${res.status}`, finalUrl }
-    const contentLength = Number(res.headers.get('content-length') ?? '')
-    if (Number.isFinite(contentLength) && contentLength > MAX_ATTACHMENT_BYTES) {
-      await res.body?.cancel().catch(() => undefined)
-      return { bytes: null, error: `attachment too large (${contentLength} bytes)`, finalUrl }
-    }
-    if (!res.body) return { bytes: null, error: 'empty response body', finalUrl }
-    const reader = res.body.getReader()
-    const chunks: Buffer[] = []
-    let total = 0
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (!value) continue
-      total += value.byteLength
-      if (total > MAX_ATTACHMENT_BYTES) {
-        await reader.cancel().catch(() => undefined)
-        return { bytes: null, error: `attachment too large (>${MAX_ATTACHMENT_BYTES} bytes)`, finalUrl }
-      }
-      chunks.push(Buffer.from(value))
-    }
-    return { bytes: Buffer.concat(chunks, total), finalUrl }
+    return await retryTransient(() => downloadAttachment(url, headers))
   } catch (err) {
-    return { bytes: null, error: (err as Error).message, finalUrl }
+    return { bytes: null, error: describeFetchError(err), finalUrl: null }
   }
 }
 
