@@ -7,8 +7,6 @@ import { BASE_URL, UA } from './constants'
 import { throttledFetch } from './fetch'
 import { clean, cleanMultiline } from './text'
 
-const FETCH_TIMEOUT_MS = 20_000
-
 function absoluteUrl(path: string): string {
   return path.startsWith('http') ? path : `${BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`
 }
@@ -81,7 +79,6 @@ export async function enrichOne(auction: Auction): Promise<void> {
   if (!url) return
   const res = await throttledFetch(url, {
     headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   })
   if (!res.ok) throw new Error(`sales.bcpea.org detail ${auction.externalId}: HTTP ${res.status}`)
   const bytes = Buffer.from(await res.arrayBuffer())

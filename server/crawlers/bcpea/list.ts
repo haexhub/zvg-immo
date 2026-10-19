@@ -14,7 +14,6 @@ import {
   parseRoomCount,
 } from './text'
 
-const FETCH_TIMEOUT_MS = 20_000
 const FETCH_RETRIES = 2
 
 function absoluteUrl(path: string): string {
@@ -31,7 +30,6 @@ async function fetchListPage(page: number): Promise<string> {
     try {
       res = await throttledFetch(url, {
         headers: { Accept: 'text/html', 'Accept-Language': 'bg,en;q=0.8', 'User-Agent': UA },
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
       if (res.ok) return await res.text()
     } catch (err) {

@@ -12,12 +12,14 @@ const FETCH_RETRIES = 2
 let queue: Promise<unknown> = Promise.resolve()
 let lastFetchAt = 0
 
-async function throttledFetch(url: string, init: RequestInit): Promise<Response> {
+async function throttledFetch(url: string, init: Omit<RequestInit, 'signal'>): Promise<Response> {
   const run = queue.then(async () => {
     const wait = lastFetchAt + CRAWL_DELAY_MS - Date.now()
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
     lastFetchAt = Date.now()
-    return fetch(url, init)
+    // The timeout starts only now: created by the caller, it would already
+    // run down while the request waits in the queue behind other callers.
+    return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
   })
   // Keep the queue alive even if this fetch fails, so later callers aren't
   // stuck behind a rejected promise forever.
@@ -55,7 +57,6 @@ export async function fetchKipPage(
           ...(body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
         },
         body: body?.toString(),
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       })
       if (res.ok) {
         const setCookie = res.headers.getSetCookie().map((c) => c.split(';')[0]!)
