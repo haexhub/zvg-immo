@@ -258,7 +258,9 @@ export async function runLlmBatchPoll(signal?: AbortSignal): Promise<{ checked: 
         const falsified = falsifiedRuleFields(fields, verified)
         if (falsified.length) {
           rulesFalsified += falsified.length
-          console.warn(`[llm-batch-poll] llm overruled rules value(s) for ${identity.platform}:${identity.externalId}: ${falsified.join(',')}`)
+          // Informational, not a failure: the host's failure collector treats
+          // every console.warn as one.
+          console.info(`[llm-batch-poll] llm overruled rules value(s) for ${identity.platform}:${identity.externalId}: ${falsified.join(',')}`)
         }
         const mergedEntry = mergeLlmResult(
           storedPriorEntry,
