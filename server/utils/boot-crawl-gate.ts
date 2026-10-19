@@ -2,8 +2,8 @@ import { allScopesFreshWithin } from './crawl-state'
 import { getTaskRunStatus, type TrackedTask } from './task-runs'
 import { ensureEnabledCountriesLoaded, listRegions } from '../crawlers/registry'
 
-// The refresh/geocode/enrich boot tasks all crawl every upstream portal
-// internally. Skip the boot run when every currently enabled scope was
+// The refresh/enrich boot tasks crawl every upstream portal internally
+// (geocode works from stored auctions and needs no gate). Skip the boot run when every currently enabled scope was
 // crawled more recently than this, so a restart (crash or podman
 // auto-update) that lands on already-warm data doesn't re-crawl and risk
 // getting the server IP banned.
