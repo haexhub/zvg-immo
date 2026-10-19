@@ -282,6 +282,7 @@ export async function fetchOpenAiBatchResults(
     out.push({
       key,
       extraction,
+      requestFailed: !ok,
       usage,
       error: extraction ? null : (extractBatchItemErrorMessage(parsed.error, parsed.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
     })

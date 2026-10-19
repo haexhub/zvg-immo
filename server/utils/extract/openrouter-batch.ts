@@ -219,6 +219,7 @@ export async function fetchOpenRouterBatchResults(
       key,
       extraction,
       usage,
+      requestFailed: !ok,
       error: extraction ? null : (extractBatchItemErrorMessage(result.error, result.response) ?? 'Keine gültige Extraktion in der Batch-Antwort'),
     })
   }

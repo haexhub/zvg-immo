@@ -239,7 +239,8 @@ describe('fetchOpenAiBatchResults', () => {
     expect(results[0]!.extraction?.propertyType).toBe('einfamilienhaus')
     expect(results[0]!.extraction?.landAreaSqm).toBe(500)
     expect(results[0]!.usage).toEqual({ inputTokens: null, outputTokens: null })
-    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'Keine gültige Extraktion in der Batch-Antwort' })
+    expect(results[0]!.requestFailed).toBe(false)
+    expect(results[1]).toEqual({ key: 'zvg-portal:9999', extraction: null, usage: null, error: 'Keine gültige Extraktion in der Batch-Antwort', requestFailed: true })
   })
 
   it('resolves error-file lines as failed items with the provider message', async () => {
@@ -256,6 +257,6 @@ describe('fetchOpenAiBatchResults', () => {
 
     const results = await fetchOpenAiBatchResults(['file-out', 'file-err'], config, { zvg_2_hash: 'zvg-portal:42' })
 
-    expect(results).toEqual([{ key: 'zvg-portal:42', extraction: null, usage: null, error: 'image too large' }])
+    expect(results).toEqual([{ key: 'zvg-portal:42', extraction: null, usage: null, error: 'image too large', requestFailed: true }])
   })
 })

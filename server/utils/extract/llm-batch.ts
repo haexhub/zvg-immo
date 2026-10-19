@@ -38,6 +38,12 @@ export interface LlmBatchResultItem {
   usage: LlmUsage | null
   /** Provider detail for an item that completed without a valid extraction. */
   error?: string | null
+  /** True when the provider never produced a 2xx response for this item —
+   *  an item-level error status (402 balance, 429, 5xx, ...) or an
+   *  errored/canceled/expired item. Such a failure says nothing about the
+   *  auction itself, so llm-batch-poll.ts does not count it toward
+   *  MAX_LLM_FAILURES; only a 2xx response without a usable extraction does. */
+  requestFailed?: boolean
 }
 
 // A submitted-but-not-yet-polled item is marked with `llmBatchJob` in
