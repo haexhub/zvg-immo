@@ -33,6 +33,16 @@ export default defineTask({
   },
 })
 
+// Region key -> when the last refresh attempt of it started. crawl_state only
+// advances on success (MIN over the region's platforms), so a region with one
+// failing or incomplete platform looked due again every hour and its whole
+// platform set was re-crawled hourly — bg/all re-walked alo.bg's ~1,140 list
+// pages every hour despite its 24 h cadence, provoking more 429s. The cadence
+// now also holds after a failed attempt.
+// ponytail: process-local, so a restart allows one early re-attempt per
+// region; persist it next to crawl_state if restarts make that matter.
+const lastAttemptAt = new Map<string, number>()
+
 async function runRefresh(signal: AbortSignal) {
   const startedAt = Date.now()
   const capturedAt = new Date(startedAt).toISOString()
@@ -56,11 +66,19 @@ async function runRefresh(signal: AbortSignal) {
       // its portal's interval (rate-limit / IP-ban protection). A cold region
       // (age === null) or one past its interval is crawled. The hourly cron
       // thus keeps robust portals current while sparing sensitive ones.
-      const age = await regionCrawlAgeMs(r.country, r.code, r.platforms.map((p) => p.id))
-      if (age !== null && age < regionRefreshIntervalMs(r.platforms.map((p) => p.id))) {
+      const platformIds = r.platforms.map((p) => p.id)
+      const interval = regionRefreshIntervalMs(platformIds)
+      const regionKey = `${r.country}/${r.code}`
+      const attemptedAt = lastAttemptAt.get(regionKey)
+      const age = await regionCrawlAgeMs(r.country, r.code, platformIds)
+      if ((age !== null && age < interval) || (attemptedAt !== undefined && Date.now() - attemptedAt < interval)) {
         skipped++
         continue
       }
+      // The run's start, like the capturedAt recordCrawlScope stamps: a
+      // per-region timestamp taken later in the run would make the next
+      // hourly run see an hourly region as not yet due.
+      lastAttemptAt.set(regionKey, startedAt)
       try {
         const result = await crawlSingle({
           country: r.country,
