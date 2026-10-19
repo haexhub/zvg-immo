@@ -122,11 +122,13 @@ export interface LlmUsage {
 /** Narrow seam between prompt/schema building (provider-agnostic) and the
  *  wire format a specific backend expects. Swapping or adding a provider
  *  means writing a new implementation of this interface, not touching
- *  buildParts/clampExtraction. When the caller passes `opts.onRequestError`,
- *  implementations resolve to null for an empty/unparseable response (and,
- *  except claude-proxy, for a request failure); without it they throw
- *  LlmProviderError. They must always throw (not swallow to null) when the
- *  failure is a rate limit/quota error — see isRateLimitError(). `opts.
+ *  buildParts/clampExtraction. A request failure (network/HTTP error,
+ *  timeout) always rejects with LlmProviderError, so a provider outage never
+ *  turns into a per-auction extraction failure. When the caller passes
+ *  `opts.onRequestError`, implementations resolve to null for an
+ *  empty/unparseable response; without it they throw LlmProviderError for
+ *  that too. A rate limit/quota error is rethrown as-is (not wrapped, not
+ *  swallowed to null) — see isRateLimitError(). `opts.
  *  onRequestError` fires only for an actual request failure (network/HTTP
  *  error), never for an empty/unparseable response — reprocess.ts uses it to
  *  tell "the provider errored" apart from "the provider returned nothing",
@@ -275,10 +277,12 @@ export function resolveLlmConfig(
   }
 }
 
-/** Returns null on empty input, request failure, or unparseable response.
- *  Throws instead when the provider hit a rate limit/quota error — see
- *  isRateLimitError(); left unhandled so it reaches reprocess.ts's per-
- *  candidate catch, which skips the attempt without counting a failure.
+/** Returns null on empty input (without calling onProviderAttempt — no
+ *  request is made, so callers must not count it as an LLM call or failure)
+ *  or an unparseable response. Throws on a request failure (LlmProviderError)
+ *  or a rate limit/quota error — see isRateLimitError(); left unhandled so
+ *  it reaches reprocess.ts's per-candidate catch, which skips the attempt
+ *  without counting a failure.
  *  `onProviderError` (see ExtractionProvider) only fires for a genuine
  *  request failure, not for parts.length === 0 (no attempt was made) or an
  *  empty/unparseable response. */
