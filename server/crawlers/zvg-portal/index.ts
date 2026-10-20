@@ -31,7 +31,11 @@ async function enrichOne(auction: Auction): Promise<void> {
   }
 }
 
-const FETCH_TIMEOUT_MS = 20_000
+// The portal renders a whole Land in one response before sending headers.
+// Rheinland-Pfalz (~335 objects, ~1 MB) took 42 s from the server on
+// 2026-10-20, so the former 20 s limit failed that Land on most runs and its
+// listings went stale. Generous on purpose: this is a background crawl.
+const LIST_FETCH_TIMEOUT_MS = 90_000
 
 /** The search is a read-only POST, so a dropped connection, a 5xx or the
  *  portal's bare `error` body under load is retried (retryTransient). */
@@ -42,7 +46,7 @@ async function fetchListHtml(landAbk: string, immobilienOnly: boolean): Promise<
       // Single-shot: all=1 returns the full list in one response.
       const res = await fetch(`${ZVG_BASE}/index.php?button=Suchen&all=1`, {
         method: 'POST',
-        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        signal: AbortSignal.timeout(LIST_FETCH_TIMEOUT_MS),
         headers: {
           'User-Agent': UA,
           Accept: 'text/html,application/xhtml+xml',
