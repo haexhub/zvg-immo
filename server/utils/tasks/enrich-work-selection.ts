@@ -144,9 +144,9 @@ export async function prepareEnrichWork({
       : a.platform === 'dga-ag'
         ? DGA_AG_PHOTO_PIPELINE_VERSION
         : PHOTO_PIPELINE_VERSION
-  // Whether a locked-out listing (photoFailures >= MAX_PHOTO_FAILURES) is
-  // past its cooldown and can retry again — see
-  // PHOTO_FAILURE_RETRY_COOLDOWN_HOURS. A never-attempted timestamp (older
+  // Whether a locked-out listing (photoFailures >= MAX_PHOTO_FAILURES) or an
+  // empty gallery (galleryMissing below) is past its cooldown and can retry
+  // again — see PHOTO_FAILURE_RETRY_COOLDOWN_HOURS. A never-attempted timestamp (older
   // rows predating this column) counts as elapsed rather than blocking
   // eligibility on a value that doesn't exist yet.
   const nowMs = Date.now()
@@ -189,13 +189,30 @@ export async function prepareEnrichWork({
       (state.photoPipelineVersion ?? 1) < targetVersion
     const belowFailureCap =
       (state?.photoFailures ?? 0) < MAX_PHOTO_FAILURES || cooldownElapsed(state?.photoLastAttemptedAt)
+    // Nothing displayed although the source lists photos: the set was marked
+    // checked on the list-crawl shape before its detail fetch (alo, bcpea, …)
+    // or a later details version dropped it. `photosCheckedAt` alone would
+    // keep that gallery empty for good. The cooldown keeps a gallery that
+    // can't be mirrored at all from being re-downloaded on every run.
+    const galleryMissing =
+      photos === 0 &&
+      (
+        nativePhotoUrls(a).length > 0 ||
+        (state?.photoUrls?.length ?? 0) > 0 ||
+        (phase === 'eligibility' && (state?.attachments.some(
+          (att) =>
+            att.kind === 'photo' &&
+            /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
+        ) ?? false))
+      ) &&
+      cooldownElapsed(state?.photoLastAttemptedAt)
     const dgaAgPreEnrichBypass = phase === 'eligibility' && a.platform === 'dga-ag'
     const hasPlausiblePhotoSource =
       photos === 0 || nativePhotoUrls(a).length > 0 || a.attachments.length > 0 || dgaAgPreEnrichBypass
     if (scopedForce) {
       return hasPlausiblePhotoSource && belowFailureCap
     }
-    return pipelineDue && hasPlausiblePhotoSource && belowFailureCap
+    return (pipelineDue || galleryMissing) && hasPlausiblePhotoSource && belowFailureCap
   }
   const eligible = auctions.filter(
     (a) =>
