@@ -5,6 +5,10 @@
 // not just the current snapshot. Filterable by country/region/date range,
 // paginated. Response uses the stable PublicObservation contract
 // (server/utils/data-api-shape.ts).
+//
+// Since 2026-10 a row exists per change plus one daily detail row per offered
+// auction, not per crawl run: an auction's state at a time is its latest row
+// before it.
 
 import { sql } from 'drizzle-orm'
 import { getDb } from '../../../utils/db'

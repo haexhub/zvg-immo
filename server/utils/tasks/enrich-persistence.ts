@@ -88,7 +88,7 @@ export async function finalizeEnrichPersistence({
   // Record the final enriched payload, not the earlier list-only regional
   // shape. This keeps each analytical observation complete with detail,
   // document, photo and extraction fields available at this run.
-  await recordObservations(result, capturedAt)
+  await recordObservations(result, capturedAt, 'detail')
   // Structured Postgres mirror for fast SQL filter queries (Daten-API, admin
   // tooling) — additive, no-op without NUXT_DATABASE_URL. See
   // server/utils/current-auctions.ts.

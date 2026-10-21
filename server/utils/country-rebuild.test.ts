@@ -72,6 +72,7 @@ const ROW_COUNTS: Record<string, number> = {
   '"location_enrichment"': 5,
   '"auction_translations"': 6,
   '"auction_fetch_state"': 7,
+  '"auction_observation_heads"': 8,
 }
 
 function makePool(failOnTable?: string) {
@@ -181,6 +182,8 @@ describe('rebuildCountry', () => {
     expect(state.invalidateLocationEnrichmentCache).toHaveBeenCalledOnce()
     expect(sqlCalls.some((text) => text.startsWith('delete from "location_enrichment"'))).toBe(true)
     expect(sqlCalls.some((text) => text.startsWith('delete from "auction_translations"'))).toBe(true)
+    // Stale heads would make the rebuild's crawl look unchanged and skip its observations.
+    expect(sqlCalls.some((text) => text.startsWith('delete from "auction_observation_heads"'))).toBe(true)
     expect(state.crawlSingle).toHaveBeenCalledWith({
       country: 'se',
       region: 'all',
@@ -188,13 +191,13 @@ describe('rebuildCountry', () => {
       enrichDetails: false,
     })
     expect(state.recordCrawlScope).toHaveBeenCalledWith('se', 'all', seResult, expect.any(String))
-    expect(state.recordObservations).toHaveBeenCalledWith(seResult, expect.any(String))
+    expect(state.recordObservations).toHaveBeenCalledWith(seResult, expect.any(String), 'list')
     expect(state.matchAlerts).toHaveBeenCalledWith('se', 'all', seResult)
     expect(state.archiveAuction).toHaveBeenCalledWith(seResult.auctions[0], expect.any(String))
   })
 
   it('rolls the whole delete back when one table fails, and keeps the cache untouched', async () => {
-    // The auctions delete is the last one in the transaction, so the six
+    // The auctions delete is the last one in the transaction, so the seven
     // deletes before it have already run when it fails — exactly the case that
     // must not leave a half-emptied country behind.
     state.pool = makePool('"auctions"')

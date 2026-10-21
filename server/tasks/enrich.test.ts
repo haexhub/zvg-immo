@@ -183,7 +183,7 @@ describe('runEnrich structured persistence', () => {
     expect(crawlAll).toHaveBeenCalledWith(expect.objectContaining({ country: 'de' }))
     expect(ensureAuctionIdentity).toHaveBeenCalledWith([])
     expect(writeAuctionCrawlFetchState).toHaveBeenCalledWith([])
-    expect(recordObservations).toHaveBeenCalledWith(result, expect.any(String))
+    expect(recordObservations).toHaveBeenCalledWith(result, expect.any(String), 'detail')
     expect(upsertCurrentAuctions).toHaveBeenCalledWith([], expect.any(String))
     expect(outcome.result).toMatchObject({ crawled: 0, archived: 0, failed: 0 })
   })

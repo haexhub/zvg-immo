@@ -97,7 +97,7 @@ async function runRefresh(signal: AbortSignal) {
         // History and raw-archive writes are part of a successful crawl: their
         // failures propagate into this region's visible failure result.
         // Alert delivery remains independently fault-tolerant.
-        await recordObservations(result, capturedAt)
+        await recordObservations(result, capturedAt, 'list')
         await matchAlerts(r.country, r.code, result)
         for (const a of result.auctions) {
           throwIfTaskAborted(signal)

@@ -7,6 +7,7 @@ import { crawlSingle, ensureEnabledCountriesLoaded, isCountryEnabled, listRegist
 import {
   auctionDetails,
   auctionFetchState,
+  auctionObservationHeads,
   auctionObservations,
   auctions,
   auctionTranslations,
@@ -61,7 +62,7 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
   // if the relational delete fails, rerun rebuildCountry to recover.
   const archive = await deleteRawArchiveCountry(country)
   const deleted = await db.transaction(async (tx) => {
-    // These four tables don't carry their own `country` column — they key off
+    // These tables don't carry their own `country` column — they key off
     // (platform, external_id) — so scoping to a country goes through the
     // `auctions` row for that identity, mirroring the old `USING auctions a`
     // join.
@@ -83,6 +84,10 @@ export async function deleteCountryCurrentData<TSchema extends Record<string, un
     const locationEnrichmentResult = await tx.delete(locationEnrichment)
       .where(belongsToCountry(locationEnrichment.platform, locationEnrichment.externalId))
     const observationsResult = await tx.delete(auctionObservations).where(eq(auctionObservations.country, country))
+    // Without its rows the stored heads would make the rebuild's own crawl
+    // look unchanged and skip the country's first new observations.
+    await tx.delete(auctionObservationHeads)
+      .where(belongsToCountry(auctionObservationHeads.platform, auctionObservationHeads.externalId))
     const crawlStateResult = await tx.delete(crawlState).where(eq(crawlState.country, country))
     const auctionsResult = await tx.delete(auctions).where(eq(auctions.country, country))
 
@@ -145,7 +150,7 @@ export async function rebuildCountry(countryInput: string): Promise<CountryRebui
         await ensureAuctionIdentity(result.auctions)
         await recordCrawlScope(country, region.code, result, capturedAt)
         await writeAuctionCrawlFetchState(result.auctions)
-        await recordObservations(result, capturedAt)
+        await recordObservations(result, capturedAt, 'list')
         await matchAlerts(country, region.code, result)
         for (const auction of result.auctions) {
           await archiveAuction(auction, capturedAt)
