@@ -13,6 +13,7 @@ const {
 } = await import('./auction-details')
 const {
   auctionDetailsValues,
+  keepStoredPhotoFiles,
   readAuctionDetailsAtVersion,
   readLatestAuctionDetails,
 } = await import('./auction-details-read')
@@ -117,6 +118,29 @@ describe('auctionDetailsValues', () => {
 // these need a real database rather than a fake pool. Skipped unless one is
 // configured; see the WP-2 PR for the recorded run.
 const TEST_DB = process.env.TEST_DATABASE_URL
+describe('keepStoredPhotoFiles', () => {
+  const row = (ordinal: number, file: string) => ({
+    ordinal, file, category: 'aussen' as const, caption: null, is_property_photo: true, appeal_score: null,
+  })
+
+  it('keeps photos mirrored after the writer read its set', () => {
+    expect(keepStoredPhotoFiles([row(0, 'a.jpg'), row(1, 'b.jpg')], [])).toEqual([
+      { file: 'a.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+      { file: 'b.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+    ])
+  })
+
+  it('applies the incoming curation to shared files and drops files no longer stored', () => {
+    expect(keepStoredPhotoFiles([row(0, 'a.jpg'), row(1, 'b.jpg')], [
+      { file: 'gone.jpg', category: 'innen', caption: null, isPropertyPhoto: true },
+      { file: 'b.jpg', category: 'innen', caption: 'Küche', isPropertyPhoto: true, appealScore: 70 },
+    ])).toEqual([
+      { file: 'a.jpg', category: 'aussen', caption: null, isPropertyPhoto: true },
+      { file: 'b.jpg', category: 'innen', caption: 'Küche', isPropertyPhoto: true, appealScore: 70 },
+    ])
+  })
+})
+
 const describeDb = TEST_DB ? describe : describe.skip
 
 describeDb('writeAuctionDetails (real Postgres)', () => {
@@ -333,6 +357,42 @@ describeDb('writeAuctionDetails (real Postgres)', () => {
       { version: 1, appeal_score: 84 },
       { version: 2, appeal_score: 91 },
     ])
+  })
+
+  it('keeps photos the enrich worker mirrored while a non-owner write was in flight', async () => {
+    // Reprocess read the auction before enrich mirrored its gallery and writes
+    // its LLM result with that photo-less set afterwards.
+    await writeAuctionDetails(makeAuction(), makeExtraction({ source: 'rules', confidence: 'low' }))
+    await writeAuctionDetails(
+      makeAuction(),
+      makeExtraction({ source: 'rules', confidence: 'low', photos: [{ file: 'front.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }] }),
+      { ownsPhotoSet: true },
+    )
+    await writeAuctionDetails(makeAuction(), makeExtraction({ photos: undefined }))
+
+    const { rows } = await pool.query(
+      `SELECT d.version, p.file FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id
+       WHERE d.is_latest`,
+    )
+    expect(rows).toEqual([{ version: 3, file: 'front.jpg' }])
+  })
+
+  it('lets the enrich worker replace the photo set', async () => {
+    await writeAuctionDetails(
+      makeAuction(),
+      makeExtraction({ photos: [{ file: 'old.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }] }),
+      { ownsPhotoSet: true },
+    )
+    await writeAuctionDetails(
+      makeAuction(),
+      makeExtraction({ photos: [{ file: 'new.jpg', category: 'aussen', caption: null, isPropertyPhoto: true }] }),
+      { ownsPhotoSet: true },
+    )
+
+    const { rows } = await pool.query(
+      `SELECT p.file FROM auction_details d JOIN auction_photos p ON p.auction_details_id = d.id WHERE d.is_latest`,
+    )
+    expect(rows).toEqual([{ file: 'new.jpg' }])
   })
 
   it('honors explicit parsed-manifest provenance for a rules-only placeholder', async () => {

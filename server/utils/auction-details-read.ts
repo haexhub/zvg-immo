@@ -62,10 +62,18 @@ export function photoRowsEqual(rows: AuctionPhotoRow[], photos: CuratedPhoto[]):
     return !!photo && row.ordinal === index && row.file === photo.file && row.category === photo.category && row.caption === photo.caption && row.is_property_photo === photo.isPropertyPhoto && row.appeal_score === (photo.appealScore ?? null)
   })
 }
+const photoFromRow = (row: AuctionPhotoRow): CuratedPhoto => ({ file: row.file, category: row.category, caption: row.caption, isPropertyPhoto: row.is_property_photo, ...(row.appeal_score == null ? {} : { appealScore: row.appeal_score }) })
+/** The stored photo files in their stored order, with the incoming curation
+ *  applied to every file both sides share. For writers that only curate a
+ *  photo set they read earlier and must not roll back files mirrored since. */
+export function keepStoredPhotoFiles(stored: AuctionPhotoRow[], incoming: CuratedPhoto[]): CuratedPhoto[] {
+  const curated = new Map(incoming.map((photo) => [photo.file, photo]))
+  return stored.map((row) => curated.get(row.file) ?? photoFromRow(row))
+}
 export async function readAuctionPhotos(auctionDetailsId: number): Promise<CuratedPhoto[]> {
   const db = getDb(); if (!db) return []
   const { rows } = await db.execute<Raw<AuctionPhotoRow>>(sql`SELECT ordinal, file, category, caption, is_property_photo, appeal_score FROM auction_photos WHERE auction_details_id = ${auctionDetailsId} ORDER BY ordinal`)
-  return rows.map((row) => ({ file: row.file, category: row.category, caption: row.caption, isPropertyPhoto: row.is_property_photo, ...(row.appeal_score == null ? {} : { appealScore: row.appeal_score }) }))
+  return rows.map(photoFromRow)
 }
 export async function readLatestAuctionDetails(platform: string, externalId: string): Promise<AuctionDetailsRow | null> {
   const db = getDb(); if (!db) return null

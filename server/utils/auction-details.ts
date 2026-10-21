@@ -12,7 +12,7 @@ import { getDb } from './db'
 import { readAuctionRecord } from './auction-record'
 import { upsertCurrentAuctions } from './current-auctions'
 import {
-  auctionDetailsValues,
+  auctionDetailsValues, keepStoredPhotoFiles,
   normalizedPhotos, pgTextArrayLiteral, photoRowsEqual, VALUE_COLUMNS,
   type AuctionDetailsRow, type AuctionPhotoRow, type Raw,
 } from './auction-details-read'
@@ -108,6 +108,14 @@ export interface WriteAuctionDetailsOptions {
    * result, not a no-op.
    */
   trial?: boolean
+  /**
+   * Only the enrich worker mirrors photos, so only it may change which files
+   * the live version shows. Every other writer (reprocess, llm-batch-poll,
+   * enrich finalize) carries a photo set it read earlier — often minutes
+   * before, across an LLM call — and keeps the files stored now, applying just
+   * its curation; otherwise a concurrent mirror run's photos are dropped.
+   */
+  ownsPhotoSet?: boolean
   /** Provenance (WP-1) — who/what produced this version. Left null by
    *  callers that don't track it yet (enrich.ts, geocode.ts, llm-batch-poll.ts). */
   llmProvider?: string | null
@@ -146,7 +154,7 @@ export async function writeAuctionDetails(
   if (!db) return null
   const { platform, externalId } = auction
   const values = auctionDetailsValues(auction, extraction)
-  const photos = normalizedPhotos(extraction)
+  let photos = normalizedPhotos(extraction)
   values.artifact_version_id = options.artifactVersionId ?? null
   const extractedAt = extraction?.at ?? new Date().toISOString()
   const llmAnalyzedAt = extraction?.llmAnalyzedAt ?? null
@@ -185,6 +193,7 @@ export async function writeAuctionDetails(
             FROM auction_photos WHERE auction_details_id = ${previousRow.id} ORDER BY ordinal
           `)
         : { rows: [] as AuctionPhotoRow[] }
+      if (previousRow && !options.ownsPhotoSet) photos = keepStoredPhotoFiles(previousPhotos.rows, photos)
       const photosUnchanged = previousRow != null && photoRowsEqual(previousPhotos.rows, photos)
 
       const unchanged = photosUnchanged ? await tx.execute<{ version: number }>(sql`
