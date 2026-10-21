@@ -200,6 +200,34 @@ describe('prepareEnrichWork needsPhotoBackfill — empty gallery despite known s
     expect(todo).toContain(a)
   })
 
+  it('re-enters a gallery from a stored photo attachment when photoUrls are absent', async () => {
+    const a = listShape()
+    const { needsPhotoBackfill, todo } = await prepare(
+      a,
+      fetchState({
+        platform: 'bg-alo',
+        externalId: '11199710',
+        photoUrls: null,
+        attachments: [{
+          kind: 'photo',
+          label: 'Foto',
+          filename: 'gallery.jpg',
+          sizeBytes: null,
+          fileId: 'gallery-photo',
+          proxyUrl: detailPhotos[0]!,
+        }],
+        photoLastAttemptedAt: '2026-08-19T18:30:49.000Z',
+      }),
+    )
+
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(true)
+    expect(todo).toContain(a)
+    // The worker must use the detail payload (or its fallback copied onto `a`)
+    // before running extraction; a stale stored attachment alone is not a
+    // source at the extraction phase.
+    expect(needsPhotoBackfill(a)).toBe(false)
+  })
+
   it('waits out the cooldown after the last attempt', async () => {
     const a = listShape()
     const { needsPhotoBackfill } = await prepare(

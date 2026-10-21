@@ -196,7 +196,15 @@ export async function prepareEnrichWork({
     // can't be mirrored at all from being re-downloaded on every run.
     const galleryMissing =
       photos === 0 &&
-      (nativePhotoUrls(a).length > 0 || (state?.photoUrls?.length ?? 0) > 0) &&
+      (
+        nativePhotoUrls(a).length > 0 ||
+        (state?.photoUrls?.length ?? 0) > 0 ||
+        (phase === 'eligibility' && (state?.attachments.some(
+          (att) =>
+            att.kind === 'photo' &&
+            /^https?:\/\/.*\.(?:jpe?g|png|webp)(?:[?#]|$)/i.test(att.proxyUrl),
+        ) ?? false))
+      ) &&
       cooldownElapsed(state?.photoLastAttemptedAt)
     const dgaAgPreEnrichBypass = phase === 'eligibility' && a.platform === 'dga-ag'
     const hasPlausiblePhotoSource =
