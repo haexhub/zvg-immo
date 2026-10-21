@@ -406,7 +406,7 @@ export async function runEnrich(opts: EnrichOptions = {}, signal?: AbortSignal) 
             }
             if (a.detailFetchedAt == null && priorRecord) mergeStoredAuction(a, priorRecord.auction)
             applyAuctionExtraction(a, entry)
-            await writeAuctionDetails(a, entry, { artifactVersionId: priorRecord?.artifactVersionId ?? null })
+            await writeAuctionDetails(a, entry, { artifactVersionId: priorRecord?.artifactVersionId ?? null, ownsPhotoSet: true })
             // Only mark the photo set checked once it is actually stored:
             // finalize re-reads the record and would otherwise drop these
             // photos for good, with no backfill left to recover them.

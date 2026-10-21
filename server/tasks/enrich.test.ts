@@ -206,7 +206,7 @@ describe('runEnrich structured persistence', () => {
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       listing,
       expect.objectContaining({ source: 'rules', confidence: 'low' }),
-      { artifactVersionId: null },
+      { artifactVersionId: null, ownsPhotoSet: true },
     )
   })
 
@@ -518,7 +518,7 @@ describe('runEnrich concurrent extraction writes', () => {
     expect(writeAuctionDetails).toHaveBeenCalledWith(
       listing,
       expect.objectContaining({ source: 'llm', llmAnalyzedAt: llmExtraction.llmAnalyzedAt }),
-      { artifactVersionId: 5 },
+      { artifactVersionId: 5, ownsPhotoSet: true },
     )
   })
 
