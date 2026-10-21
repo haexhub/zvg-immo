@@ -540,7 +540,8 @@ describe('runEnrich concurrent extraction writes', () => {
     const listing = auction()
     vi.mocked(crawlAll).mockResolvedValue(crawlResult([listing]))
     vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([
-      ['test-platform:42', fetchState({ photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 99 })],
+      // No source photos: an empty gallery with known photo URLs would be due.
+      ['test-platform:42', fetchState({ photosCheckedAt: '2026-08-01T10:00:00.000Z', photoPipelineVersion: 99, photoUrls: null })],
     ]))
     vi.mocked(iterateAuctionRecords).mockImplementation(async function* () {
       yield { auction: { ...listing, extraction: rulesExtraction }, detailsId: 1, detailsVersion: 1, artifactVersionId: 5 }

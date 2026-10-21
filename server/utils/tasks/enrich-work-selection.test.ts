@@ -175,6 +175,60 @@ describe('prepareEnrichWork needsPhotoBackfill — dga-ag stale-version backfill
   })
 })
 
+describe('prepareEnrichWork needsPhotoBackfill — empty gallery despite known source photos', () => {
+  const key = 'bg-alo:11199710'
+  const listShape = () => auction({ platform: 'bg-alo', externalId: '11199710' })
+  const detailPhotos = ['https://www.alo.bg/user_files/d/dilena/11199710_145312358_big.jpg']
+  async function prepare(a: Auction, state: AuctionFetchState, storedPhotos: string[] = []) {
+    return await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, state]]),
+      artifactVersions: new Map(),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, storedPhotos))]]),
+    })
+  }
+
+  it('re-enters a gallery marked checked before its detail fetch, from the stored photo URLs', async () => {
+    const a = listShape()
+    const { needsPhotoBackfill, todo } = await prepare(
+      a,
+      fetchState({ platform: 'bg-alo', externalId: '11199710', photoUrls: detailPhotos, photoLastAttemptedAt: '2026-08-19T18:30:49.000Z' }),
+    )
+
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(true)
+    expect(todo).toContain(a)
+  })
+
+  it('waits out the cooldown after the last attempt', async () => {
+    const a = listShape()
+    const { needsPhotoBackfill } = await prepare(
+      a,
+      fetchState({ platform: 'bg-alo', externalId: '11199710', photoUrls: detailPhotos, photoLastAttemptedAt: new Date().toISOString() }),
+    )
+
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(false)
+  })
+
+  it('leaves a gallery alone once it holds photos', async () => {
+    const a = listShape()
+    const { needsPhotoBackfill } = await prepare(
+      a,
+      fetchState({ platform: 'bg-alo', externalId: '11199710', photoUrls: detailPhotos }),
+      ['0.jpg'],
+    )
+
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(false)
+  })
+
+  it('leaves a checked, empty gallery alone when the source lists no photos', async () => {
+    const a = listShape()
+    const { needsPhotoBackfill } = await prepare(a, fetchState({ platform: 'bg-alo', externalId: '11199710' }))
+
+    expect(needsPhotoBackfill(a, 'eligibility')).toBe(false)
+  })
+})
+
 describe('stored auction summaries', () => {
   it('keeps only what eligibility and the EUR fallback need', () => {
     const a = auction({ currency: 'HUF', marketValue: 1_000_000, marketValueEur: 2_500 })
