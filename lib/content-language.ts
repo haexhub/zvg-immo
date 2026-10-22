@@ -7,6 +7,12 @@ export type ContentTargetLang = 'de' | 'en'
 
 export const CONTENT_TARGET_LANGS: readonly ContentTargetLang[] = ['de', 'en']
 
+/** The UI locale as a content target language, or null for a locale without
+ *  translation support. */
+export function contentTargetLang(locale: string): ContentTargetLang | null {
+  return CONTENT_TARGET_LANGS.find((lang) => lang === locale) ?? null
+}
+
 const REGION_DISPLAY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' })
 
 function isKnownRegion(code: string): boolean {
