@@ -66,6 +66,15 @@ describeDb('recordObservations (real Postgres)', () => {
     return rows
   }
 
+  async function head(externalId: string): Promise<{ payload_hash: string; captured_at: Date }> {
+    const { rows } = await db.pool!.query(
+      `SELECT payload_hash, captured_at FROM auction_observation_heads
+        WHERE platform = $1 AND external_id = $2 AND kind = 'list'`,
+      [PLATFORM, externalId],
+    )
+    return rows[0]
+  }
+
   it('writes a run only for the auctions whose payload changed', async () => {
     const { recordObservations } = await import('./history')
     const run = (auctions: Auction[], at: string, kind: 'list' | 'detail') =>
@@ -86,5 +95,19 @@ describeDb('recordObservations (real Postgres)', () => {
       ['a', '2026-10-21T12:00:00.000Z', false],
       ['a', '2026-10-22T12:00:00.000Z', false],
     ])
+  })
+
+  it('does not let an older overlapping run move the observation head backwards', async () => {
+    const { recordObservations, observationPayloadHash } = await import('./history')
+    const run = (auctionValue: Auction, at: string) =>
+      recordObservations({ auctions: [auctionValue], errors: [] } as never, at, 'list')
+
+    const newer = auction('a')
+    await run(newer, '2026-10-21T11:00:00.000Z')
+    await run(auction('a', { cancelled: true }), '2026-10-21T10:00:00.000Z')
+
+    const stored = await head('a')
+    expect(stored.payload_hash).toBe(observationPayloadHash(newer))
+    expect(stored.captured_at.toISOString()).toBe('2026-10-21T11:00:00.000Z')
   })
 })

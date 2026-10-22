@@ -178,7 +178,8 @@ async function writeHeads(
      SELECT platform, external_id, $1, payload_hash, $2 FROM unnest($3::text[], $4::text[], $5::text[])
        AS h(platform, external_id, payload_hash)
      ON CONFLICT (platform, external_id, kind)
-       DO UPDATE SET payload_hash = EXCLUDED.payload_hash, captured_at = EXCLUDED.captured_at`,
+       DO UPDATE SET payload_hash = EXCLUDED.payload_hash, captured_at = EXCLUDED.captured_at
+       WHERE auction_observation_heads.captured_at <= EXCLUDED.captured_at`,
     [kind, capturedAt, heads.map((h) => h.platform), heads.map((h) => h.externalId), heads.map((h) => h.hash)],
   )
 }
