@@ -51,6 +51,10 @@ describe('upstreamUpdatedSinceDetail', () => {
     expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-21T08:00:00.000Z' }, state('2026-10-20T10:00:00.000Z'))).toBe(true)
   })
 
+  it('does not refetch when an upstream timestamp moves backwards', () => {
+    expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-19T08:00:00.000Z' }, state('2026-10-20T08:00:00.000Z'))).toBe(false)
+  })
+
   it('refetches when no detail fetch recorded a state, never without an upstream timestamp', () => {
     expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-21T08:00:00.000Z' }, state(null))).toBe(true)
     expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: null }, state(null))).toBe(false)

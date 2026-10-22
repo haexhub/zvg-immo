@@ -99,7 +99,7 @@ export function upstreamUpdatedSinceDetail(auction: Pick<Auction, 'sourceUpdated
   if (auction.sourceUpdatedIso == null) return false
   const seen = state?.detailSourceUpdatedIso
   if (seen == null) return true
-  return Date.parse(auction.sourceUpdatedIso) !== Date.parse(seen)
+  return Date.parse(auction.sourceUpdatedIso) > Date.parse(seen)
 }
 
 export async function readAuctionFetchState(platform: string, externalId: string): Promise<AuctionFetchState | null> {
