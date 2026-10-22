@@ -12,6 +12,7 @@ import {
   jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
 } from 'drizzle-orm/pg-core'
@@ -45,4 +46,18 @@ export const auctionObservations = pgTable('auction_observations', {
   index('idx_obs_country_region_time').on(table.country, table.region, table.capturedAt.desc()),
   index('idx_obs_platform_zvgid_time').on(table.platform, table.externalId, table.capturedAt.desc()),
   index('idx_obs_az_time').on(table.authority, table.caseNumber, table.capturedAt.desc()),
+]).enableRLS()
+
+// One row per auction and observation kind ('list' from refresh/rebuild,
+// 'detail' from enrich): the content hash and time of the last observation
+// written for it. recordObservations compares against it to skip unchanged
+// payloads, a primary-key lookup instead of a scan of the auction's history.
+export const auctionObservationHeads = pgTable('auction_observation_heads', {
+  platform: text('platform').notNull(),
+  externalId: text('external_id').notNull(),
+  kind: text('kind').notNull(),
+  payloadHash: text('payload_hash').notNull(),
+  capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.platform, table.externalId, table.kind] }),
 ]).enableRLS()

@@ -1,11 +1,26 @@
-// Appends one row per auction to auction_observations (Postgres) for crawler
-// runs. Refresh records the list-level source view; enrich records the final
+// Appends rows to auction_observations (Postgres) for crawler runs. Refresh
+// records the list-level source view; enrich records the final
 // detail/extraction-decorated payload. This is the append-only history the
 // serving tables do not keep. No-op when Postgres isn't configured.
+//
+// A row is only written when the auction's payload changed since the last
+// row of the same kind (auction_observation_heads), plus one daily detail row
+// per auction. Writing every run stored ~300k identical rows a day.
 
 import type { Pool } from 'pg'
 import type { Auction, CrawlResult } from '~/types/auction'
 import { getPool } from './db'
+import { canonicalize, sha256Hex } from './raw-archive'
+
+/** 'list' rows come from refresh and country rebuilds, 'detail' rows from enrich. */
+export type ObservationKind = 'list' | 'detail'
+
+// An unchanged detail payload is still written once a day, so the history
+// keeps a daily series of every offered auction for trend analyses. Below
+// 24 h so jitter in the 6-hourly enrich schedule cannot push the daily row to
+// the run 30 h later. List rows hold nothing the same day's detail row lacks,
+// so they are written on change only.
+const DETAIL_HEARTBEAT_MS = 20 * 60 * 60 * 1000
 
 const COLUMNS = [
   'captured_at',
@@ -79,16 +94,94 @@ export function auctionToObservationRow(a: Auction, capturedAt: string): Observa
 // (16 columns × 500 rows = 8000 params) while still batching efficiently.
 const CHUNK_SIZE = 500
 
-export async function recordObservations(result: CrawlResult, capturedAt: string): Promise<void> {
+/**
+ * Content hash of an observation payload without per-run bookkeeping:
+ * `detailFetchedAt` and the extraction's run timestamps change on every
+ * enrich/reprocess pass while the auction stays the same. `marketValueEur` is
+ * left out only when it is derived from `marketValue` + `currency` (live FX
+ * rates move it every run); crawlers that set only the EUR value keep it in.
+ */
+export function observationPayloadHash(auction: Auction): string {
+  const { detailFetchedAt: _detailFetchedAt, extraction, ...rest } = auction
+  const content: Record<string, unknown> = { ...rest }
+  if (auction.marketValue != null) delete content.marketValueEur
+  if (extraction) {
+    const { at: _at, llmAnalyzedAt: _llmAnalyzedAt, ...stable } = extraction
+    content.extraction = stable
+  } else {
+    content.extraction = extraction ?? null
+  }
+  return sha256Hex(Buffer.from(JSON.stringify(canonicalize(content))))
+}
+
+export async function recordObservations(
+  result: CrawlResult,
+  capturedAt: string,
+  kind: ObservationKind,
+): Promise<void> {
   const db = getPool()
   if (!db) return
   if (result.auctions.length === 0) return
 
-  const rows = result.auctions.map((a) => auctionToObservationRow(a, capturedAt))
-
-  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
-    await insertChunk(db, rows.slice(i, i + CHUNK_SIZE))
+  for (let i = 0; i < result.auctions.length; i += CHUNK_SIZE) {
+    await recordChunk(db, result.auctions.slice(i, i + CHUNK_SIZE), capturedAt, kind)
   }
+}
+
+type ObservationHead = { hash: string; capturedAtMs: number }
+
+async function recordChunk(db: Pool, auctions: Auction[], capturedAt: string, kind: ObservationKind): Promise<void> {
+  const heads = await readHeads(db, auctions, kind)
+  const capturedAtMs = Date.parse(capturedAt)
+  const rows: ObservationRow[] = []
+  const written = new Map<string, { platform: string; externalId: string; hash: string }>()
+  for (const auction of auctions) {
+    const key = `${auction.platform}:${auction.externalId}`
+    const hash = observationPayloadHash(auction)
+    const head = heads.get(key)
+    const heartbeatDue = kind === 'detail' && (!head || capturedAtMs - head.capturedAtMs >= DETAIL_HEARTBEAT_MS)
+    if (head && head.hash === hash && !heartbeatDue) continue
+    // The chunk can list an auction twice; the second copy compares against
+    // the first one's row, not the stale stored head.
+    heads.set(key, { hash, capturedAtMs })
+    written.set(key, { platform: auction.platform, externalId: auction.externalId, hash })
+    rows.push(auctionToObservationRow(auction, capturedAt))
+  }
+  if (rows.length === 0) return
+  await insertChunk(db, rows)
+  // After the rows: a failed head write only costs a duplicate row next run,
+  // the other order would drop a change.
+  await writeHeads(db, [...written.values()], kind, capturedAt)
+}
+
+async function readHeads(db: Pool, auctions: Auction[], kind: ObservationKind): Promise<Map<string, ObservationHead>> {
+  const { rows } = await db.query<{ platform: string; external_id: string; payload_hash: string; captured_at: Date | string }>(
+    `SELECT platform, external_id, payload_hash, captured_at FROM auction_observation_heads
+      WHERE kind = $1
+        AND (platform, external_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`,
+    [kind, auctions.map((a) => a.platform), auctions.map((a) => a.externalId)],
+  )
+  return new Map(rows.map((row) => [
+    `${row.platform}:${row.external_id}`,
+    { hash: row.payload_hash, capturedAtMs: new Date(row.captured_at).getTime() },
+  ]))
+}
+
+async function writeHeads(
+  db: Pool,
+  heads: Array<{ platform: string; externalId: string; hash: string }>,
+  kind: ObservationKind,
+  capturedAt: string,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO auction_observation_heads (platform, external_id, kind, payload_hash, captured_at)
+     SELECT platform, external_id, $1, payload_hash, $2 FROM unnest($3::text[], $4::text[], $5::text[])
+       AS h(platform, external_id, payload_hash)
+     ON CONFLICT (platform, external_id, kind)
+       DO UPDATE SET payload_hash = EXCLUDED.payload_hash, captured_at = EXCLUDED.captured_at
+       WHERE auction_observation_heads.captured_at <= EXCLUDED.captured_at`,
+    [kind, capturedAt, heads.map((h) => h.platform), heads.map((h) => h.externalId), heads.map((h) => h.hash)],
+  )
 }
 
 async function insertChunk(db: Pool, rows: ObservationRow[]): Promise<void> {
