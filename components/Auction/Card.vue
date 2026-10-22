@@ -6,6 +6,8 @@ import { Keyboard, Navigation } from 'swiper/modules'
 import 'swiper/css'
 import 'swiper/css/navigation'
 import type { AuctionSummary } from '~/server/api/auctions.get'
+import { displayAuctionAddress, displayAuctionTitle } from '~/lib/address-transliteration'
+import { contentTargetLang } from '~/lib/content-language'
 
 const props = withDefaults(defineProps<{
   auction: AuctionSummary
@@ -21,14 +23,25 @@ const emit = defineEmits<{
 }>()
 
 const intlLocale = useIntlLocale()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { currency, eurToDisplay, nativeToDisplay } = useCurrencyDisplay()
 const { formatArea } = useAuctionDetailFormatters()
 const conditionLabel = useConditionLabel()
 const propertyTypeLabel = usePropertyTypeLabel()
 
-function cardAltBase(a: AuctionSummary): string {
-  return a.title || a.address || t('search.unknownPropertyType')
+// Stored LLM translation, else a Latin transliteration of a Cyrillic address:
+// list views never call the translation endpoint themselves.
+const cardText = computed(() => {
+  const lang = contentTargetLang(locale.value)
+  const a = props.auction
+  return {
+    title: lang ? displayAuctionTitle(a, lang) : a.title,
+    address: lang ? displayAuctionAddress(a, lang) : a.address,
+  }
+})
+
+function cardAltBase(): string {
+  return cardText.value.title || cardText.value.address || t('search.unknownPropertyType')
 }
 
 function detailPath(a: AuctionSummary): string {
@@ -127,7 +140,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
           <SwiperSlide v-for="(url, i) in props.auction.galleryUrls" :key="url">
             <img
               :src="url"
-              :alt="t('lotPopover.photoAlt', { n: i + 1, title: cardAltBase(props.auction) })"
+              :alt="t('lotPopover.photoAlt', { n: i + 1, title: cardAltBase() })"
               class="h-full w-full object-cover"
               referrerpolicy="no-referrer"
               :loading="i === 0 ? 'eager' : 'lazy'"
@@ -138,7 +151,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
         <img
           v-else-if="props.auction.galleryUrls.length > 0"
           :src="props.auction.galleryUrls[0]"
-          :alt="t('lotPopover.photoAlt', { n: 1, title: cardAltBase(props.auction) })"
+          :alt="t('lotPopover.photoAlt', { n: 1, title: cardAltBase() })"
           class="aspect-square w-full object-cover bg-muted"
           referrerpolicy="no-referrer"
           loading="eager"
@@ -166,7 +179,7 @@ const isGallery = useMediaQuery('(min-width: 640px)')
       </div>
 
       <div class="mt-3 flex-1 flex flex-col gap-1">
-        <p class="text-sm font-semibold leading-tight">{{ props.auction.address || props.auction.title || $t('search.unknownPropertyType') }}</p>
+        <p class="text-sm font-semibold leading-tight">{{ cardText.address || cardText.title || $t('search.unknownPropertyType') }}</p>
         <span v-if="sizeLine(props.auction)" class="text-xs text-muted-foreground">{{ sizeLine(props.auction) }}</span>
         <span
           v-if="props.auction.extraction?.propertyType"

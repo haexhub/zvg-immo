@@ -8,6 +8,7 @@ import type { GeoAuction } from '~/server/api/auctions-geo.get'
 import type { AuctionSummary } from '~/server/api/auctions.get'
 import { apiErrorMessage } from '~/lib/api-error'
 import { isPassthroughLanguage, type ContentTargetLang } from '~/lib/content-language'
+import { displayAuctionAddress, displayAuctionTitle } from '~/lib/address-transliteration'
 import { fetchWithPendingRetry } from '~/lib/pending-retry'
 import { safeHref } from '~/lib/utils'
 
@@ -34,8 +35,12 @@ const loading = ref(!props.summary)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
 const translatedAddress = ref<string | null>(null)
-const displayTitle = computed(() => translatedTitle.value ?? detail.value?.title ?? null)
-const displayAddress = computed(() => translatedAddress.value ?? detail.value?.address ?? null)
+// Until (or unless) the live translation arrives: the stored one, else the
+// Latin transliteration a list card shows.
+const displayTitle = computed(() => translatedTitle.value
+  ?? (detail.value && props.lang ? displayAuctionTitle(detail.value, props.lang) : detail.value?.title) ?? null)
+const displayAddress = computed(() => translatedAddress.value
+  ?? (detail.value && props.lang ? displayAuctionAddress(detail.value, props.lang) : detail.value?.address) ?? null)
 let isActive = true
 
 interface AuctionTranslationResponse {

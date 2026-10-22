@@ -2,6 +2,7 @@ import type { AuctionExtraction } from '~/types/auction'
 import type { PropertyType } from '~/lib/property-type'
 import type { Condition } from '~/lib/condition'
 import type { Feature } from '~/lib/features'
+import { CONTENT_TARGET_LANGS, type ContentTargetLang } from '~/lib/content-language'
 import { getPool, isStatementTimeoutError, SEARCH_STATEMENT_TIMEOUT_MS, withStatementTimeout } from '~/server/utils/db'
 import { buildAuctionSearchFilter, finiteNumber } from '~/server/utils/auction-search-filters'
 import { curatedAuctionPhotoUrls } from '~/lib/auction-photos'
@@ -31,6 +32,9 @@ export interface AuctionSummary {
   /** Compact, display-ready gallery URLs for the card slider. */
   galleryUrls: string[]
   pdfUrl: string | null
+  /** Completed LLM translations of title/address for the live details
+   *  version, per UI language — only those someone already requested. */
+  translations: Partial<Record<ContentTargetLang, { title: string | null; address: string | null }>>
   extraction: Pick<
     AuctionExtraction,
     | 'propertyType'
@@ -64,7 +68,11 @@ export const SUMMARY_COLUMNS_SQL = `
   d.market_value_text,
   a.auction_date_text,
   fs.pdf_url,
-  photos.items AS photos`
+  photos.items AS photos,
+  (SELECT jsonb_object_agg(t.lang, jsonb_build_object('title', t.title, 'address', t.address))
+     FROM auction_translations t
+    WHERE t.platform = a.platform AND t.external_id = a.external_id
+      AND t.version = d.version AND t.status = 'completed') AS translations`
 
 /**
  * Live extraction version per auction. LATERAL rather than a top-level
@@ -156,6 +164,20 @@ export interface SearchRow {
   extraction_source: 'rules' | 'llm' | null
   llm_analyzed_at: Date | string | null
   photos: AuctionExtraction['photos'] | null
+  translations: Record<string, { title: string | null; address: string | null }> | null
+}
+
+function summaryTranslations(stored: SearchRow['translations']): AuctionSummary['translations'] {
+  const translations: AuctionSummary['translations'] = {}
+  for (const lang of CONTENT_TARGET_LANGS) {
+    const entry = stored?.[lang]
+    if (!entry) continue
+    translations[lang] = {
+      title: redactAffectedPersonNames(entry.title) ?? null,
+      address: redactAffectedPersonNames(entry.address) ?? null,
+    }
+  }
+  return translations
 }
 
 export function summary(row: SearchRow): AuctionSummary {
@@ -181,6 +203,7 @@ export function summary(row: SearchRow): AuctionSummary {
     thumbnailUrl: row.thumbnail_url,
     galleryUrls: curatedAuctionPhotoUrls(row.platform, row.external_id, row.photos ?? undefined, row.thumbnail_url),
     pdfUrl: row.pdf_url,
+    translations: summaryTranslations(row.translations),
     // `source` is required on AuctionExtraction, so a row without it is an
     // auction that has no extraction rather than one with empty fields.
     extraction: row.extraction_source

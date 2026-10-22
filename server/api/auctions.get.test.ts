@@ -225,3 +225,20 @@ describe('/api/auctions', () => {
     await expect(handler({})).rejects.toMatchObject({ statusCode: 503 })
   })
 })
+
+describe('summary translations', () => {
+  it('passes stored title/address translations of the live version through per UI language', async () => {
+    vi.stubGlobal('defineEventHandler', (handler: unknown) => handler)
+    const { summary, SUMMARY_COLUMNS_SQL } = await import('./auctions.get')
+    // Only the translation of the current details version counts.
+    expect(SUMMARY_COLUMNS_SQL).toContain('t.version = d.version')
+
+    const base = { platform: 'bg-alo', external_id: '1', photos: null, extraction_source: null } as never
+    const card = summary({
+      ...(base as object),
+      translations: { de: { title: 'Haus', address: 'Stadt Breznik' }, fr: { title: 'Maison', address: null } },
+    } as never)
+    expect(card.translations).toEqual({ de: { title: 'Haus', address: 'Stadt Breznik' } })
+    expect(summary({ ...(base as object), translations: null } as never).translations).toEqual({})
+  })
+})
