@@ -7,6 +7,7 @@ export interface ArtifactVersionRef {
   externalId: string
   version: number
   setHash: string
+  documentCount: number
 }
 
 interface ArtifactVersionRow {
@@ -15,6 +16,7 @@ interface ArtifactVersionRow {
   external_id: string
   version: number
   set_hash: string
+  document_count: number
 }
 
 function fromRow(row: ArtifactVersionRow): ArtifactVersionRef {
@@ -24,6 +26,7 @@ function fromRow(row: ArtifactVersionRow): ArtifactVersionRef {
     externalId: row.external_id,
     version: row.version,
     setHash: row.set_hash,
+    documentCount: row.document_count,
   }
 }
 
@@ -32,7 +35,7 @@ export async function readLatestArtifactVersions(): Promise<Map<string, Artifact
   if (!db) return new Map()
   const { rows } = await db.query<ArtifactVersionRow>(
     `SELECT DISTINCT ON (platform, external_id)
-       id, platform, external_id, version, set_hash
+       id, platform, external_id, version, set_hash, document_count
      FROM artifact_versions
      ORDER BY platform, external_id, version DESC`,
   )
@@ -55,7 +58,7 @@ export async function readArtifactProcessingState(
   const db = getPool()
   if (!db) return { latest: null, parsedArtifactVersionId: null }
   const { rows } = await db.query<ArtifactVersionRow & { parsed_artifact_version_id: string | number | null }>(
-    `SELECT av.id, av.platform, av.external_id, av.version, av.set_hash,
+    `SELECT av.id, av.platform, av.external_id, av.version, av.set_hash, av.document_count,
             (SELECT ad.artifact_version_id
              FROM auction_details ad
              WHERE ad.platform = $1 AND ad.external_id = $2 AND ad.is_latest = true) AS parsed_artifact_version_id
