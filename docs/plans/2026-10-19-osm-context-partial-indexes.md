@@ -76,6 +76,15 @@ WHERE indrelid = 'osm_local_elements'::regclass
 -- muss `true | true` liefern
 ```
 
+Den nicht mehr verwendeten `idx_osm_local_elements_geom` vor dem Deployment
+separat und außerhalb der Drizzle-Migration entfernen. Die Migration läuft in
+einer Transaktion; `DROP INDEX CONCURRENTLY` ist darin nicht erlaubt und ein
+normaler Drop hält beim Warten einen `ACCESS EXCLUSIVE`-Lock:
+
+```sql
+DROP INDEX CONCURRENTLY IF EXISTS idx_osm_local_elements_geom;
+```
+
 Nach dem Anlegen von Index 3 separat prüfen:
 
 ```sql
