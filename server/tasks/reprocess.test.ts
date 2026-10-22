@@ -240,6 +240,7 @@ describe('reprocessAuction structured provenance', () => {
             externalId: '7265',
             version: 2,
             setHash: 'latest-hash',
+            documentCount: 1,
           },
           parsedArtifactVersionId: 11,
         },
@@ -336,7 +337,7 @@ describe('reprocessAuction structured provenance', () => {
 
 describe('reprocessAuction without an LLM result on a changed document set', () => {
   const changedSetState = {
-    latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+    latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set', documentCount: 1 },
     parsedArtifactVersionId: 11,
   }
   const priorLlmEntry = extraction({
@@ -414,7 +415,7 @@ describe('runReprocess without an LLM call left', () => {
   it('skips an LLM extraction with a new document set until the LLM can parse it', async () => {
     storeEntry(extraction({ llmAnalyzedAt: '2026-08-01T10:00:00.000Z' }), 11)
     vi.mocked(readArtifactProcessingState).mockResolvedValue({
-      latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+      latest: { id: 22, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set', documentCount: 1 },
       parsedArtifactVersionId: 11,
     })
 
@@ -548,7 +549,7 @@ describe('reprocessAuction map-reduce', () => {
   })
 
   const parsedElsewhereState = {
-    latest: { id: 5, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set' },
+    latest: { id: 5, platform: 'zvg-portal', externalId: '7265', version: 2, setHash: 'new-set', documentCount: 1 },
     parsedArtifactVersionId: 4,
   }
 
@@ -718,7 +719,7 @@ describe('runReprocess structured persistence', () => {
     }]]))
     vi.mocked(readArtifactProcessingState).mockResolvedValue({
       latest: {
-        id: 22, platform: 'zvg-portal', externalId: '7265', version: 3, setHash: 'set-22',
+        id: 22, platform: 'zvg-portal', externalId: '7265', version: 3, setHash: 'set-22', documentCount: 1,
       },
       parsedArtifactVersionId: 11,
     })

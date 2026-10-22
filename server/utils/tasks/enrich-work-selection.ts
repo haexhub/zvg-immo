@@ -125,6 +125,10 @@ export async function prepareEnrichWork({
     return (
       scopedForce ||
       (!latestArtifact && (attachmentCount > 0 || prev?.detailFetchedAt == null)) ||
+      // An empty set although attachments are known: written by runs that
+      // archived the list shape after a failed detail fetch. Only a complete
+      // download replaces it, so a dead link keeps retrying, like a missing set.
+      (latestArtifact?.documentCount === 0 && attachmentCount > 0) ||
       (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
     )
   }

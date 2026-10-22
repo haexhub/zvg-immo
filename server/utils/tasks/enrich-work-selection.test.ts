@@ -79,8 +79,8 @@ function photo(file: string): CuratedPhoto {
   return { file, category: 'sonstiges', caption: null, isPropertyPhoto: true }
 }
 
-function artifactVersion(platform: string, externalId: string): ArtifactVersionRef {
-  return { id: 1, platform, externalId, version: 1, setHash: 'hash' }
+function artifactVersion(platform: string, externalId: string, documentCount = 1): ArtifactVersionRef {
+  return { id: 1, platform, externalId, version: 1, setHash: 'hash', documentCount }
 }
 
 function recordWithPhotos(a: Auction, photoFiles: string[]): AuctionRecord {
@@ -342,5 +342,36 @@ describe('prepareEnrichWork needsDocumentSetCheck', () => {
     })
 
     expect(needsDocumentSetCheck(a)).toBe(false)
+  })
+
+  it('re-archives an empty stored document set once attachments are known', async () => {
+    // Earlier runs archived the list shape (no attachments) after a failed
+    // detail fetch; that empty set must not count as done for good.
+    const a = auction({ platform: 'zvg-portal', externalId: '42' })
+    const key = 'zvg-portal:42'
+    const { needsDocumentSetCheck } = await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({ platform: 'zvg-portal', externalId: '42', attachments: [attachment], photoPipelineVersion: 6 })]]),
+      artifactVersions: new Map([[key, artifactVersion('zvg-portal', '42', 0)]]),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, ['0.jpg']))]]),
+    })
+
+    expect(needsDocumentSetCheck(a)).toBe(true)
+  })
+
+  it('keeps an archived document set, and an empty one without known attachments', async () => {
+    const a = auction({ platform: 'zvg-portal', externalId: '42' })
+    const key = 'zvg-portal:42'
+    const check = async (attachments: typeof attachment[], documentCount: number) => (await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({ platform: 'zvg-portal', externalId: '42', attachments, photoPipelineVersion: 6 })]]),
+      artifactVersions: new Map([[key, artifactVersion('zvg-portal', '42', documentCount)]]),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, ['0.jpg']))]]),
+    })).needsDocumentSetCheck(a)
+
+    expect(await check([attachment], 1)).toBe(false)
+    expect(await check([], 0)).toBe(false)
   })
 })
