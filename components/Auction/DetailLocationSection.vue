@@ -109,6 +109,8 @@ const {
         :label="displayAddress ?? undefined"
         :hazards="auction.locationEnrichment?.hazards"
         :location-context="locationContext"
+        :country="auction.country"
+        :region="auction.region"
       />
       <div>
         <div v-if="locationContext" class="space-y-6">

@@ -1395,6 +1395,7 @@
     "mapLayerHazardPrefix": "Gefahrenkarte",
     "mapLayerOdorSignals": "Geruch/Emissionen",
     "mapLayerFloodRiskAreas": "Hochwasserkarte (EU)",
+    "mapLayerCadastralParcels": "Flurstücke",
     "mapFeatureKind": {
       "groceries": "Einkauf/Nahversorgung",
       "pharmacy": "Apotheke",

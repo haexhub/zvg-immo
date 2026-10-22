@@ -1395,6 +1395,7 @@
     "mapLayerHazardPrefix": "Hazard map",
     "mapLayerOdorSignals": "Odour/emissions",
     "mapLayerFloodRiskAreas": "Flood map (EU)",
+    "mapLayerCadastralParcels": "Cadastral parcels",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
       "pharmacy": "pharmacy",

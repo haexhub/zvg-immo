@@ -20,6 +20,7 @@ import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { arcGisMapLayer } from '~/lib/arcgis-export-layer'
+import { cadastralParcelLayer, cadastralParcelSourceFor } from '~/lib/cadastral-parcels'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import { useDetailMapTourismLayers } from '~/composables/useDetailMapTourismLayers'
 import { useDetailMapDistanceMeasure } from '~/composables/useDetailMapDistanceMeasure'
@@ -31,6 +32,8 @@ const props = defineProps<{
   label?: string
   hazards?: HazardAssessment[] | null
   locationContext?: LocationContext | null
+  country?: string
+  region?: string
 }>()
 
 const { t, locale } = useI18n()
@@ -148,6 +151,12 @@ function addFloodRiskLayer(entries: OverlayEntry[]): void {
     ),
     false,
   )
+}
+
+function addCadastralParcelLayer(entries: OverlayEntry[]): void {
+  const source = cadastralParcelSourceFor(props.country, props.region)
+  if (!source) return
+  addOverlayEntry(entries, t('objektDetail.mapLayerCadastralParcels'), cadastralParcelLayer(source), false, 'cadastral')
 }
 
 function odorOverlayEntry(entries: OverlayEntry[]): void {
@@ -275,6 +284,14 @@ watch([hoveredFeatureKind, hoveredHazardKind], () => {
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
   entry.layer.setVisible(entry.visible.value)
+  // The map opens at zoom 14 but most parcel services only draw from 16-18,
+  // so switching the layer on would otherwise look like it did nothing.
+  const view = map?.getView()
+  const zoom = view?.getZoom()
+  const minZoom = entry.layer.getMinZoom()
+  if (entry.id === 'cadastral' && entry.visible.value && view && zoom != null && zoom <= minZoom) {
+    view.animate({ zoom: minZoom + 0.2, duration: 300 })
+  }
 }
 
 interface LegendEntry {
@@ -345,6 +362,7 @@ onMounted(async () => {
 
   const entries: OverlayEntry[] = []
   addFloodRiskLayer(entries)
+  addCadastralParcelLayer(entries)
   featureOverlayEntries(entries)
   odorOverlayEntry(entries)
   hazardOverlayEntries(entries)
