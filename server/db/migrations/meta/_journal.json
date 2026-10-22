@@ -253,6 +253,13 @@
       "when": 1792593631396,
       "tag": "0035_observation_heads",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792707727502,
+      "tag": "0036_osm_context_indexes",
+      "breakpoints": true
     }
   ]
 }

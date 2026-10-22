@@ -62,6 +62,8 @@ interface OsmCategory {
 // re-clip by exact distance (roads, aeroway, industrial/commercial/office/
 // building/university/school) need to stay close to their real radius here,
 // since nothing downstream narrows them further.
+// The place and railway value lists are repeated verbatim in partial indexes
+// (server/db/schema/geo.ts); change both together.
 const CATEGORIES: OsmCategory[] = [
   { radiusMeters: PLACE_RADIUS_METERS, tagKey: 'place', values: ['city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality'], nodeOnly: true },
   { radiusMeters: 3000, tagKey: 'public_transport', values: ['platform', 'stop_position', 'station'] },
