@@ -35,6 +35,7 @@ const loading = ref(!props.summary)
 const loadError = ref<string | null>(null)
 const translatedTitle = ref<string | null>(null)
 const translatedAddress = ref<string | null>(null)
+let translationGeneration = 0
 // Until (or unless) the live translation arrives: the stored one, else the
 // Latin transliteration a list card shows.
 const displayTitle = computed(() => translatedTitle.value
@@ -53,21 +54,22 @@ const TRANSLATION_PENDING_MAX_POLLS = 24
 
 // Loaded silently alongside the summary lookup below, same as the objekt
 // detail page (pages/objekt/[platform]/[id].vue).
-async function loadTranslation(): Promise<void> {
-  if (!props.lang || isPassthroughLanguage(props.auction.country, props.lang)) return
+async function loadTranslation(generation = ++translationGeneration): Promise<void> {
+  const lang = props.lang
+  if (!lang || isPassthroughLanguage(props.auction.country, lang)) return
   try {
     const value = await fetchWithPendingRetry(
       () => $fetch<AuctionTranslationResponse>(
         `/api/auction/${encodeURIComponent(props.auction.platform)}/${encodeURIComponent(props.auction.externalId)}/translation`,
-        { method: 'POST', query: { lang: props.lang } },
+        { method: 'POST', query: { lang } },
       ),
       {
         maxPolls: TRANSLATION_PENDING_MAX_POLLS,
         retryMs: TRANSLATION_PENDING_RETRY_MS,
-        shouldContinue: () => isActive,
+        shouldContinue: () => isActive && generation === translationGeneration,
       },
     )
-    if (value && isActive) {
+    if (value && isActive && generation === translationGeneration) {
       translatedTitle.value = value.title
       translatedAddress.value = value.address
     }
@@ -76,6 +78,12 @@ async function loadTranslation(): Promise<void> {
     // no room for a dedicated translation-error state.
   }
 }
+
+watch(() => props.lang, () => {
+  translatedTitle.value = null
+  translatedAddress.value = null
+  loadTranslation()
+})
 
 onUnmounted(() => {
   isActive = false
