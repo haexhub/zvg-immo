@@ -1,6 +1,6 @@
 # OSM-Kontext: zwei partielle Indizes gegen die Read-Timeouts
 
-Stand: 2026-10-22. Status: **Indizes 1 und 2 auf Prod angelegt (2026-10-22, je ~2 min, beide valide). Index 3 (Zugrouten) steht noch aus.**
+Stand: 2026-10-22. Status: **Alle drei Indizes auf Prod angelegt (2026-10-22, je ~2 min, alle valide).**
 
 ## Problem
 
@@ -50,7 +50,7 @@ CREATE INDEX CONCURRENTLY idx_osm_local_elements_geog_train_route
   WHERE osm_type = 'relation' AND (tags ->> 'type') = 'route' AND (tags ->> 'route') = 'train';
 ```
 
-Prüfen: `indisvalid` für den neuen Index wie unten, danach die Hamburg-Abfrage erneut mit `EXPLAIN ANALYZE`; der SubPlan muss `idx_osm_local_elements_geog_train_route` nutzen. Der bestehende Check für Index 1 und 2 bleibt davon getrennt, weil Index 3 zu diesem Zeitpunkt noch nicht angelegt ist.
+Prüfen: `indisvalid` für den neuen Index wie unten, danach die Hamburg-Abfrage erneut mit `EXPLAIN ANALYZE`; der SubPlan muss `idx_osm_local_elements_geog_train_route` nutzen. Der bestehende Check für Index 1 und 2 bleibt davon getrennt, weil Index 3 zu diesem Zeitpunkt noch nicht angelegt ist. Ergebnis auf Prod (2026-10-22): Bau 1:55 min, valide; der SubPlan nutzt den Index (0,03 ms je Bahnhof), die Hamburg-Abfrage dauert **68 ms statt 11,4 s**.
 
 Offen, unabhängig davon: Mit einer einzigen Zugroute in DE setzt die Prüfung `immo:long_distance_train_route` praktisch nie. Ob der OSM-Import Routen-Relationen mitnehmen soll, ist eine Frage an den Import-Job (ansible), nicht an diese Abfrage.
 
