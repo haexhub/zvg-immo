@@ -50,7 +50,7 @@ CREATE INDEX CONCURRENTLY idx_osm_local_elements_geog_train_route
   WHERE osm_type = 'relation' AND (tags ->> 'type') = 'route' AND (tags ->> 'route') = 'train';
 ```
 
-Prüfen: `indisvalid` wie unten, danach die Hamburg-Abfrage erneut mit `EXPLAIN ANALYZE`; der SubPlan muss `idx_osm_local_elements_geog_train_route` nutzen.
+Prüfen: `indisvalid` für den neuen Index wie unten, danach die Hamburg-Abfrage erneut mit `EXPLAIN ANALYZE`; der SubPlan muss `idx_osm_local_elements_geog_train_route` nutzen. Der bestehende Check für Index 1 und 2 bleibt davon getrennt, weil Index 3 zu diesem Zeitpunkt noch nicht angelegt ist.
 
 Offen, unabhängig davon: Mit einer einzigen Zugroute in DE setzt die Prüfung `immo:long_distance_train_route` praktisch nie. Ob der OSM-Import Routen-Relationen mitnehmen soll, ist eine Frage an den Import-Job (ansible), nicht an diese Abfrage.
 
@@ -74,6 +74,16 @@ WHERE indrelid = 'osm_local_elements'::regclass
     'idx_osm_local_elements_geog_place'
   );
 -- muss `true | true` liefern
+```
+
+Nach dem Anlegen von Index 3 separat prüfen:
+
+```sql
+SELECT indexrelid::regclass AS index_name, indisvalid
+FROM pg_index
+WHERE indrelid = 'osm_local_elements'::regclass
+  AND indexrelid::regclass::text = 'idx_osm_local_elements_geog_train_route';
+-- muss genau eine Zeile mit `t` liefern
 ```
 
 Wirkung: `podman logs zvg-immo | grep '\[osm-context\]'` nach dem nächsten External-Enrichment-Lauf. Erwartung: kein `railway=…@15000m` und `place=…@30000m` mehr unter den langsamsten Kategorien, keine `Query read timeout` für die zvbawu-Auktionen.
