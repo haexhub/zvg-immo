@@ -712,7 +712,7 @@ describe('runReprocess structured persistence', () => {
     vi.mocked(readAuctionFetchStates).mockResolvedValue(new Map([['zvg-portal:7265', {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
-      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, detailSourceUpdatedIso: null, enrichClaimedAt: null, llmBatchJob: null,
       llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 2, llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
@@ -961,7 +961,7 @@ describe('runReprocess llm_failures cooldown', () => {
     return new Map([['zvg-portal:7265', {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
-      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null, llmBatchJob: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, detailSourceUpdatedIso: null, enrichClaimedAt: null, llmBatchJob: null,
       llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 3, llmLastAttemptedAt, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,
       updatedAt: '2026-08-02T10:00:00.000Z',
@@ -1173,7 +1173,7 @@ describe('runReprocess isLlmBatchPending gate', () => {
     return new Map([['zvg-portal:7265', {
       platform: 'zvg-portal', externalId: '7265', pdfUrl: null, pdfUrlUpstream: null,
       detailUrl: null, detailUrlUpstream: null, attachments: [], photoUrls: null,
-      sourceUpdatedIso: null, detailFetchedAt: null, enrichClaimedAt: null,
+      sourceUpdatedIso: null, detailFetchedAt: null, detailSourceUpdatedIso: null, enrichClaimedAt: null,
       llmBatchJob: 'openrouter_batch-stuck', llmArtifactVersionId: null, llmRulesHint: null, llmFailures: 0,
       llmLastAttemptedAt: null, llmClaimedAt: null, photosCheckedAt: null,
       photoFailures: 0, photoLastAttemptedAt: null, photoPipelineVersion: null,

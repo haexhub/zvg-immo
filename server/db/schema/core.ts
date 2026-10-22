@@ -371,6 +371,10 @@ export const auctionFetchState = pgTable('auction_fetch_state', {
   photoUrls: text('photo_urls').array(),
   sourceUpdatedIso: timestamp('source_updated_iso', { withTimezone: true }),
   detailFetchedAt: timestamp('detail_fetched_at', { withTimezone: true }),
+  // source_updated_iso as of the last detail fetch. source_updated_iso itself
+  // follows every list crawl, so comparing against it never saw an upstream
+  // update; this one only moves when the detail page is fetched again.
+  detailSourceUpdatedIso: timestamp('detail_source_updated_iso', { withTimezone: true }),
   enrichClaimedAt: timestamp('enrich_claimed_at', { withTimezone: true }),
   llmBatchJob: text('llm_batch_job'),
   llmArtifactVersionId: bigint('llm_artifact_version_id', { mode: 'number' }),

@@ -15,6 +15,8 @@ export interface AuctionFetchState {
   photoUrls: string[] | null
   sourceUpdatedIso: string | null
   detailFetchedAt: string | null
+  /** `sourceUpdatedIso` as of the last detail fetch; see upstreamUpdatedSinceDetail. */
+  detailSourceUpdatedIso: string | null
   enrichClaimedAt: string | null
   llmBatchJob: string | null
   llmArtifactVersionId: number | null
@@ -40,6 +42,7 @@ interface AuctionFetchStateRow {
   photo_urls: string[] | null
   source_updated_iso: Date | string | null
   detail_fetched_at: Date | string | null
+  detail_source_updated_iso: Date | string | null
   enrich_claimed_at: Date | string | null
   llm_batch_job: string | null
   llm_artifact_version_id: string | number | null
@@ -71,6 +74,7 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     photoUrls: row.photo_urls,
     sourceUpdatedIso: iso(row.source_updated_iso),
     detailFetchedAt: iso(row.detail_fetched_at),
+    detailSourceUpdatedIso: iso(row.detail_source_updated_iso),
     enrichClaimedAt: iso(row.enrich_claimed_at),
     llmBatchJob: row.llm_batch_job,
     llmArtifactVersionId: row.llm_artifact_version_id == null ? null : Number(row.llm_artifact_version_id),
@@ -84,6 +88,18 @@ function fromRow(row: AuctionFetchStateRow): AuctionFetchState {
     photoPipelineVersion: row.photo_pipeline_version,
     updatedAt: iso(row.updated_at)!,
   }
+}
+
+/**
+ * Whether the source reports a newer state than the one the last detail
+ * fetch saw. Compared as instants: crawlers and Postgres render the same
+ * time in different ISO forms.
+ */
+export function upstreamUpdatedSinceDetail(auction: Pick<Auction, 'sourceUpdatedIso'>, state: AuctionFetchState | undefined): boolean {
+  if (auction.sourceUpdatedIso == null) return false
+  const seen = state?.detailSourceUpdatedIso
+  if (seen == null) return true
+  return Date.parse(auction.sourceUpdatedIso) > Date.parse(seen)
 }
 
 export async function readAuctionFetchState(platform: string, externalId: string): Promise<AuctionFetchState | null> {
@@ -117,6 +133,7 @@ const CRAWL_COLUMNS = [
   'photo_urls',
   'source_updated_iso',
   'detail_fetched_at',
+  'detail_source_updated_iso',
 ] as const
 
 const CRAWL_CHUNK_SIZE = 500
@@ -148,6 +165,7 @@ export async function writeAuctionCrawlFetchState(auctions: Auction[]): Promise<
         auction.photoUrls ?? null,
         auction.sourceUpdatedIso,
         auction.detailFetchedAt ?? null,
+        auction.detailFetchedAt ? auction.sourceUpdatedIso : null,
       ]
       tuples.push(`(${row.map((_, index) => `$${values.length + index + 1}`).join(', ')})`)
       values.push(...row)
@@ -163,6 +181,13 @@ export async function writeAuctionCrawlFetchState(auctions: Auction[]): Promise<
          photo_urls = CASE WHEN EXCLUDED.detail_fetched_at IS NOT NULL OR EXCLUDED.photo_urls IS NOT NULL THEN EXCLUDED.photo_urls ELSE auction_fetch_state.photo_urls END,
          source_updated_iso = COALESCE(EXCLUDED.source_updated_iso, auction_fetch_state.source_updated_iso),
          detail_fetched_at = COALESCE(EXCLUDED.detail_fetched_at, auction_fetch_state.detail_fetched_at),
+         -- Only a new detail fetch moves it: enrich finalize also writes
+         -- auctions whose stored detailFetchedAt was merged back in unchanged.
+         detail_source_updated_iso = CASE
+           WHEN EXCLUDED.detail_fetched_at IS DISTINCT FROM auction_fetch_state.detail_fetched_at
+             AND EXCLUDED.detail_fetched_at IS NOT NULL
+           THEN EXCLUDED.detail_source_updated_iso
+           ELSE auction_fetch_state.detail_source_updated_iso END,
          updated_at = now()`,
       values,
     )
