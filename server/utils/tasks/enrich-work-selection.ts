@@ -6,7 +6,7 @@ import type { StoredMarketValue } from '~/server/utils/exchange-rate'
 import { cacheKey, readVerkehrswertCache } from '~/server/utils/verkehrswert-cache'
 import { loadRatesOrPegged } from '~/server/utils/exchange-rate'
 import { interleaveByPlatform } from '~/server/utils/interleave-by-platform'
-import type { readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
+import { upstreamUpdatedSinceDetail, type readAuctionFetchStates } from '~/server/utils/auction-fetch-state'
 import type { readLatestArtifactVersions } from '~/server/utils/artifact-version-state'
 import type { EnrichOptions } from './enrich-worker'
 
@@ -111,7 +111,7 @@ export async function prepareEnrichWork({
     if (!crawler?.enrichOne) return false
     const key = cacheKey(a.platform, a.externalId)
     const prev = fetchStates.get(key)
-    return scopedForce || !prev?.detailFetchedAt || (a.sourceUpdatedIso != null && prev.sourceUpdatedIso !== a.sourceUpdatedIso)
+    return scopedForce || !prev?.detailFetchedAt || upstreamUpdatedSinceDetail(a, prev)
   }
   const needsDocumentSetCheck = (a: Auction): boolean => {
     const key = cacheKey(a.platform, a.externalId)
@@ -129,7 +129,7 @@ export async function prepareEnrichWork({
       // archived the list shape after a failed detail fetch. Only a complete
       // download replaces it, so a dead link keeps retrying, like a missing set.
       (latestArtifact?.documentCount === 0 && attachmentCount > 0) ||
-      (a.sourceUpdatedIso != null && prev?.sourceUpdatedIso !== a.sourceUpdatedIso)
+      upstreamUpdatedSinceDetail(a, prev)
     )
   }
   const nativePhotoUrls = (a: Auction): string[] => [

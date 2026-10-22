@@ -59,6 +59,7 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
     photoUrls: null,
     sourceUpdatedIso: null,
     detailFetchedAt: '2026-08-19T18:30:49.000Z',
+    detailSourceUpdatedIso: null,
     enrichClaimedAt: null,
     llmBatchJob: null,
     llmArtifactVersionId: null,
@@ -373,5 +374,27 @@ describe('prepareEnrichWork needsDocumentSetCheck', () => {
 
     expect(await check([attachment], 1)).toBe(false)
     expect(await check([], 0)).toBe(false)
+  })
+})
+
+describe('prepareEnrichWork upstream updates', () => {
+  it('re-checks documents once the source reports a newer state than the last detail fetch saw', async () => {
+    // The hourly list crawl already stored the new sourceUpdatedIso, so only
+    // the value recorded with the detail fetch can show the update.
+    const a = auction({ platform: 'zvg-portal', externalId: '42', sourceUpdatedIso: '2026-10-22T08:00:00.000Z' })
+    const key = 'zvg-portal:42'
+    const run = async (detailSourceUpdatedIso: string) => (await prepareEnrichWork({
+      opts: {},
+      auctions: [a],
+      fetchStates: new Map([[key, fetchState({
+        platform: 'zvg-portal', externalId: '42', photoPipelineVersion: 6,
+        sourceUpdatedIso: '2026-10-22T08:00:00.000Z', detailSourceUpdatedIso,
+      })]]),
+      artifactVersions: new Map([[key, artifactVersion('zvg-portal', '42')]]),
+      stored: new Map([[key, summarizeRecord(recordWithPhotos(a, ['0.jpg']))]]),
+    })).needsDocumentSetCheck(a)
+
+    expect(await run('2026-10-01T08:00:00.000Z')).toBe(true)
+    expect(await run('2026-10-22T08:00:00.000Z')).toBe(false)
   })
 })

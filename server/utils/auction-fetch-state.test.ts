@@ -6,6 +6,7 @@ vi.mock('./db', () => ({ getPool: vi.fn() }))
 
 const {
   applyAuctionFetchState,
+  upstreamUpdatedSinceDetail,
   writeAuctionCrawlFetchState,
   writeAuctionEnrichClaim,
   writeAuctionLlmClaim,
@@ -42,6 +43,20 @@ function auction(): Auction {
 
 afterEach(() => vi.clearAllMocks())
 
+describe('upstreamUpdatedSinceDetail', () => {
+  const state = (detailSourceUpdatedIso: string | null) => ({ detailSourceUpdatedIso }) as never
+
+  it('compares the upstream timestamp with the one the last detail fetch saw, as instants', () => {
+    expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-20T12:00:00+02:00' }, state('2026-10-20T10:00:00.000Z'))).toBe(false)
+    expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-21T08:00:00.000Z' }, state('2026-10-20T10:00:00.000Z'))).toBe(true)
+  })
+
+  it('refetches when no detail fetch recorded a state, never without an upstream timestamp', () => {
+    expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: '2026-10-21T08:00:00.000Z' }, state(null))).toBe(true)
+    expect(upstreamUpdatedSinceDetail({ sourceUpdatedIso: null }, state(null))).toBe(false)
+  })
+})
+
 describe('auction fetch state writers', () => {
   it('keeps crawl, photo and LLM writes column-scoped', async () => {
     const query = vi.fn(async () => ({ rows: [] }))
@@ -63,6 +78,9 @@ describe('auction fetch state writers', () => {
     const calls = query.mock.calls as unknown as Array<[string, unknown[]?]>
 
     const crawlSql = String(calls[0]?.[0])
+    // Moves only with a new detail fetch, never with a list crawl or an
+    // unchanged detailFetchedAt merged back in.
+    expect(crawlSql).toContain('WHEN EXCLUDED.detail_fetched_at IS DISTINCT FROM auction_fetch_state.detail_fetched_at')
     expect(crawlSql).not.toContain('llm_batch_job =')
     expect(crawlSql).not.toContain('photo_failures = EXCLUDED')
 
@@ -126,6 +144,7 @@ describe('auction fetch state writers', () => {
       photoUrls: ['https://example.test/photo.jpg'],
       sourceUpdatedIso: null,
       detailFetchedAt: '2026-08-02T10:00:00.000Z',
+      detailSourceUpdatedIso: null,
       enrichClaimedAt: null,
       llmBatchJob: 'batch-1',
       llmArtifactVersionId: 12,

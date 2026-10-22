@@ -43,7 +43,9 @@ vi.mock('../utils/auction-record', () => {
   }
 })
 vi.mock('../utils/artifact-version-state', () => ({ readLatestArtifactVersions: vi.fn() }))
-vi.mock('../utils/auction-fetch-state', () => ({
+vi.mock('../utils/auction-fetch-state', async () => ({
+  // Pure comparison the work selection relies on; keep the real one.
+  upstreamUpdatedSinceDetail: (await vi.importActual<typeof import('../utils/auction-fetch-state')>('../utils/auction-fetch-state')).upstreamUpdatedSinceDetail,
   readAuctionFetchStates: vi.fn(),
   writeAuctionCrawlFetchState: vi.fn(),
   writeAuctionEnrichClaim: vi.fn(),
@@ -131,6 +133,7 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
     photoUrls: ['https://example.test/front.jpg'],
     sourceUpdatedIso: null,
     detailFetchedAt: '2026-08-01T10:00:00.000Z',
+    detailSourceUpdatedIso: null,
     enrichClaimedAt: null,
     llmBatchJob: null,
     llmArtifactVersionId: null,

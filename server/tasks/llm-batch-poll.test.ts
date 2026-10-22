@@ -104,6 +104,7 @@ function fetchState(overrides: Partial<AuctionFetchState> = {}): AuctionFetchSta
     photoUrls: null,
     sourceUpdatedIso: null,
     detailFetchedAt: null,
+    detailSourceUpdatedIso: null,
     enrichClaimedAt: null,
     llmBatchJob: 'batches/abc',
     llmArtifactVersionId: 22,
