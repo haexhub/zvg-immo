@@ -60,7 +60,8 @@ export const osmLocalElements = pgTable('osm_local_elements', {
   // Sweden's whole load). Each country now keeps its own row for a shared
   // element instead of the two competing to "own" it.
   primaryKey({ columns: [table.osmType, table.osmId, table.country] }),
-  index('idx_osm_local_elements_geom').using('gist', table.geom),
+  // No plain GIST on geom: every spatial query casts to ::geography (below),
+  // and the 6 GB idx_osm_local_elements_geom had zero scans on production.
   index('idx_osm_local_elements_country').on(table.country),
   // Landing-page geo rails (server/api/landing/rails.get.ts) and the search
   // Umgebung filters (auction-search-filters.ts) filter with
@@ -80,10 +81,23 @@ export const osmLocalElements = pgTable('osm_local_elements', {
   index('idx_osm_local_elements_tag_place').on(sql`(${table.tags} ->> 'place')`),
   index('idx_osm_local_elements_tag_aeroway').on(sql`(${table.tags} ->> 'aeroway')`),
   // Every proximity EXISTS/ST_DWithin subquery (osm-proximity.ts) casts geom
-  // to ::geography — a plain GIST on geom (above) doesn't serve that
-  // predicate, so this table still needs the geography-cast index until
-  // WP-4/5 remove the cast entirely.
+  // to ::geography — a plain GIST on geom doesn't serve that predicate, so
+  // this table still needs the geography-cast index until WP-4/5 remove the
+  // cast entirely.
   index('idx_osm_local_elements_geog').using('gist', sql`((${table.geom})::geography)`),
+  // Location-context categories (osm-location-context.ts) whose few matches
+  // sit among hundreds of thousands of rows inside the radius. The value
+  // lists must stay identical to CATEGORIES there, or the planner cannot
+  // prove the partial predicate and falls back to the broad index
+  // (docs/plans/2026-10-19-osm-context-partial-indexes.md).
+  index('idx_osm_local_elements_geog_railway_station').using('gist', sql`((${table.geom})::geography)`)
+    .where(sql`(${table.tags} ->> 'railway') IN ('station', 'halt', 'tram_stop')`),
+  index('idx_osm_local_elements_geog_place').using('gist', sql`((${table.geom})::geography)`)
+    .where(sql`(${table.tags} ->> 'place') IN ('city', 'town', 'suburb', 'village', 'hamlet', 'island', 'municipality')`),
+  // The per-station long-distance train route check; without it each
+  // station scanned every relation of its country (11 s around Hamburg).
+  index('idx_osm_local_elements_geog_train_route').using('gist', sql`((${table.geom})::geography)`)
+    .where(sql`${table.osmType} = 'relation' AND (${table.tags} ->> 'type') = 'route' AND (${table.tags} ->> 'route') = 'train'`),
 ]).enableRLS()
 
 // Schicht 3 (climate_cells): 0.1° ERA5-Land raster grid. Auctions reference

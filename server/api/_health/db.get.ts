@@ -20,8 +20,9 @@ import { getPool } from '~/server/utils/db'
 // the OR-chain's BitmapOr plan (a single branch without a usable index
 // forces the *entire* chain back to a Seq Scan — see the plan doc). Plus the
 // `::geography` GIST index every proximity EXISTS/ST_DWithin subquery casts
-// against (osm-proximity.ts) — not idx_osm_local_elements_geom, which the
-// current queries never touch.
+// against (osm-proximity.ts), and the partial geography indexes that keep the
+// location-context categories under their statement timeout
+// (osm-location-context.ts).
 const EXPECTED_OSM_LOCAL_ELEMENTS_INDEXES = [
   'idx_osm_local_elements_tag_natural',
   'idx_osm_local_elements_tag_waterway',
@@ -29,7 +30,9 @@ const EXPECTED_OSM_LOCAL_ELEMENTS_INDEXES = [
   'idx_osm_local_elements_tag_place',
   'idx_osm_local_elements_tag_aeroway',
   'idx_osm_local_elements_geog',
-  'idx_osm_local_elements_geom',
+  'idx_osm_local_elements_geog_railway_station',
+  'idx_osm_local_elements_geog_place',
+  'idx_osm_local_elements_geog_train_route',
 ]
 
 interface IndexRow {

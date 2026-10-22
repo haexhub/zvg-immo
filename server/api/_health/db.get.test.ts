@@ -22,7 +22,9 @@ describe('/api/_health/db', () => {
             'idx_osm_local_elements_tag_place',
             'idx_osm_local_elements_tag_aeroway',
             'idx_osm_local_elements_geog',
-            'idx_osm_local_elements_geom',
+            'idx_osm_local_elements_geog_railway_station',
+            'idx_osm_local_elements_geog_place',
+            'idx_osm_local_elements_geog_train_route',
           ].map((index_name) => ({ index_name })),
         }
       }
@@ -56,7 +58,9 @@ describe('/api/_health/db', () => {
             'idx_osm_local_elements_tag_water',
             'idx_osm_local_elements_tag_place',
             'idx_osm_local_elements_geog',
-            'idx_osm_local_elements_geom',
+            'idx_osm_local_elements_geog_railway_station',
+            'idx_osm_local_elements_geog_place',
+            'idx_osm_local_elements_geog_train_route',
           ].map((index_name) => ({ index_name })),
         }
       }
