@@ -22,6 +22,7 @@ import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/aucti
 import { arcGisMapLayer } from '~/lib/arcgis-export-layer'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import { useDetailMapTourismLayers } from '~/composables/useDetailMapTourismLayers'
+import { useDetailMapDistanceMeasure } from '~/composables/useDetailMapDistanceMeasure'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
@@ -69,6 +70,7 @@ const {
   visitorBreaks: tourismVisitorBreaks,
   visitorAvailable: tourismVisitorAvailable,
 } = useDetailMapTourismLayers({ map: olMapRef })
+const { layer: measureLayer, active: measureActive, hint: measureHint, toggle: toggleMeasure } = useDetailMapDistanceMeasure({ map: olMapRef })
 // The feature legend shares the bottom-left corner with the tourism legends,
 // so it joins their one-panel-at-a-time rule (open by default, as before).
 const { tourismGridPanelOpen, tourismVisitorPanelOpen, legendPanelOpen: legendOpen } = useTourismLegendPanels('legend')
@@ -375,13 +377,17 @@ onMounted(async () => {
     // below then never runs and an open popup can't be dismissed.
     moveTolerance: 8,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [...rasterFallbackLayers, ...tourismLayers, ...entries.map((e) => e.layer), markerLayer],
+    layers: [...rasterFallbackLayers, ...tourismLayers, ...entries.map((e) => e.layer), measureLayer, markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
   olMapRef.value = map
+  // Measuring takes over map clicks (FR-007), so a popup left open from
+  // before would otherwise sit there unreachable.
+  watch(measureActive, (isActive) => { if (isActive) popupOverlay.setPosition(undefined) })
 
   map.on('click', (evt) => {
+    if (measureActive.value) return
     const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
     // Stored as a thunk (not a plain string) so the popup re-renders with the
     // active locale/formatters on every click instead of the one baked in
@@ -408,8 +414,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
-    <div ref="mapEl" class="h-full w-full" />
+    <div ref="mapEl" class="h-full w-full" :class="{ 'cursor-crosshair': measureActive }" />
     <div ref="popupEl" class="empty:hidden min-w-[140px] max-w-[260px] rounded-lg bg-white px-2 py-1 text-xs leading-[1.35] text-gray-900 shadow-lg" />
+    <AuctionDetailMapMeasureControl
+      class="absolute top-2 left-2 z-10"
+      :active="measureActive"
+      :hint="measureHint"
+      :toggle-class="controlToggleClass"
+      @toggle="toggleMeasure"
+    />
     <div class="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
       <button
         type="button"
