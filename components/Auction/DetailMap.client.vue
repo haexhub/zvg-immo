@@ -435,24 +435,26 @@ onBeforeUnmount(() => {
   <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
     <div ref="mapEl" class="h-full w-full" :class="{ 'cursor-crosshair': measureActive }" />
     <div ref="popupEl" class="empty:hidden min-w-[140px] max-w-[260px] rounded-lg bg-white px-2 py-1 text-xs leading-[1.35] text-gray-900 shadow-lg" />
-    <AuctionDetailMapMeasureControl
-      class="absolute top-2 left-2 z-10"
-      :active="measureActive"
-      :hint="measureHint"
-      :distance="measureDistanceLabel"
-      :toggle-class="controlToggleClass"
-      @toggle="toggleMeasure"
-    />
     <div class="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
-      <button
-        type="button"
-        :class="controlToggleClass"
-        :aria-expanded="panelOpen"
-        aria-controls="auction-detail-map-layers-panel"
-        @click="panelOpen = !panelOpen"
-      >
-        {{ t('map.layers') }}
-      </button>
+      <!-- Next to "Ebenen" on the right: the top-left corner belongs to OpenLayers' zoom buttons. -->
+      <div class="flex items-start gap-1">
+        <AuctionDetailMapMeasureControl
+          :active="measureActive"
+          :hint="measureHint"
+          :distance="measureDistanceLabel"
+          :toggle-class="controlToggleClass"
+          @toggle="toggleMeasure"
+        />
+        <button
+          type="button"
+          :class="controlToggleClass"
+          :aria-expanded="panelOpen"
+          aria-controls="auction-detail-map-layers-panel"
+          @click="panelOpen = !panelOpen"
+        >
+          {{ t('map.layers') }}
+        </button>
+      </div>
       <div v-if="panelOpen" id="auction-detail-map-layers-panel" :class="controlPanelClass">
         <div class="mb-1.5 flex flex-col gap-0.5 border-b border-slate-900/10 pb-1.5">
           <label :class="layerLabelClass">
