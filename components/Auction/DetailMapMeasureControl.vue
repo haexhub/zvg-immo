@@ -12,7 +12,7 @@ const { t } = useI18n()
 </script>
 
 <template>
-  <div class="flex flex-col items-start gap-1">
+  <div class="flex flex-col items-end gap-1">
     <button
       type="button"
       :class="[toggleClass, active && 'border-blue-600 text-blue-700 ring-1 ring-blue-600']"
