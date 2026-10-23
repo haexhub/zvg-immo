@@ -123,5 +123,11 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
     return key ? t(key) : null
   })
 
-  return { layer, active, hint, toggle, deactivate }
+  const distanceLabel = computed(() => {
+    const { a, b } = state.value
+    if (!a || !b) return null
+    return t('map.measureDistanceKm', { km: formatMeasuredKm(measureDistanceKm(a, b), intlLocale.value) })
+  })
+
+  return { layer, active, hint, distanceLabel, toggle, deactivate }
 }

@@ -73,7 +73,7 @@ const {
   visitorBreaks: tourismVisitorBreaks,
   visitorAvailable: tourismVisitorAvailable,
 } = useDetailMapTourismLayers({ map: olMapRef })
-const { layer: measureLayer, active: measureActive, hint: measureHint, toggle: toggleMeasure } = useDetailMapDistanceMeasure({ map: olMapRef })
+const { layer: measureLayer, active: measureActive, hint: measureHint, distanceLabel: measureDistanceLabel, toggle: toggleMeasure } = useDetailMapDistanceMeasure({ map: olMapRef })
 // The feature legend shares the bottom-left corner with the tourism legends,
 // so it joins their one-panel-at-a-time rule (open by default, as before).
 const { tourismGridPanelOpen, tourismVisitorPanelOpen, legendPanelOpen: legendOpen } = useTourismLegendPanels('legend')
@@ -116,6 +116,7 @@ function circularPolygon(lng: number, lat: number, radiusMeters: number) {
 
 interface OverlayEntry {
   key: string
+  labelKey?: string
   layer: BaseLayer
   // A ref per entry (rather than a plain boolean) so toggling one checkbox
   // doesn't need the whole entries array/objects to be deeply reactive —
@@ -128,7 +129,7 @@ interface OverlayEntry {
   id?: string
 }
 
-function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string): void {
+function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string, labelKey?: string): void {
   let key = label
   let index = 2
   while (entries.some((e) => e.key === key)) {
@@ -136,7 +137,7 @@ function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLaye
     index++
   }
   layer.setVisible(visible)
-  entries.push({ key, layer, visible: ref(visible), id })
+  entries.push({ key, labelKey, layer, visible: ref(visible), id })
 }
 
 function addFloodRiskLayer(entries: OverlayEntry[]): void {
@@ -156,7 +157,7 @@ function addFloodRiskLayer(entries: OverlayEntry[]): void {
 function addCadastralParcelLayer(entries: OverlayEntry[]): void {
   const source = cadastralParcelSourceFor(props.country, props.region)
   if (!source) return
-  addOverlayEntry(entries, t('objektDetail.mapLayerCadastralParcels'), cadastralParcelLayer(source), false, 'cadastral')
+  addOverlayEntry(entries, t('objektDetail.mapLayerCadastralParcels'), cadastralParcelLayer(source), false, 'cadastral', 'objektDetail.mapLayerCadastralParcels')
 }
 
 function odorOverlayEntry(entries: OverlayEntry[]): void {
@@ -438,6 +439,7 @@ onBeforeUnmount(() => {
       class="absolute top-2 left-2 z-10"
       :active="measureActive"
       :hint="measureHint"
+      :distance="measureDistanceLabel"
       :toggle-class="controlToggleClass"
       @toggle="toggleMeasure"
     />
@@ -462,7 +464,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="overlayEntries.length" class="flex flex-col gap-0.5">
           <label v-for="entry in overlayEntries" :key="entry.key" :class="layerLabelClass">
-            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.key }}
+            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.labelKey ? t(entry.labelKey) : entry.key }}
           </label>
         </div>
       </div>

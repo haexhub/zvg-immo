@@ -2,6 +2,7 @@
 defineProps<{
   active: boolean
   hint: string | null
+  distance: string | null
   toggleClass: string
 }>()
 
@@ -23,6 +24,11 @@ const { t } = useI18n()
     <p
       aria-live="polite"
       class="empty:hidden max-w-56 rounded-md bg-white/95 px-2 py-1 text-xs text-gray-900 shadow-sm"
-    >{{ active ? hint : '' }}</p>
+    >
+      <template v-if="active">
+        <span>{{ hint }}</span>
+        <span v-if="distance" class="block">{{ distance }}</span>
+      </template>
+    </p>
   </div>
 </template>
