@@ -3,10 +3,11 @@ defineProps<{
   active: boolean
   hint: string | null
   distance: string | null
+  measurements: { id: number; label: string }[]
   toggleClass: string
 }>()
 
-defineEmits<{ toggle: [] }>()
+defineEmits<{ toggle: [], remove: [id: number] }>()
 
 const { t } = useI18n()
 </script>

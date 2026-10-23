@@ -10,11 +10,14 @@ import { fromLonLat, toLonLat } from 'ol/proj'
 import { Circle as CircleStyle, Fill, Stroke, Style, Text } from 'ol/style'
 import {
   EMPTY_MEASURE,
+  addMeasurePoint,
+  discardPending,
   formatMeasuredKm,
   measureDistanceKm,
   measureHintKey,
-  nextMeasureState,
+  removeMeasurement,
   type LngLat,
+  type Measurement,
   type MeasureState,
 } from '~/lib/distance-measure'
 
@@ -33,11 +36,13 @@ const pointStyle = new Style({
 const lineCasing = new Style({ stroke: new Stroke({ color: 'rgba(255, 255, 255, 0.9)', width: 6 }) })
 
 /**
- * Two-point distance measurement for DetailMap.client.vue. `layer` goes into
- * the map's constructor like useDetailMapTourismLayers' layers. Clicks are
- * taken from `singleclick`, not `click`: a double-click zoom fires `click`
- * twice and would otherwise drop A and B onto the same spot. The caller's own
- * popup click handler has to bail out while `active` is true.
+ * Distance measurement for DetailMap.client.vue. Finished A–B measurements
+ * stay on the map (also after leaving the mode) until they are removed; only a
+ * lone point A is dropped on exit. `layer` goes into the map's constructor
+ * like useDetailMapTourismLayers' layers. Clicks are taken from `singleclick`,
+ * not `click`: a double-click zoom fires `click` twice and would otherwise
+ * drop A and B onto the same spot. The caller's own popup click handler has to
+ * bail out while `active` is true.
  */
 export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> }) {
   const { t } = useI18n()
@@ -45,20 +50,24 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
   const active = ref(false)
   const state = shallowRef<MeasureState>(EMPTY_MEASURE)
 
+  function measurementLabel(m: Measurement): string {
+    return t('map.measureDistanceKm', { km: formatMeasuredKm(measureDistanceKm(m.a, m.b), intlLocale.value) })
+  }
+
   const source = new VectorSource()
   const layer = new VectorLayer({
     source,
     zIndex: MEASURE_LAYER_Z_INDEX,
     style: (feature) => {
       if (feature.getGeometry()?.getType() !== 'LineString') return pointStyle
-      const { a, b } = state.value
-      if (!a || !b) return lineCasing
+      const measurement = state.value.measurements.find((m) => m.id === feature.get('measurementId'))
+      if (!measurement) return lineCasing
       return [
         lineCasing,
         new Style({
           stroke: new Stroke({ color: MEASURE_COLOR, width: 3 }),
           text: new Text({
-            text: t('map.measureDistanceKm', { km: formatMeasuredKm(measureDistanceKm(a, b), intlLocale.value) }),
+            text: measurementLabel(measurement),
             font: '600 13px sans-serif',
             fill: new Fill({ color: '#111827' }),
             stroke: new Stroke({ color: '#ffffff', width: 4 }),
@@ -70,12 +79,22 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
     },
   })
 
+  // Lines first so the end points are drawn on top of them. Every feature of a
+  // finished measurement carries its id; the pending point A has none.
   function render(): void {
     source.clear()
-    const { a, b } = state.value
-    const points = [a, b].filter((p): p is LngLat => p != null).map((p) => fromLonLat(p))
-    source.addFeatures(points.map((coordinate) => new Feature(new Point(coordinate))))
-    if (points.length === 2) source.addFeature(new Feature(new LineString(points)))
+    const features: Feature[] = []
+    for (const m of state.value.measurements) {
+      const a = fromLonLat(m.a)
+      const b = fromLonLat(m.b)
+      for (const geometry of [new LineString([a, b]), new Point(a), new Point(b)]) {
+        const feature = new Feature(geometry)
+        feature.set('measurementId', m.id)
+        features.push(feature)
+      }
+    }
+    if (state.value.pending) features.push(new Feature(new Point(fromLonLat(state.value.pending))))
+    source.addFeatures(features)
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -89,7 +108,7 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
 
   function deactivate(): void {
     active.value = false
-    state.value = EMPTY_MEASURE
+    state.value = discardPending(state.value)
     render()
     window.removeEventListener('keydown', onKeydown)
   }
@@ -104,7 +123,7 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
     if (clickKey) unByKey(clickKey)
     clickKey = map?.on('singleclick', (evt) => {
       if (!active.value) return
-      state.value = nextMeasureState(state.value, toLonLat(evt.coordinate) as LngLat)
+      state.value = addMeasurePoint(state.value, toLonLat(evt.coordinate) as LngLat)
       render()
     }) ?? null
   }, { immediate: true })
@@ -118,16 +137,24 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
     window.removeEventListener('keydown', onKeydown)
   })
 
-  const hint = computed(() => {
+  function remove(id: number): void {
+    state.value = removeMeasurement(state.value, id)
+    render()
+  }
+
+  const measurements = computed(() => state.value.measurements.map((m) => ({ id: m.id, label: measurementLabel(m) })))
+
+  // Everything the control component shows, bundled so the map component can
+  // hand it over with a single v-bind (it is at the repo's 500-line limit).
+  const controlProps = computed(() => {
     const key = measureHintKey(active.value, state.value)
-    return key ? t(key) : null
+    return {
+      active: active.value,
+      hint: key ? t(key) : null,
+      distance: measurements.value.at(-1)?.label ?? null,
+      measurements: measurements.value,
+    }
   })
 
-  const distanceLabel = computed(() => {
-    const { a, b } = state.value
-    if (!a || !b) return null
-    return t('map.measureDistanceKm', { km: formatMeasuredKm(measureDistanceKm(a, b), intlLocale.value) })
-  })
-
-  return { layer, active, hint, distanceLabel, toggle, deactivate }
+  return { layer, active, controlProps, toggle, remove }
 }

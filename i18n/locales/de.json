@@ -12,9 +12,8 @@
   "map": {
     "layers": "Ebenen",
     "measureDistance": "Entfernung messen",
-    "measureHintStart": "Startpunkt in die Karte klicken",
+    "measureHintStart": "Startpunkt in die Karte klicken, Esc beendet",
     "measureHintEnd": "Endpunkt klicken",
-    "measureHintRestart": "Klicken für neue Messung, Esc beendet",
     "measureDistanceKm": "{km} km",
     "baseLayerStreets": "Straße",
     "baseLayerSatellite": "Satellit",
