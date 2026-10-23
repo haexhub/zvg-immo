@@ -27,9 +27,10 @@ Aufbauend auf `specs/006-detail-map-measure-parcels/research.md` (R1 Distanz, R2
   - Treffer: `pointermove` mit `forEachFeatureAtPixel` nur auf der Messebene, `hitTolerance: 6`. Beim Treffer wird `hoveredId` gesetzt und der Button am nächsten Punkt der Linie zum Zeiger platziert (`getClosestPoint`), danach nicht mehr mitgeführt, solange derselbe Treffer gilt. So bleibt er erreichbar.
   - Verlassen: Der Button verschwindet nach 250 ms Verzögerung, wenn weder Linie noch Button überfahren werden. `mouseenter` auf dem Button bricht das Ausblenden ab. Die Verzögerung überbrückt die Lücke zwischen Linie und Button.
   - Der Viewport-Event `pointerleave` plant das Ausblenden ebenfalls ein.
+  - **Wichtig (im Browser gefunden):** OpenLayers 10 leitet `pointermove` auch von über Overlay-Elementen weiter und fängt dort nur `pointerdown` ab. Ohne Gegenmaßnahme wertet der Hover-Handler den Zeiger auf dem Button als „nicht auf der Linie“ und blendet ihn aus. Bewegungen, deren Ziel der Button ist, werden deshalb ignoriert.
   - Bei überlappenden Linien trifft `forEachFeatureAtPixel` das zuoberst gezeichnete Feature, also die zuletzt angelegte Messung (Edge Case der Spec).
 - **Rationale**: Ein Overlay-Element ist ein normaler DOM-Knoten: fokussierbar, beschriftbar, und `stopEvent` (Standard) hält Klicks auf ihm von den Karten-Handlern fern. Das erfüllt FR-011 ohne Zusatzcode: kein Messpunkt, kein Popup.
-  - Der Aufbau im Composable statt im Template hält `DetailMap.client.vue` bei 500 Zeilen (CI-Size-Gate).
+  - Der Aufbau in einem eigenen Composable (`useDetailMapMeasureRemoveButton`) statt im Template hält `DetailMap.client.vue` unter 500 Zeilen (CI-Size-Gate) und trennt Hover-Logik von der Messlogik.
 - **Alternatives considered**:
   - Ein „X“ als Canvas-Icon im Style funktioniert nicht für Hover-Klicks, denn Canvas-Features haben keine Button-Semantik und keinen Fokus.
   - Ein Overlay je Messung erzeugt bei vielen Messungen unnötig viele DOM-Knoten.
@@ -37,7 +38,7 @@ Aufbauend auf `specs/006-detail-map-measure-parcels/research.md` (R1 Distanz, R2
 
 ## R4 Lage am Kartenrand
 
-- **Decision**: Die reine Funktion `removeButtonOffset(pixel, size, margin)` in `lib/distance-measure.ts` wählt den Versatz des Buttons (Standard: schräg oben rechts) und kehrt ihn um, wenn der Anker näher als `margin` an einem Rand liegt. So liegt der Button vollständig im sichtbaren Bereich.
+- **Decision**: Die reine Funktion `removeButtonOffset(pixel, size, margin)` in `lib/distance-measure.ts` wählt den Versatz des Buttons (Standard: schräg unten rechts, weil die Entfernungsbeschriftung oberhalb der Linie steht und sonst verdeckt würde) und kehrt ihn um, wenn der Anker näher als `margin` (halbe Buttongröße plus Abstand, Standard 16 px) an einem Rand liegt. So liegt der Button vollständig im sichtbaren Bereich.
 - **Rationale**: Testbar ohne Browser. `Overlay.autoPan` würde die Karte verschieben, während die Person gerade zeigt, und das wäre irritierend.
 - **Alternatives considered**: `autoPan`, siehe oben.
 

@@ -15,7 +15,7 @@ function addMeasurePoint(state: MeasureState, point: LngLat): MeasureState
 function removeMeasurement(state: MeasureState, id: number): MeasureState
 function discardPending(state: MeasureState): MeasureState
 function measureHintKey(active: boolean, state: MeasureState): string | null
-function removeButtonOffset(pixel: [number, number], size: [number, number], margin?: number): [number, number]
+function removeButtonOffset(pixel: [number, number], size: [number, number], margin?: number): [number, number] // Standard [14, 14], an Rändern gespiegelt
 
 // unverändert aus 006
 function measureDistanceKm(a: LngLat, b: LngLat): number
@@ -36,15 +36,13 @@ Rückgabe (Erweiterung der 006-Schnittstelle):
 | Feld | Typ | Bedeutung |
 |---|---|---|
 | `layer` | `VectorLayer` | wie 006 |
-| `active` | `Ref<boolean>` | Mess-Modus |
-| `hint` | `ComputedRef<string \| null>` | wie 006, siehe `measureHintKey` |
-| `distanceLabel` | `ComputedRef<string \| null>` | Entfernung der zuletzt abgeschlossenen Messung |
-| `measurements` | `ComputedRef<{ id: number; label: string }[]>` | Messungen mit fertig formatierter Entfernung, für die Liste im Control |
+| `active` | `Ref<boolean>` | Mess-Modus (für Cursor und Popup-Guard in `DetailMap.client.vue`) |
+| `controlProps` | `ComputedRef<{ active; hint; distance; measurements }>` | alles, was `AuctionDetailMapMeasureControl` anzeigt, gebündelt für ein einzelnes `v-bind` (die Detailkarte steht an der 500-Zeilen-Grenze). `distance` ist die Entfernung der zuletzt abgeschlossenen Messung, `measurements` sind `{ id, label }` mit fertig formatierter Entfernung |
 | `toggle` | `() => void` | Modus an/aus |
 | `remove` | `(id: number) => void` | Messung entfernen |
 
 Verhalten:
-- Das Composable legt den Overlay mit dem „X“-Button selbst an der Karte an und räumt ihn bei `onScopeDispose` wieder auf.
+- Der Overlay mit dem „X“-Button liegt in `useDetailMapMeasureRemoveButton({ map, layer, remove })` (Rückgabe `{ hideFor(id) }`), das das Mess-Composable einbindet. Es legt den Overlay an der Karte an und räumt ihn bei `onScopeDispose` wieder auf.
 - Der „X“-Button ist ein `<button type="button">` mit `aria-label` = `t('map.measureRemove')`.
 - Ein Klick auf den Button ruft `remove(id)` und erreicht weder den Messpunkt-Handler noch den Popup-Handler (Overlay `stopEvent`).
 
