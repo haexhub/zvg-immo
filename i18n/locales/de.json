@@ -11,6 +11,11 @@
   },
   "map": {
     "layers": "Ebenen",
+    "measureDistance": "Entfernung messen",
+    "measureHintStart": "Startpunkt in die Karte klicken",
+    "measureHintEnd": "Endpunkt klicken",
+    "measureHintRestart": "Klicken für neue Messung, Esc beendet",
+    "measureDistanceKm": "{km} km",
     "baseLayerStreets": "Straße",
     "baseLayerSatellite": "Satellit",
     "legend": "Legende",
@@ -1390,6 +1395,7 @@
     "mapLayerHazardPrefix": "Gefahrenkarte",
     "mapLayerOdorSignals": "Geruch/Emissionen",
     "mapLayerFloodRiskAreas": "Hochwasserkarte (EU)",
+    "mapLayerCadastralParcels": "Flurstücke",
     "mapFeatureKind": {
       "groceries": "Einkauf/Nahversorgung",
       "pharmacy": "Apotheke",

@@ -11,6 +11,11 @@
   },
   "map": {
     "layers": "Layers",
+    "measureDistance": "Measure distance",
+    "measureHintStart": "Click the map to set the start point",
+    "measureHintEnd": "Click to set the end point",
+    "measureHintRestart": "Click to start a new measurement, Esc to exit",
+    "measureDistanceKm": "{km} km",
     "baseLayerStreets": "Street",
     "baseLayerSatellite": "Satellite",
     "legend": "Legend",
@@ -1390,6 +1395,7 @@
     "mapLayerHazardPrefix": "Hazard map",
     "mapLayerOdorSignals": "Odour/emissions",
     "mapLayerFloodRiskAreas": "Flood map (EU)",
+    "mapLayerCadastralParcels": "Cadastral parcels",
     "mapFeatureKind": {
       "groceries": "shopping/groceries",
       "pharmacy": "pharmacy",

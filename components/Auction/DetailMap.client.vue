@@ -20,8 +20,10 @@ import { featureIconDataUri, hazardIconDataUri, odorLegendIconDataUri } from '~/
 import { minOf } from '~/lib/array-math'
 import { featureColor, hazardRadius, hazardStatusColor, rgba } from '~/lib/auction-map-overlays'
 import { arcGisMapLayer } from '~/lib/arcgis-export-layer'
+import { cadastralParcelLayer, cadastralParcelSourceFor } from '~/lib/cadastral-parcels'
 import { useMapTilerVectorBaseLayer } from '~/composables/useMapTilerVectorBaseLayer'
 import { useDetailMapTourismLayers } from '~/composables/useDetailMapTourismLayers'
+import { useDetailMapDistanceMeasure } from '~/composables/useDetailMapDistanceMeasure'
 import type { HazardAssessment, LocationContext, LocationMapFeature } from '~/types/auction'
 
 const props = defineProps<{
@@ -30,6 +32,8 @@ const props = defineProps<{
   label?: string
   hazards?: HazardAssessment[] | null
   locationContext?: LocationContext | null
+  country?: string
+  region?: string
 }>()
 
 const { t, locale } = useI18n()
@@ -69,6 +73,7 @@ const {
   visitorBreaks: tourismVisitorBreaks,
   visitorAvailable: tourismVisitorAvailable,
 } = useDetailMapTourismLayers({ map: olMapRef })
+const { layer: measureLayer, active: measureActive, hint: measureHint, distanceLabel: measureDistanceLabel, toggle: toggleMeasure } = useDetailMapDistanceMeasure({ map: olMapRef })
 // The feature legend shares the bottom-left corner with the tourism legends,
 // so it joins their one-panel-at-a-time rule (open by default, as before).
 const { tourismGridPanelOpen, tourismVisitorPanelOpen, legendPanelOpen: legendOpen } = useTourismLegendPanels('legend')
@@ -111,6 +116,7 @@ function circularPolygon(lng: number, lat: number, radiusMeters: number) {
 
 interface OverlayEntry {
   key: string
+  labelKey?: string
   layer: BaseLayer
   // A ref per entry (rather than a plain boolean) so toggling one checkbox
   // doesn't need the whole entries array/objects to be deeply reactive —
@@ -123,7 +129,7 @@ interface OverlayEntry {
   id?: string
 }
 
-function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string): void {
+function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLayer, visible: boolean, id?: string, labelKey?: string): void {
   let key = label
   let index = 2
   while (entries.some((e) => e.key === key)) {
@@ -131,7 +137,7 @@ function addOverlayEntry(entries: OverlayEntry[], label: string, layer: BaseLaye
     index++
   }
   layer.setVisible(visible)
-  entries.push({ key, layer, visible: ref(visible), id })
+  entries.push({ key, labelKey, layer, visible: ref(visible), id })
 }
 
 function addFloodRiskLayer(entries: OverlayEntry[]): void {
@@ -146,6 +152,12 @@ function addFloodRiskLayer(entries: OverlayEntry[]): void {
     ),
     false,
   )
+}
+
+function addCadastralParcelLayer(entries: OverlayEntry[]): void {
+  const source = cadastralParcelSourceFor(props.country, props.region)
+  if (!source) return
+  addOverlayEntry(entries, t('objektDetail.mapLayerCadastralParcels'), cadastralParcelLayer(source), false, 'cadastral', 'objektDetail.mapLayerCadastralParcels')
 }
 
 function odorOverlayEntry(entries: OverlayEntry[]): void {
@@ -273,6 +285,14 @@ watch([hoveredFeatureKind, hoveredHazardKind], () => {
 function toggleOverlay(entry: OverlayEntry): void {
   entry.visible.value = !entry.visible.value
   entry.layer.setVisible(entry.visible.value)
+  // The map opens at zoom 14 but most parcel services only draw from 16-18,
+  // so switching the layer on would otherwise look like it did nothing.
+  const view = map?.getView()
+  const zoom = view?.getZoom()
+  const minZoom = entry.layer.getMinZoom()
+  if (entry.id === 'cadastral' && entry.visible.value && view && zoom != null && zoom <= minZoom) {
+    view.animate({ zoom: minZoom + 0.2, duration: 300 })
+  }
 }
 
 interface LegendEntry {
@@ -343,6 +363,7 @@ onMounted(async () => {
 
   const entries: OverlayEntry[] = []
   addFloodRiskLayer(entries)
+  addCadastralParcelLayer(entries)
   featureOverlayEntries(entries)
   odorOverlayEntry(entries)
   hazardOverlayEntries(entries)
@@ -375,13 +396,17 @@ onMounted(async () => {
     // below then never runs and an open popup can't be dismissed.
     moveTolerance: 8,
     interactions: defaultInteractions({ mouseWheelZoom: false }),
-    layers: [...rasterFallbackLayers, ...tourismLayers, ...entries.map((e) => e.layer), markerLayer],
+    layers: [...rasterFallbackLayers, ...tourismLayers, ...entries.map((e) => e.layer), measureLayer, markerLayer],
     overlays: [popupOverlay],
     view: new OlView({ center: fromLonLat([props.lng, props.lat]), zoom: 14 }),
   })
   olMapRef.value = map
+  // Measuring takes over map clicks (FR-007), so a popup left open from
+  // before would otherwise sit there unreachable.
+  watch(measureActive, (isActive) => { if (isActive) popupOverlay.setPosition(undefined) })
 
   map.on('click', (evt) => {
+    if (measureActive.value) return
     const feature = map!.forEachFeatureAtPixel(evt.pixel, (f) => f)
     // Stored as a thunk (not a plain string) so the popup re-renders with the
     // active locale/formatters on every click instead of the one baked in
@@ -408,8 +433,16 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="relative h-[24rem] w-full overflow-hidden rounded-xl border shadow-sm md:h-[32rem]">
-    <div ref="mapEl" class="h-full w-full" />
+    <div ref="mapEl" class="h-full w-full" :class="{ 'cursor-crosshair': measureActive }" />
     <div ref="popupEl" class="empty:hidden min-w-[140px] max-w-[260px] rounded-lg bg-white px-2 py-1 text-xs leading-[1.35] text-gray-900 shadow-lg" />
+    <AuctionDetailMapMeasureControl
+      class="absolute top-2 left-2 z-10"
+      :active="measureActive"
+      :hint="measureHint"
+      :distance="measureDistanceLabel"
+      :toggle-class="controlToggleClass"
+      @toggle="toggleMeasure"
+    />
     <div class="absolute top-2 right-2 z-10 flex flex-col items-end gap-1">
       <button
         type="button"
@@ -431,7 +464,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="overlayEntries.length" class="flex flex-col gap-0.5">
           <label v-for="entry in overlayEntries" :key="entry.key" :class="layerLabelClass">
-            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.key }}
+            <input type="checkbox" :checked="entry.visible.value" :class="layerInputClass" @change="toggleOverlay(entry)"> {{ entry.labelKey ? t(entry.labelKey) : entry.key }}
           </label>
         </div>
       </div>
