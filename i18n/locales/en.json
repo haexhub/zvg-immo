@@ -12,10 +12,11 @@
   "map": {
     "layers": "Layers",
     "measureDistance": "Measure distance",
-    "measureHintStart": "Click the map to set the start point",
+    "measureHintStart": "Click the map to set the start point, Esc to exit",
     "measureHintEnd": "Click to set the end point",
-    "measureHintRestart": "Click to start a new measurement, Esc to exit",
     "measureDistanceKm": "{km} km",
+    "measureRemove": "Remove measurement",
+    "measureListLabel": "Measurements",
     "baseLayerStreets": "Street",
     "baseLayerSatellite": "Satellite",
     "legend": "Legend",
