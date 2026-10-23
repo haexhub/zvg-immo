@@ -31,5 +31,25 @@ const { t } = useI18n()
         <span v-if="distance" class="block">{{ distance }}</span>
       </template>
     </p>
+    <!-- The floating "×" on the map only exists while hovering, which a
+         keyboard can't do: this list is the same action as real buttons.
+         Hidden until something inside it has focus, so it costs no map space. -->
+    <ul
+      v-if="measurements.length"
+      :aria-label="t('map.measureListLabel')"
+      class="sr-only focus-within:not-sr-only flex max-w-56 flex-col gap-1 rounded-md bg-white/95 p-1 text-xs text-gray-900 shadow-sm"
+    >
+      <li v-for="measurement in measurements" :key="measurement.id" class="flex items-center justify-between gap-2 px-1">
+        <span>{{ measurement.label }}</span>
+        <button
+          type="button"
+          :aria-label="`${t('map.measureRemove')}: ${measurement.label}`"
+          class="flex size-5 cursor-pointer items-center justify-center rounded-full border border-slate-900/20 bg-white font-bold leading-none text-red-600 hover:bg-red-50"
+          @click="$emit('remove', measurement.id)"
+        >
+          ×
+        </button>
+      </li>
+    </ul>
   </div>
 </template>

@@ -20,6 +20,7 @@ import {
   type Measurement,
   type MeasureState,
 } from '~/lib/distance-measure'
+import { useDetailMapMeasureRemoveButton } from '~/composables/useDetailMapMeasureRemoveButton'
 
 const MEASURE_COLOR = '#2563eb'
 // Above the hovered hazard/feature layers (10) so the line stays readable on
@@ -137,9 +138,14 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
     window.removeEventListener('keydown', onKeydown)
   })
 
+  // Hovering a line shows a "×" that calls back into remove(); the button's
+  // own composable keeps the pointer handling out of this one.
+  const removeButton = useDetailMapMeasureRemoveButton({ map: options.map, layer, remove: (id) => remove(id) })
+
   function remove(id: number): void {
     state.value = removeMeasurement(state.value, id)
     render()
+    removeButton.hideFor(id)
   }
 
   const measurements = computed(() => state.value.measurements.map((m) => ({ id: m.id, label: measurementLabel(m) })))

@@ -73,7 +73,7 @@ const {
   visitorBreaks: tourismVisitorBreaks,
   visitorAvailable: tourismVisitorAvailable,
 } = useDetailMapTourismLayers({ map: olMapRef })
-const { layer: measureLayer, active: measureActive, controlProps: measureControlProps, toggle: toggleMeasure } = useDetailMapDistanceMeasure({ map: olMapRef })
+const { layer: measureLayer, active: measureActive, controlProps: measureControlProps, toggle: toggleMeasure, remove: removeMeasurement } = useDetailMapDistanceMeasure({ map: olMapRef })
 // The feature legend shares the bottom-left corner with the tourism legends,
 // so it joins their one-panel-at-a-time rule (open by default, as before).
 const { tourismGridPanelOpen, tourismVisitorPanelOpen, legendPanelOpen: legendOpen } = useTourismLegendPanels('legend')
@@ -442,6 +442,7 @@ onBeforeUnmount(() => {
           v-bind="measureControlProps"
           :toggle-class="controlToggleClass"
           @toggle="toggleMeasure"
+          @remove="removeMeasurement"
         />
         <button
           type="button"

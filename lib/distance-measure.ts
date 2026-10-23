@@ -61,3 +61,22 @@ export function measureHintKey(active: boolean, state: MeasureState): string | n
   if (!active) return null
   return state.pending ? 'map.measureHintEnd' : 'map.measureHintStart'
 }
+
+const REMOVE_BUTTON_OFFSET = 14
+
+/** Pixel offset of the floating remove button from the line point it belongs
+ *  to: down and to the right by default (the distance label sits above the
+ *  line, so this keeps it readable), flipped on an axis when the button (half
+ *  its size plus padding = `margin`) would otherwise cross that edge of the
+ *  `size`-sized map viewport. `pixel` is the anchor inside the viewport. */
+export function removeButtonOffset(
+  pixel: [number, number],
+  size: [number, number],
+  margin = 16,
+): [number, number] {
+  const [x, y] = pixel
+  const [width, height] = size
+  const dx = x + REMOVE_BUTTON_OFFSET + margin > width ? -REMOVE_BUTTON_OFFSET : REMOVE_BUTTON_OFFSET
+  const dy = y + REMOVE_BUTTON_OFFSET + margin > height ? -REMOVE_BUTTON_OFFSET : REMOVE_BUTTON_OFFSET
+  return [dx, dy]
+}

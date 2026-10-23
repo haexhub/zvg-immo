@@ -6,6 +6,7 @@ import {
   formatMeasuredKm,
   measureDistanceKm,
   measureHintKey,
+  removeButtonOffset,
   removeMeasurement,
   type LngLat,
 } from './distance-measure'
@@ -123,5 +124,31 @@ describe('measureHintKey', () => {
     const withA = addMeasurePoint(EMPTY_MEASURE, [1, 1])
     expect(measureHintKey(true, withA)).toBe('map.measureHintEnd')
     expect(measureHintKey(true, addMeasurePoint(withA, [2, 2]))).toBe('map.measureHintStart')
+  })
+})
+
+describe('removeButtonOffset', () => {
+  const size: [number, number] = [800, 400]
+  const margin = 16
+
+  function insideViewport([x, y]: [number, number], [dx, dy]: [number, number]): boolean {
+    return x + dx - margin >= 0 && x + dx + margin <= size[0] && y + dy - margin >= 0 && y + dy + margin <= size[1]
+  }
+
+  it('puts the button below and to the right of the line in the middle of the map', () => {
+    expect(removeButtonOffset([400, 200], size)).toEqual([14, 14])
+  })
+
+  it('flips horizontally near the right edge and vertically near the bottom edge', () => {
+    expect(removeButtonOffset([790, 200], size)).toEqual([-14, 14])
+    expect(removeButtonOffset([400, 395], size)).toEqual([14, -14])
+    expect(removeButtonOffset([795, 397], size)).toEqual([-14, -14])
+  })
+
+  it('keeps the button inside the viewport for anchors along every edge', () => {
+    const anchors: [number, number][] = [[400, 200], [790, 200], [400, 5], [795, 3], [20, 395], [790, 395], [3, 3]]
+    for (const anchor of anchors) {
+      expect(insideViewport(anchor, removeButtonOffset(anchor, size, margin)), `anchor ${anchor}`).toBe(true)
+    }
   })
 })
