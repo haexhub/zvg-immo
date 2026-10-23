@@ -123,7 +123,7 @@ description: "Task list for 006 Entfernung messen und Flurstücke auf der Detail
 - [X] T014 `pnpm test`, `pnpm typecheck` und `pnpm lint` im Worktree ausführen und alle Fehler beheben. Den Size-Gate prüfen: `wc -l` der geänderten und neuen Produktionsdateien muss jeweils ≤ 500 sein.
 - [ ] T015 Die App starten (Skill `run` bzw. `pnpm dev`) und quickstart.md „Manuell" für Messen, Flurstücke (mindestens eine Auktion aus DE, FR und ES) und den Negativfall durchspielen, sofern lokal Daten verfügbar sind. Was nicht prüfbar war, im Abschlussbericht nennen.
 - [X] T016 `graphify update .` ausführen.
-- [ ] T017 Commits nach Conventional Commits anlegen (`docs(spec): …` für specs/, `feat(detail-map): …` je Story), ohne Agenten-Referenzen und ohne Co-Authored-By-Trailer. Push und PR gegen `main` (Merge per rebase oder merge-commit, nicht squash).
+- [X] T017 Commits nach Conventional Commits anlegen (`docs(spec): …` für specs/, `feat(detail-map): …` je Story), ohne Agenten-Referenzen und ohne Co-Authored-By-Trailer. Push und PR gegen `main` (Merge per rebase oder merge-commit, nicht squash).
 
 ---
 
