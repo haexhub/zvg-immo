@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "checked": {
+    "source_hash": "d971953f2b7821fa6b42ebebce831edcdaca662eecde3e519ceff9b6665c490e",
+    "prompt_hash": "aad1b9eb44b8d38d2bb92a30d9806c85710edad91159543012d0d3a0c686372a"
+  },
+  "decisions": {
+    "0d2cd399b9a119a03b600e3c906bec535f03641b52dd6e089d8956afaee1d350": {
+      "kind": "duplicate",
+      "summary": "Both passages give the same guidance: don't abstract merely because things look similar or reusable, but do abstract once real shared behavior/duplication justifies it.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.general-coding/general-coding",
+          "text_hash": "6741ac35c27b221471f2f91306fe80065e5e5d29ced544301b771bdec89f53b8",
+          "text": "- Do not abstract two things merely because they look similar. First establish\n  that they have the same behavior, ownership, change reason, and invariants.\n  A small amount of local duplication is preferable to a premature generic\n  abstraction that couples unrelated callers.\n- Refactor repeated behavior when the shared rule is real and the abstraction\n  makes both callers clearer. Keep the abstraction close to the domain that\n  owns it; avoid a generic utility module becoming a dumping ground."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.ponytail/ponytail",
+          "text_hash": "762e24a72676f77dd6c37bbe977676817ac4012c63ec2d09cff09a3b67f565eb",
+          "text": "- Do not introduce speculative abstractions or abstractions solely because a\n  change might be reusable. A concrete, domain-owned abstraction that\n  improves cohesion, removes real duplication, or makes a branch independently\n  testable is not premature; use it when the code evidence supports it, even\n  when the task did not name the extraction. Keep it as small as possible."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-22T23:43:13Z",
+      "answered_at": "2026-11-22T23:43:13Z"
+    },
+    "43b3458be6ed92b0c0df225ecbc30af1957c2a2d4b0cceb373afad2029c52509": {
+      "kind": "duplicate",
+      "summary": "Both passages independently state that /speckit-plan must check the feature/spec against the constitution's principles.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.spaex-constitution/constitution-enforcement-tooling",
+          "text_hash": "339ca1f7454a677481f70a239efbccca9bb3b78fa865a801fb5125f96aff29b0",
+          "text": "`/speckit-plan` and `/speckit-analyze` MUST check plans and cross-artifact consistency against this constitution. CI does not yet mechanically enforce this; when introduced, it MUST validate that no committed file violates the no-secrets-in-git, no-local-absolute-paths, or cross-repo-refs-pin-immutable-revisions principles."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.spaex-constitution/speckit-workflow-adherence",
+          "text_hash": "ca90eeb6cd9958d7adeed4abbb2160528be5fca24fd5429c33b7823801066a2d",
+          "text": "Every feature or spec created via `/speckit-specify` **MUST** be checked against this constitution's principles during `/speckit-plan`; any conflict is resolved by changing the plan or escalated to a constitution amendment, never silently accepted as an exception. The project's active speckit workflow, declared at `.specify/workflows/speckit/workflow.yml`, MUST be followed for every primary task landing, invoking the named commands at their corresponding stages; when that file is absent, the built-in speckit skills serve as the implicit default and MUST still be followed. Freehand edits against source files are permitted only for review-fix responses on an already-open PR, or follow-up doc-alignment surfaced during a walkthrough test, never for the primary task landing itself."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-22T23:43:13Z",
+      "answered_at": "2026-11-22T23:43:13Z"
+    },
+    "fbb643e12a16178b597a784de84765608deccebc92c5a21a18736d106271b639": {
+      "kind": "contradiction",
+      "summary": "general-coding bars authoring (including generated-file changes) anywhere but a dedicated worktree, while graphify-first-authoring has the agent run `graphify update` and continue authoring directly on a non-worktree \"tracked branch\" checkout.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.general-coding/general-coding",
+          "text_hash": "943736f82d8b63b8f75ba37190ee11c7bdab61c45ef8710b5ba13fb6aca88ef9",
+          "text": "- Keep the primary checkout reserved for inspection and worktree management;\n  do not author changes there. Read-only inspection of any checkout is fine."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.graphify-first-authoring/graphify-first-authoring",
+          "text_hash": "dc2697bad7461fa02a7bf3582f8061ae1c9c898500bdf7de54369361dd23c9cc",
+          "text": "   - Apply this mutually exclusive precedence: a **linked worktree** is a checkout whose git directory is managed as a linked worktree; otherwise a **feature branch** is the branch carrying the current change or pull request, even when it has an upstream tracking ref; otherwise the checkout is a **tracked branch**. If the branch role is unclear, classify it as a feature branch.\n   - A linked worktree or feature branch always uses the complete fork-point snapshot as-is. It never participates in current-`HEAD` freshness checks, even when its branch has an upstream remote or is also checked out in a repository that tracks it.\n   - On a tracked branch, if `graphify-out/` or its required `graph.json` is **absent**, run `graphify update <repo-root>` to build the graph before continuing. A directory without `graph.json` is not a usable graph.\n   - On a tracked branch, if `graphify-out/.meta.json` is absent, invalid, or its `indexed_at_sha` does **not** match current `HEAD`, run `graphify update <repo-root>` to refresh incrementally."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-22T23:43:13Z",
+      "answered_at": "2026-11-22T23:43:13Z"
+    }
+  }
+}
