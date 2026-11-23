@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "checked": {
-    "source_hash": "d971953f2b7821fa6b42ebebce831edcdaca662eecde3e519ceff9b6665c490e",
+    "source_hash": "7dd27f6d57e3082870b50533572028177f8fd85e615fe17dde2818b0cb18ade0",
     "prompt_hash": "aad1b9eb44b8d38d2bb92a30d9806c85710edad91159543012d0d3a0c686372a"
   },
   "decisions": {
@@ -47,26 +47,47 @@
       "asked_at": "2026-11-22T23:43:13Z",
       "answered_at": "2026-11-22T23:43:13Z"
     },
-    "fbb643e12a16178b597a784de84765608deccebc92c5a21a18736d106271b639": {
-      "kind": "contradiction",
-      "summary": "general-coding bars authoring (including generated-file changes) anywhere but a dedicated worktree, while graphify-first-authoring has the agent run `graphify update` and continue authoring directly on a non-worktree \"tracked branch\" checkout.",
+    "88f7125a990ed5b7534e225eba71294704ac677631b6cc475f06fa717f2ebe67": {
+      "kind": "duplicate",
+      "summary": "Both fragments state the same testing principle: verify observable behavior/public contracts, not private implementation details.",
       "passages": [
         {
-          "scoped_id": "com.github.haexmas.atoms.general-coding/general-coding",
-          "text_hash": "943736f82d8b63b8f75ba37190ee11c7bdab61c45ef8710b5ba13fb6aca88ef9",
-          "text": "- Keep the primary checkout reserved for inspection and worktree management;\n  do not author changes there. Read-only inspection of any checkout is fine."
+          "scoped_id": "com.github.haexmas.atoms.coding-guideline-javascript-typescript/javascript-typescript-testing",
+          "text_hash": "237398bdef10e44624fc1c104f6f542198af90e80cbbc4600da1d8a58f4b3c2b",
+          "text": "- Test observable behavior and public contracts, not the exact arrangement of\n  private functions or implementation details. A refactor that preserves the\n  contract should not require rewriting the test suite."
         },
         {
-          "scoped_id": "com.github.haexmas.atoms.graphify-first-authoring/graphify-first-authoring",
-          "text_hash": "dc2697bad7461fa02a7bf3582f8061ae1c9c898500bdf7de54369361dd23c9cc",
-          "text": "   - Apply this mutually exclusive precedence: a **linked worktree** is a checkout whose git directory is managed as a linked worktree; otherwise a **feature branch** is the branch carrying the current change or pull request, even when it has an upstream tracking ref; otherwise the checkout is a **tracked branch**. If the branch role is unclear, classify it as a feature branch.\n   - A linked worktree or feature branch always uses the complete fork-point snapshot as-is. It never participates in current-`HEAD` freshness checks, even when its branch has an upstream remote or is also checked out in a repository that tracks it.\n   - On a tracked branch, if `graphify-out/` or its required `graph.json` is **absent**, run `graphify update <repo-root>` to build the graph before continuing. A directory without `graph.json` is not a usable graph.\n   - On a tracked branch, if `graphify-out/.meta.json` is absent, invalid, or its `indexed_at_sha` does **not** match current `HEAD`, run `graphify update <repo-root>` to refresh incrementally."
+          "scoped_id": "com.github.haexmas.atoms.general-coding/general-coding",
+          "text_hash": "7a1a0eeaac59bc038091024ce18548618623c02b59b90c1111d5e43808366c25",
+          "text": "- Add or update tests with behavior changes. Test observable behavior and\n  important failure modes, not private implementation details. A test is\n  useful only when it can fail for a real regression."
         }
       ],
       "choice": {
         "kind": "keep_all"
       },
-      "asked_at": "2026-11-22T23:43:13Z",
-      "answered_at": "2026-11-22T23:43:13Z"
+      "asked_at": "2026-11-23T10:38:45Z",
+      "answered_at": "2026-11-23T10:38:45Z"
+    },
+    "b6dadf266fd0eea3f5e37be47f4285a9dd575938fb5f6a4f8cf16847617bce13": {
+      "kind": "duplicate",
+      "summary": "Both fragments give near-identical instructions to use the project's own configured formatter/linter/test runner rather than a personal or alternate toolchain.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.coding-guideline-javascript-typescript/javascript-typescript",
+          "text_hash": "106d86cfcc95a3b5f321ba459697f55ed81fc5a6fcce7be266fbda4f473ebc96",
+          "text": "- Use the project's configured formatter, linter, compiler, and test runner.\n  At minimum, TypeScript changes SHOULD pass `tsc --noEmit` (or the project's\n  equivalent), linting, formatting checks, and the relevant tests. Do not\n  replace repository tooling with a personal global installation."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.coding-guideline-javascript-typescript/javascript-typescript-testing",
+          "text_hash": "97074ebb728f453ad685be2ccfc045e2df689e7b7fa6e0a28e116c31dbf9c495",
+          "text": "- Use the repository's configured runner, environment, formatter, linter, and\n  compiler. A change should include relevant tests and pass the project's\n  normal test command; do not assume that a test file is discovered unless the\n  runner configuration confirms it."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-23T10:38:45Z",
+      "answered_at": "2026-11-23T10:38:45Z"
     }
   }
 }
