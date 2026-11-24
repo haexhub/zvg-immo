@@ -29,6 +29,7 @@ interface Hit {
  */
 export function useDetailMapMeasureRemoveButton(options: {
   map: Ref<OlMap | null>
+  active: Ref<boolean>
   layer: VectorLayer<VectorSource>
   remove: (id: number) => void
 }) {
@@ -136,6 +137,7 @@ export function useDetailMapMeasureRemoveButton(options: {
       // anywhere else dismisses it. With a mouse the same click just
       // re-shows what hovering already showed.
       map.on('singleclick', (evt) => {
+        if (options.active.value) return
         const hit = hitAt(map, evt.pixel)
         if (hit) show(hit)
         else hideNow()

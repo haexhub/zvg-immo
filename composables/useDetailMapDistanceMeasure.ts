@@ -140,7 +140,7 @@ export function useDetailMapDistanceMeasure(options: { map: Ref<OlMap | null> })
 
   // Hovering a line shows a "×" that calls back into remove(); the button's
   // own composable keeps the pointer handling out of this one.
-  const removeButton = useDetailMapMeasureRemoveButton({ map: options.map, layer, remove: (id) => remove(id) })
+  const removeButton = useDetailMapMeasureRemoveButton({ map: options.map, active, layer, remove: (id) => remove(id) })
 
   function remove(id: number): void {
     state.value = removeMeasurement(state.value, id)

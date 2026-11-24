@@ -1,5 +1,5 @@
 <script setup lang="ts">
-defineProps<{
+const props = defineProps<{
   active: boolean
   hint: string | null
   distance: string | null
@@ -7,14 +7,30 @@ defineProps<{
   toggleClass: string
 }>()
 
-defineEmits<{ toggle: [], remove: [id: number] }>()
+const emit = defineEmits<{ toggle: [], remove: [id: number] }>()
 
 const { t } = useI18n()
+const measurementList = ref<HTMLUListElement | null>(null)
+const measureToggle = ref<HTMLButtonElement | null>(null)
+
+async function onRemoveClick(id: number): Promise<void> {
+  const index = props.measurements.findIndex((measurement) => measurement.id === id)
+  emit('remove', id)
+  await nextTick()
+
+  const buttons = measurementList.value?.querySelectorAll<HTMLButtonElement>('button')
+  const nextButton = buttons && buttons.length > 0
+    ? buttons.item(Math.min(index, buttons.length - 1))
+    : null
+  const focusTarget = nextButton ?? measureToggle.value
+  focusTarget?.focus()
+}
 </script>
 
 <template>
   <div class="flex flex-col items-end gap-1">
     <button
+      ref="measureToggle"
       type="button"
       :class="[toggleClass, active && 'border-blue-600 text-blue-700 ring-1 ring-blue-600']"
       :aria-pressed="active"
@@ -35,9 +51,10 @@ const { t } = useI18n()
          keyboard can't do: this list is the same action as real buttons.
          Hidden until something inside it has focus, so it costs no map space. -->
     <ul
+      ref="measurementList"
       v-if="measurements.length"
       :aria-label="t('map.measureListLabel')"
-      class="sr-only focus-within:not-sr-only flex max-w-56 flex-col gap-1 rounded-md bg-white/95 p-1 text-xs text-gray-900 shadow-sm"
+      class="sr-only focus-within:not-sr-only flex max-h-[min(50vh,20rem)] max-w-56 flex-col gap-1 overflow-y-auto rounded-md bg-white/95 p-1 text-xs text-gray-900 shadow-sm"
     >
       <li v-for="measurement in measurements" :key="measurement.id" class="flex items-center justify-between gap-2 px-1">
         <span>{{ measurement.label }}</span>
@@ -45,7 +62,7 @@ const { t } = useI18n()
           type="button"
           :aria-label="`${t('map.measureRemove')}: ${measurement.label}`"
           class="flex size-5 cursor-pointer items-center justify-center rounded-full border border-slate-900/20 bg-white font-bold leading-none text-red-600 hover:bg-red-50"
-          @click="$emit('remove', measurement.id)"
+          @click="onRemoveClick(measurement.id)"
         >
           ×
         </button>
